@@ -1,9 +1,11 @@
 export type AdminTabId =
-  | 'events'
+  | 'overview'
+  | 'settings'
   | 'customization'
   | 'reports'
   | 'analytics'
   | 'question-stats'
+  | 'events'
   | 'questions'
   | 'totems'
   | 'backup'
@@ -20,9 +22,15 @@ export interface AdminRouteMeta {
 
 export const ADMIN_ROUTES: readonly AdminRouteMeta[] = [
   {
-    id: 'events',
-    slug: 'eventos',
-    label: 'Eventos e Configurações',
+    id: 'overview',
+    slug: 'visao-geral',
+    label: 'Visão Geral',
+    group: 'event',
+  },
+  {
+    id: 'settings',
+    slug: 'configuracoes',
+    label: 'Regras & Configurações',
     group: 'event',
   },
   {
@@ -50,6 +58,12 @@ export const ADMIN_ROUTES: readonly AdminRouteMeta[] = [
     group: 'event',
   },
   {
+    id: 'events',
+    slug: 'eventos',
+    label: 'Eventos',
+    group: 'global',
+  },
+  {
     id: 'questions',
     slug: 'questoes',
     label: 'Banco de Questões',
@@ -75,11 +89,11 @@ export const ADMIN_ROUTES: readonly AdminRouteMeta[] = [
   },
 ] as const;
 
-export const DEFAULT_ADMIN_TAB: AdminTabId = 'events';
+export const DEFAULT_ADMIN_TAB: AdminTabId = 'overview';
 
 export function getHashForAdminTab(tab: AdminTabId): string {
   const found = ADMIN_ROUTES.find((route) => route.id === tab);
-  return `#admin/${found ? found.slug : 'eventos'}`;
+  return `#admin/${found ? found.slug : 'visao-geral'}`;
 }
 
 export function resolveAdminTabFromHash(hash: string): AdminTabId {

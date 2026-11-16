@@ -6,6 +6,7 @@ import {
   Cpu,
   FileBarChart2,
   HelpCircle,
+  LayoutDashboard,
   LineChart,
   LogOut,
   Menu,
@@ -14,6 +15,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings2,
+  SlidersHorizontal,
   Smartphone,
   Users,
 } from 'lucide-react';
@@ -26,11 +28,13 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 
 const TAB_ICONS: Record<AdminTabId, typeof CalendarCog> = {
-  events: CalendarCog,
+  overview: LayoutDashboard,
+  settings: SlidersHorizontal,
   customization: Palette,
   reports: FileBarChart2,
   analytics: LineChart,
   'question-stats': BarChart3,
+  events: CalendarCog,
   questions: HelpCircle,
   totems: Monitor,
   backup: Archive,

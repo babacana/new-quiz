@@ -12,6 +12,8 @@ import { AdminAnalyticsTab } from './AdminAnalyticsTab';
 import { AdminBackupTab } from './AdminBackupTab';
 import { AdminCustomizationTab } from './AdminCustomizationTab';
 import { AdminEventsTab } from './AdminEventsTab';
+import { AdminOverviewTab } from './AdminOverviewTab';
+import { AdminSettingsTab } from './AdminSettingsTab';
 import { AdminQuestionStatsTab } from './AdminQuestionStatsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
 import { AdminReportsTab } from './AdminReportsTab';
@@ -370,16 +372,37 @@ export function AdminApp({
           />
         ) : (
           <>
+            {activeTab === 'overview' && (
+              <AdminOverviewTab
+                controller={controller}
+                selectedEvent={events.find((ev) => ev.id === selectedEventId) ?? null}
+                onNavigateTab={(tab) => requestGuardedAction({ type: 'tab', tab })}
+                onEventsChanged={() => loadWorkspaceData()}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'settings' && (
+              <AdminSettingsTab
+                controller={controller}
+                selectedEvent={events.find((ev) => ev.id === selectedEventId) ?? null}
+                allQuestions={allQuestions}
+                onEventsChanged={loadWorkspaceData}
+                onRegisterSaveHandler={registerSaveHandler}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
             {activeTab === 'events' && (
               <AdminEventsTab
                 controller={controller}
                 events={events}
-                allQuestions={allQuestions}
                 selectedEventId={selectedEventId}
-                onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
-                onRequestGuardedAction={requestGuardedCallback}
+                onSelectEventAndNavigate={(id, targetTab) => {
+                  setSelectedEventId(id);
+                  setActiveTab(targetTab);
+                }}
                 onEventsChanged={loadWorkspaceData}
-                onRegisterSaveHandler={registerSaveHandler}
                 onStatusMessage={handleStatusMessage}
               />
             )}

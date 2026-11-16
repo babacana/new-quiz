@@ -7,6 +7,7 @@ import { EventAdminController } from '../../domain/eventAdminController';
 import type { Clock, RandomSource } from '../../domain/ports';
 import { TotemSessionEngine } from '../../domain/totemSessionEngine';
 import { AdminApp } from '../AdminApp';
+import { getHashForAdminTab, resolveAdminTabFromHash } from '../adminRoutes';
 import { AppRouter } from '../AppRouter';
 import { TotemApp } from '../TotemApp';
 
@@ -106,11 +107,14 @@ describe('SaasShell (Issue #11 - Fundação SaaS, Isolamento CSS e Roteamento)',
     render(<AdminApp controller={controller} />);
 
     await signInAdmin(user);
-    expect(await screen.findByDisplayValue('Quiz Interativo CAESB')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: /Visão Geral/i })).toBeInTheDocument();
 
     const desktopNav = screen.getByRole('navigation', { name: 'Navegação administrativa' });
     expect(within(desktopNav).getByText('Contexto do Evento')).toBeInTheDocument();
     expect(within(desktopNav).getByText('Nível Global')).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Visão Geral' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Regras & Configurações' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Eventos' })).toBeInTheDocument();
 
     // Colapsar e expandir sidebar desktop
     await user.click(screen.getByRole('button', { name: 'Recolher menu lateral' }));
@@ -125,9 +129,9 @@ describe('SaasShell (Issue #11 - Fundação SaaS, Isolamento CSS e Roteamento)',
     await user.click(within(mobileNav).getByRole('button', { name: 'Banco de Questões' }));
     expect(window.location.hash).toBe('#admin/questoes');
 
-    // Volta para Eventos e altera campo para testar dirty check ao trocar Evento no cabeçalho
-    await user.click(within(desktopNav).getByRole('button', { name: 'Eventos e Configurações' }));
-    expect(window.location.hash).toBe('#admin/eventos');
+    // Vai para Regras & Configurações e altera campo para testar dirty check ao trocar Evento no cabeçalho
+    await user.click(within(desktopNav).getByRole('button', { name: 'Regras & Configurações' }));
+    expect(window.location.hash).toBe('#admin/configuracoes');
 
     const facilInput = await screen.findByLabelText('Fácil (%)');
     fireEvent.change(facilInput, { target: { value: '30' } });
@@ -144,6 +148,16 @@ describe('SaasShell (Issue #11 - Fundação SaaS, Isolamento CSS e Roteamento)',
     expect(await screen.findByDisplayValue('Evento Secundário 2026')).toBeInTheDocument();
   });
 
+  it('resolve sub-rotas de Visão Geral, Eventos e Regras & Configurações', () => {
+    expect(resolveAdminTabFromHash('#admin')).toBe('overview');
+    expect(resolveAdminTabFromHash('#admin/visao-geral')).toBe('overview');
+    expect(resolveAdminTabFromHash('#admin/configuracoes')).toBe('settings');
+    expect(resolveAdminTabFromHash('#admin/eventos')).toBe('events');
+    expect(getHashForAdminTab('overview')).toBe('#admin/visao-geral');
+    expect(getHashForAdminTab('settings')).toBe('#admin/configuracoes');
+    expect(getHashForAdminTab('events')).toBe('#admin/eventos');
+  });
+
   it('suporta sub-rotas diretas na URL, fallback a partir de #admin e dirty check em hashchange no AppRouter', async () => {
     const { cloudGateway } = createHarness();
     const user = userEvent.setup();
@@ -156,9 +170,9 @@ describe('SaasShell (Issue #11 - Fundação SaaS, Isolamento CSS e Roteamento)',
       await screen.findByRole('heading', { name: /Banco de Questões Central/i }),
     ).toBeInTheDocument();
 
-    // Navega para Eventos via sidebar e suja o formulário
-    await user.click(screen.getByRole('button', { name: 'Eventos e Configurações' }));
-    expect(window.location.hash).toBe('#admin/eventos');
+    // Navega para Regras & Configurações via sidebar e suja o formulário
+    await user.click(screen.getByRole('button', { name: 'Regras & Configurações' }));
+    expect(window.location.hash).toBe('#admin/configuracoes');
 
     const facilInput = await screen.findByLabelText('Fácil (%)');
     fireEvent.change(facilInput, { target: { value: '35' } });
@@ -170,7 +184,7 @@ describe('SaasShell (Issue #11 - Fundação SaaS, Isolamento CSS e Roteamento)',
     });
 
     expect(await screen.findByRole('heading', { name: 'Alterações Não Salvas' })).toBeInTheDocument();
-    expect(window.location.hash).toBe('#admin/eventos');
+    expect(window.location.hash).toBe('#admin/configuracoes');
 
     await user.click(screen.getByRole('button', { name: 'Sair sem Salvar' }));
     expect(
