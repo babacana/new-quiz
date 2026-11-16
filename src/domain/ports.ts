@@ -1,6 +1,8 @@
 import type {
   EventConfig,
+  GiveUpLockoutRecord,
   MatchRecord,
+  PrizeClaimRecord,
   Question,
   SyncQueueItem,
   TotemConfigSnapshot,
@@ -27,6 +29,10 @@ export interface LocalStore {
   saveQuestions(eventId: string, questions: Question[]): Promise<void>;
   getMatches(eventId: string): Promise<MatchRecord[]>;
   saveMatch(match: MatchRecord): Promise<void>;
+  getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]>;
+  savePrizeClaim(claim: PrizeClaimRecord): Promise<void>;
+  getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]>;
+  saveLockout(lockout: GiveUpLockoutRecord): Promise<void>;
   getSyncQueue(): Promise<SyncQueueItem[]>;
   enqueueSyncItem(item: SyncQueueItem): Promise<void>;
   markSyncItemCompleted(idempotencyKey: string): Promise<void>;
@@ -37,11 +43,29 @@ export interface LocalStore {
 export interface CloudEventSnapshot {
   event: EventConfig;
   questions: Question[];
+  matches?: MatchRecord[];
+  prizeClaims?: PrizeClaimRecord[];
+  lockouts?: GiveUpLockoutRecord[];
+}
+
+// Resultado retornado pela nuvem ao sincronizar uma Partida e seu possível Brinde.
+export interface PushMatchResponse {
+  syncedAt: string;
+  resolvedPrizeClaim?: PrizeClaimRecord | null;
+  prizeStockRemaining?: number | null;
 }
 
 // Abstração de comunicação com a nuvem (Supabase em produção, InMemoryCloudGateway em testes).
 export interface CloudGateway {
   isOnline(): boolean;
   pullEventSnapshot(eventId: string): Promise<CloudEventSnapshot | null>;
-  pushMatch(payload: { idempotencyKey: string; match: MatchRecord }): Promise<{ syncedAt: string }>;
+  pushMatch(payload: {
+    idempotencyKey: string;
+    match: MatchRecord;
+    prizeClaim?: PrizeClaimRecord | null;
+  }): Promise<PushMatchResponse>;
+  pushGiveUpLockout(payload: {
+    idempotencyKey: string;
+    lockout: GiveUpLockoutRecord;
+  }): Promise<{ syncedAt: string }>;
 }

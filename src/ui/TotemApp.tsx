@@ -15,8 +15,20 @@ import {
   VirtualKeyboard,
   type VirtualKeyboardField,
 } from './VirtualKeyboard';
-import { DIFFICULTY_LABELS, formatTimeMMSS } from './formatters';
+import {
+  DIFFICULTY_LABELS,
+  PRIZE_STATUS_LABELS,
+  formatAwardedAtPtBr,
+  formatTimeMMSS,
+} from './formatters';
 import './styles.css';
+
+type ActiveTotemModal =
+  | { type: 'alert'; message: string }
+  | { type: 'incorrect' }
+  | { type: 'top3' }
+  | { type: 'give-up' }
+  | null;
 
 const INTERACTION_EVENTS = [
   'click',
@@ -54,8 +66,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   const [snapshot, setSnapshot] = useState<TotemSessionSnapshot>(() => engine.getSnapshot());
   const [nameInput, setNameInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
-  const [alertMessage, setAlertMessage] = useState<string | null>(null);
-  const [showIncorrectModal, setShowIncorrectModal] = useState(false);
+  const [activeModal, setActiveModal] = useState<ActiveTotemModal>(null);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const [isFadingToIdle, setIsFadingToIdle] = useState(false);
   const [activeVirtualField, setActiveVirtualField] = useState<VirtualKeyboardField | null>(null);
@@ -88,6 +99,17 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     }
   }, []);
 
+  const resetTransientUiState = useCallback((clearFields: boolean) => {
+    setActiveModal(null);
+    setActiveVirtualField(null);
+    setIsFadingToIdle(false);
+    setIsAdvancing(false);
+    if (clearFields) {
+      setNameInput('');
+      setPhoneInput('');
+    }
+  }, []);
+
   // Reinicia o temporizador de ociosidade respeitando a configuração do Evento e o arraste do teclado.
   const resetIdleTimer = useCallback(() => {
     if (isResizingKeyboardRef.current || engine.getSnapshot().screen === 'idle-screen') {
@@ -112,18 +134,14 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     if (idleTimeoutMs > 0) {
       idleTimerRef.current = window.setTimeout(() => {
         clearIdleTimers();
-        setIsFadingToIdle(false);
         setFlashActive(false);
-        setAlertMessage(null);
-        setShowIncorrectModal(false);
-        setActiveVirtualField(null);
-        setIsAdvancing(false);
+        resetTransientUiState(false);
         nameInputRef.current?.blur();
         phoneInputRef.current?.blur();
         setSnapshot(engine.enterIdleScreen());
       }, idleTimeoutMs);
     }
-  }, [clearIdleTimers, engine]);
+  }, [clearIdleTimers, engine, resetTransientUiState]);
 
   const handleKeyboardResizingChange = useCallback((isResizing: boolean) => {
     isResizingKeyboardRef.current = isResizing;
@@ -328,7 +346,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     const result = await engine.startMatch(nameInput, phoneInput);
     setSnapshot(result.snapshot);
     if (!result.started && result.errorMessage) {
-      setAlertMessage(result.errorMessage);
+      setActiveModal({ type: 'alert', message: result.errorMessage });
     } else {
       setElapsedMatchSeconds(0);
     }
@@ -349,17 +367,38 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     try {
       const nextSnapshot = await engine.advanceAfterAnswer();
       setSnapshot(nextSnapshot);
+      if (nextSnapshot.screen === 'result-screen' && nextSnapshot.lastResult?.isTop3) {
+        setActiveModal({ type: 'top3' });
+      }
     } finally {
       setIsAdvancing(false);
     }
   };
 
+  const handleOpenRanking = async () => {
+    resetTransientUiState(false);
+    resetIdleTimer();
+    const nextSnapshot = await engine.openRankingScreen();
+    setSnapshot(nextSnapshot);
+  };
+
+  const handleConfirmGiveUp = async () => {
+    resetTransientUiState(true);
+    const nextSnapshot = await engine.giveUpMatch();
+    setSnapshot(nextSnapshot);
+    resetIdleTimer();
+  };
+
+  const handleDismissWinnerAlreadyModal = () => {
+    const nextSnapshot = engine.dismissAlreadyWonModal();
+    resetTransientUiState(true);
+    setSnapshot(nextSnapshot);
+    resetIdleTimer();
+  };
+
   const handlePlayAgain = () => {
     const nextSnapshot = engine.resetToInitialScreen();
-    setNameInput('');
-    setPhoneInput('');
-    setShowIncorrectModal(false);
-    setActiveVirtualField(null);
+    resetTransientUiState(true);
     setSnapshot(nextSnapshot);
     resetIdleTimer();
   };
@@ -370,12 +409,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
       return;
     }
     const nextSnapshot = engine.wakeFromIdleScreen();
-    setNameInput('');
-    setPhoneInput('');
-    setAlertMessage(null);
-    setShowIncorrectModal(false);
-    setActiveVirtualField(null);
-    setIsFadingToIdle(false);
+    resetTransientUiState(true);
     setSnapshot(nextSnapshot);
   };
 
@@ -509,6 +543,15 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
           >
             {texts.initialScreenStartButton}
           </button>
+
+          <button
+            id="view-ranking-initial-btn"
+            type="button"
+            className="btn-secondary"
+            onClick={handleOpenRanking}
+          >
+            {texts.initialScreenRankingButton}
+          </button>
         </div>
 
         <VirtualKeyboard
@@ -621,6 +664,22 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
                     </button>
                   </div>
                 )}
+
+                {!currentQuestion.hasAnswered && (
+                  <button
+                    id="give-up-btn"
+                    type="button"
+                    className="btn-give-up"
+                    title="Desistir do Quiz"
+                    aria-label="Desistir do Quiz"
+                    onClick={() => {
+                      setActiveModal({ type: 'give-up' });
+                      resetIdleTimer();
+                    }}
+                  >
+                    &times;
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -647,6 +706,11 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               {snapshot.lastResult.wonPrize
                 ? texts.resultScreenPrizeWon
                 : texts.resultScreenPrizeNotWon}
+              {snapshot.lastResult.wonPrize && snapshot.lastResult.prizeStatus && (
+                <span className="prize-status-badge">
+                  {PRIZE_STATUS_LABELS[snapshot.lastResult.prizeStatus]}
+                </span>
+              )}
             </p>
 
             <div id="result-summary-details">
@@ -659,6 +723,14 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               </p>
               <p>
                 Tempo: <strong>{formatTimeMMSS(snapshot.lastResult.timeSeconds)}</strong>
+              </p>
+              <p>
+                Ranking:{' '}
+                <strong>
+                  {snapshot.lastResult.rankingPosition > 0
+                    ? `${snapshot.lastResult.rankingPosition}º lugar`
+                    : 'N/A'}
+                </strong>
               </p>
             </div>
 
@@ -674,7 +746,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
                 type="button"
                 className="btn-secondary"
                 onClick={() => {
-                  setShowIncorrectModal(true);
+                  setActiveModal({ type: 'incorrect' });
                   resetIdleTimer();
                 }}
               >
@@ -682,11 +754,54 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               </button>
             )}
 
+            <button
+              id="show-ranking-btn"
+              type="button"
+              className="btn-secondary"
+              onClick={handleOpenRanking}
+            >
+              {texts.resultScreenRankingButton}
+            </button>
+
             <button id="restart-quiz-btn" type="button" className="btn" onClick={handlePlayAgain}>
               {texts.resultScreenPlayAgainButton}
             </button>
           </div>
         )}
+      </section>
+
+      <section
+        id="ranking-screen"
+        className={`screen ${snapshot.screen === 'ranking-screen' ? 'active' : ''}`}
+        aria-hidden={snapshot.screen !== 'ranking-screen'}
+      >
+        <div className="screen-content">
+          <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+          <h2>{texts.rankingScreenTitle}</h2>
+          <ol id="ranking-list" className="ranking-list-shared-style">
+            {snapshot.ranking.length === 0 ? (
+              <li>Nenhum participante no ranking ainda.</li>
+            ) : (
+              snapshot.ranking.map((entry) => (
+                <li key={entry.matchId}>
+                  <span>
+                    {entry.position}. <span className="rank-name">{entry.participantName}</span>
+                  </span>
+                  <span className="rank-score">{entry.score} Acertos</span>
+                  <span className="rank-time">{formatTimeMMSS(entry.timeSeconds)}</span>
+                </li>
+              ))
+            )}
+          </ol>
+          <button
+            id="back-to-initial-btn"
+            type="button"
+            className="btn"
+            onClick={handlePlayAgain}
+          >
+            {texts.rankingScreenBackButton}
+          </button>
+        </div>
       </section>
 
       <section
@@ -708,7 +823,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         </div>
       </section>
 
-      {alertMessage && (
+      {activeModal?.type === 'alert' && (
         <div
           id="alert-modal"
           className="modal-overlay"
@@ -721,14 +836,14 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               Atenção
             </h3>
             <p id="alert-message" className="modal-text">
-              {alertMessage}
+              {activeModal.message}
             </p>
             <button
               id="alert-ok-btn"
               type="button"
               className="btn modal-close-btn"
               onClick={() => {
-                setAlertMessage(null);
+                setActiveModal(null);
                 resetIdleTimer();
               }}
             >
@@ -738,7 +853,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         </div>
       )}
 
-      {showIncorrectModal && snapshot.lastResult && (
+      {activeModal?.type === 'incorrect' && snapshot.lastResult && (
         <div
           id="incorrect-answers-modal"
           className="modal-overlay"
@@ -770,12 +885,120 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               type="button"
               className="btn modal-close-btn"
               onClick={() => {
-                setShowIncorrectModal(false);
+                setActiveModal(null);
                 resetIdleTimer();
               }}
             >
               Fechar
             </button>
+          </div>
+        </div>
+      )}
+
+      {snapshot.alreadyWonModal && (
+        <div
+          id="winner-already-modal"
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="winner-already-modal-title"
+        >
+          <div className="modal-content">
+            <h3 id="winner-already-modal-title" className="modal-title">
+              {texts.modalAlreadyWonTitle}
+            </h3>
+            <p id="winner-already-main-message" className="modal-text">
+              {texts.modalAlreadyWonMessage}
+            </p>
+            <p id="winner-already-timestamp" className="modal-timestamp">
+              {formatAwardedAtPtBr(snapshot.alreadyWonModal.awardedAt)}
+            </p>
+            <button
+              id="close-winner-already-modal-btn"
+              type="button"
+              className="btn modal-close-btn"
+              onClick={handleDismissWinnerAlreadyModal}
+            >
+              Entendi!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeModal?.type === 'top3' && snapshot.lastResult && snapshot.lastResult.isTop3 && (
+        <div
+          id="top3-congrats-modal"
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="top3-modal-title"
+        >
+          <div className="modal-content">
+            <h3 id="top3-modal-title" className="modal-title">
+              ✨ Resultado Espetacular! ✨
+            </h3>
+            <div id="top3-modal-message-content">
+              <p>
+                Parabéns, <strong>{snapshot.lastResult.participantName}</strong>!
+              </p>
+              <p>Você garantiu um lugar entre os melhores desempenhos do Evento!</p>
+              <p>
+                <span className="msg-rank-highlight">
+                  TOP {snapshot.lastResult.rankingPosition}
+                </span>
+              </p>
+            </div>
+            <button
+              id="close-top3-congrats-modal-btn"
+              type="button"
+              className="btn modal-close-btn"
+              onClick={() => {
+                setActiveModal(null);
+                resetIdleTimer();
+              }}
+            >
+              OK!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeModal?.type === 'give-up' && (
+        <div
+          id="confirm-modal"
+          className="modal-overlay modal-type-danger"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="confirm-modal-title"
+        >
+          <div className="modal-content">
+            <h3 id="confirm-modal-title" className="modal-title">
+              Confirmação
+            </h3>
+            <p id="confirm-message" className="modal-text">
+              Tem certeza que deseja desistir do quiz? Seu progresso atual não será salvo.
+            </p>
+            <div className="modal-actions">
+              <button
+                id="confirm-proceed-btn"
+                type="button"
+                className="btn btn-danger"
+                onClick={handleConfirmGiveUp}
+              >
+                Sair
+              </button>
+              <button
+                id="confirm-cancel-btn"
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setActiveModal(null);
+                  resetIdleTimer();
+                }}
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
