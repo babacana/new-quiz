@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { InMemoryCloudGateway } from '../adapters/inMemoryCloudGateway';
 import { SupabaseCloudGateway } from '../adapters/supabaseCloudGateway';
@@ -9,8 +9,23 @@ import {
   normalizeParticipantName,
 } from '../domain/totemSessionEngine';
 import type { TotemSessionSnapshot } from '../domain/types';
+import { AccessibilityControls } from './AccessibilityControls';
+import {
+  DEFAULT_KEYBOARD_HEIGHT_VH,
+  VirtualKeyboard,
+  type VirtualKeyboardField,
+} from './VirtualKeyboard';
 import { DIFFICULTY_LABELS, formatTimeMMSS } from './formatters';
 import './styles.css';
+
+const INTERACTION_EVENTS = [
+  'click',
+  'keydown',
+  'touchstart',
+  'mousemove',
+  'input',
+  'scroll',
+] as const;
 
 export interface TotemAppProps {
   engine?: TotemSessionEngine;
@@ -42,6 +57,11 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   const [alertMessage, setAlertMessage] = useState<string | null>(null);
   const [showIncorrectModal, setShowIncorrectModal] = useState(false);
   const [isAdvancing, setIsAdvancing] = useState(false);
+  const [isFadingToIdle, setIsFadingToIdle] = useState(false);
+  const [activeVirtualField, setActiveVirtualField] = useState<VirtualKeyboardField | null>(null);
+  const [virtualKeyboardHeightVh, setVirtualKeyboardHeightVh] = useState(
+    () => snapshot.event.settings.virtualKeyboardHeight || DEFAULT_KEYBOARD_HEIGHT_VH,
+  );
 
   const [elapsedMatchSeconds, setElapsedMatchSeconds] = useState(0);
   const [questionRemainingMs, setQuestionRemainingMs] = useState(
@@ -51,6 +71,63 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
 
   const questionStartMsRef = useRef<number>(engine.getNowMs());
   const timeoutHandledForIndexRef = useRef<number | null>(null);
+  const fadeOutTimerRef = useRef<number | null>(null);
+  const idleTimerRef = useRef<number | null>(null);
+  const isResizingKeyboardRef = useRef(false);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const phoneInputRef = useRef<HTMLInputElement | null>(null);
+
+  const clearIdleTimers = useCallback(() => {
+    if (fadeOutTimerRef.current !== null) {
+      window.clearTimeout(fadeOutTimerRef.current);
+      fadeOutTimerRef.current = null;
+    }
+    if (idleTimerRef.current !== null) {
+      window.clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    }
+  }, []);
+
+  // Reinicia o temporizador de ociosidade respeitando a configuração do Evento e o arraste do teclado.
+  const resetIdleTimer = useCallback(() => {
+    if (isResizingKeyboardRef.current || engine.getSnapshot().screen === 'idle-screen') {
+      return;
+    }
+
+    clearIdleTimers();
+    setIsFadingToIdle(false);
+
+    const { idleTimeoutMs, fadeOutStartMs } = engine.getIdleTimingConfig();
+
+    if (fadeOutStartMs > 0 && idleTimeoutMs > fadeOutStartMs) {
+      fadeOutTimerRef.current = window.setTimeout(() => {
+        if (engine.getSnapshot().screen !== 'idle-screen') {
+          setIsFadingToIdle(true);
+        }
+      }, fadeOutStartMs);
+    } else if (idleTimeoutMs > 0) {
+      setIsFadingToIdle(true);
+    }
+
+    if (idleTimeoutMs > 0) {
+      idleTimerRef.current = window.setTimeout(() => {
+        clearIdleTimers();
+        setIsFadingToIdle(false);
+        setFlashActive(false);
+        setAlertMessage(null);
+        setShowIncorrectModal(false);
+        setActiveVirtualField(null);
+        setIsAdvancing(false);
+        nameInputRef.current?.blur();
+        phoneInputRef.current?.blur();
+        setSnapshot(engine.enterIdleScreen());
+      }, idleTimeoutMs);
+    }
+  }, [clearIdleTimers, engine]);
+
+  const handleKeyboardResizingChange = useCallback((isResizing: boolean) => {
+    isResizingKeyboardRef.current = isResizing;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -185,7 +262,69 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     };
   }, [showTimeAlerts, visualTimeState.isFlashing]);
 
+  // Sincroniza a altura padrão do teclado virtual ao carregar novas configurações do Evento.
+  const configuredKeyboardHeight = snapshot.event.settings.virtualKeyboardHeight;
+  useEffect(() => {
+    setVirtualKeyboardHeightVh(configuredKeyboardHeight || DEFAULT_KEYBOARD_HEIGHT_VH);
+  }, [configuredKeyboardHeight]);
+
+  // Garante fechamento do teclado virtual sempre que o Totem sair da tela inicial.
+  useEffect(() => {
+    if (snapshot.screen !== 'initial-screen') {
+      setActiveVirtualField(null);
+    }
+  }, [snapshot.screen]);
+
+  // Gerencia temporizadores de esmaecimento e transição para a Tela de Descanso.
+  const { idleTimeoutSeconds, fadeOutLeadTimeSeconds } = snapshot.event.settings;
+  useEffect(() => {
+    if (snapshot.screen === 'idle-screen') {
+      clearIdleTimers();
+      setIsFadingToIdle(false);
+      return;
+    }
+
+    resetIdleTimer();
+    return () => {
+      clearIdleTimers();
+    };
+  }, [
+    snapshot.initialized,
+    snapshot.screen,
+    idleTimeoutSeconds,
+    fadeOutLeadTimeSeconds,
+    resetIdleTimer,
+    clearIdleTimers,
+  ]);
+
+  // Reinicia inatividade apenas em eventos confiáveis fora do arraste do teclado e bloqueia menu de contexto.
+  useEffect(() => {
+    const handleDocumentInteraction = (event: Event) => {
+      if (event.isTrusted && !isResizingKeyboardRef.current) {
+        resetIdleTimer();
+      }
+    };
+
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    for (const eventName of INTERACTION_EVENTS) {
+      document.addEventListener(eventName, handleDocumentInteraction, { passive: true });
+    }
+    document.addEventListener('contextmenu', handleContextMenu);
+
+    return () => {
+      for (const eventName of INTERACTION_EVENTS) {
+        document.removeEventListener(eventName, handleDocumentInteraction);
+      }
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, [resetIdleTimer]);
+
   const handleStartQuiz = async () => {
+    setActiveVirtualField(null);
+    resetIdleTimer();
     const result = await engine.startMatch(nameInput, phoneInput);
     setSnapshot(result.snapshot);
     if (!result.started && result.errorMessage) {
@@ -196,6 +335,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   };
 
   const handleSelectOption = (optionIndex: number) => {
+    resetIdleTimer();
     const outcome = engine.submitAnswer(optionIndex);
     setSnapshot(outcome.snapshot);
   };
@@ -204,6 +344,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     if (isAdvancing) {
       return;
     }
+    resetIdleTimer();
     setIsAdvancing(true);
     try {
       const nextSnapshot = await engine.advanceAfterAnswer();
@@ -218,10 +359,75 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     setNameInput('');
     setPhoneInput('');
     setShowIncorrectModal(false);
+    setActiveVirtualField(null);
+    setSnapshot(nextSnapshot);
+    resetIdleTimer();
+  };
+
+  // Desperta o Totem da Tela de Descanso limpando campos e estado transitório da tela inicial.
+  const handleWakeFromIdle = () => {
+    if (engine.getSnapshot().screen !== 'idle-screen') {
+      return;
+    }
+    const nextSnapshot = engine.wakeFromIdleScreen();
+    setNameInput('');
+    setPhoneInput('');
+    setAlertMessage(null);
+    setShowIncorrectModal(false);
+    setActiveVirtualField(null);
+    setIsFadingToIdle(false);
     setSnapshot(nextSnapshot);
   };
 
+  const handleFieldFocus = (field: VirtualKeyboardField) => {
+    if (snapshot.event.settings.enableVirtualKeyboard) {
+      setActiveVirtualField(field);
+    } else {
+      setActiveVirtualField(null);
+    }
+    resetIdleTimer();
+  };
+
+  // Processa teclas do teclado virtual aplicando normalização de nome ou máscara de telefone.
+  const handleVirtualKeyPress = (key: string) => {
+    if (!activeVirtualField) {
+      return;
+    }
+
+    resetIdleTimer();
+
+    if (key === 'OK') {
+      setActiveVirtualField(null);
+      if (activeVirtualField === 'nome') {
+        nameInputRef.current?.blur();
+      } else {
+        phoneInputRef.current?.blur();
+      }
+      return;
+    }
+
+    if (activeVirtualField === 'nome') {
+      if (key === 'Backspace') {
+        setNameInput((prev) => normalizeParticipantName(prev.slice(0, -1)));
+      } else if (key === 'Space') {
+        setNameInput((prev) => normalizeParticipantName(`${prev} `));
+      } else {
+        setNameInput((prev) => normalizeParticipantName(`${prev}${key}`));
+      }
+      return;
+    }
+
+    if (key === 'Backspace') {
+      setPhoneInput((prev) => formatPhoneMask(prev.replace(/\D/g, '').slice(0, -1)));
+    } else if (key !== 'Space') {
+      setPhoneInput((prev) => formatPhoneMask(`${prev}${key}`));
+    }
+  };
+
   const containerClasses = ['quiz-container'];
+  if (isFadingToIdle && snapshot.screen !== 'idle-screen') {
+    containerClasses.push('fading-to-idle');
+  }
   if (showTimeAlerts && visualTimeState.borderPulseState === 'warning') {
     containerClasses.push('time-alert-border-pulse-warning');
   } else if (showTimeAlerts && visualTimeState.borderPulseState === 'critical') {
@@ -233,9 +439,16 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
 
   const texts = snapshot.event.customizations.texts;
   const logoSrc = `/assets/${snapshot.event.customizations.visualIdentity.logoFileName || 'logo.png'}`;
+  const { eventWindow } = snapshot;
+  const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
 
   return (
     <div className={containerClasses.join(' ')}>
+      <AccessibilityControls
+        hiddenOnIdle={snapshot.screen === 'idle-screen'}
+        onInteraction={resetIdleTimer}
+      />
+
       <section
         id="initial-screen"
         className={`screen ${snapshot.screen === 'initial-screen' ? 'active' : ''}`}
@@ -245,38 +458,67 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
           <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
           <h2>{texts.initialScreenTitle}</h2>
           <p className="slogan">{texts.initialScreenSlogan}</p>
+          {eventWindow.initialScreenMessage !== null && (
+            <p id="event-status-message">{eventWindow.initialScreenMessage}</p>
+          )}
           <p>Preencha seus dados para começar:</p>
 
           <div className="form-group">
             <label htmlFor="nome">Nome</label>
             <input
+              ref={nameInputRef}
               id="nome"
               name="nome"
               type="text"
               autoComplete="off"
               placeholder={texts.inputNamePlaceholder}
               value={nameInput}
-              onChange={(event) => setNameInput(normalizeParticipantName(event.target.value))}
+              onFocus={() => handleFieldFocus('nome')}
+              onChange={(event) => {
+                setNameInput(normalizeParticipantName(event.target.value));
+                resetIdleTimer();
+              }}
             />
           </div>
 
           <div className="form-group">
             <label htmlFor="telefone">Telefone</label>
             <input
+              ref={phoneInputRef}
               id="telefone"
               name="telefone"
               type="tel"
               autoComplete="off"
               placeholder={texts.inputPhonePlaceholder}
               value={phoneInput}
-              onChange={(event) => setPhoneInput(formatPhoneMask(event.target.value))}
+              onFocus={() => handleFieldFocus('telefone')}
+              onChange={(event) => {
+                setPhoneInput(formatPhoneMask(event.target.value));
+                resetIdleTimer();
+              }}
             />
           </div>
 
-          <button id="start-quiz-btn" type="button" className="btn" onClick={handleStartQuiz}>
+          <button
+            id="start-quiz-btn"
+            type="button"
+            className={shouldHideStartButton ? 'btn hidden' : 'btn'}
+            disabled={eventWindow.isBlocked}
+            hidden={shouldHideStartButton}
+            onClick={handleStartQuiz}
+          >
             {texts.initialScreenStartButton}
           </button>
         </div>
+
+        <VirtualKeyboard
+          activeField={snapshot.screen === 'initial-screen' ? activeVirtualField : null}
+          enabled={snapshot.event.settings.enableVirtualKeyboard}
+          heightVh={virtualKeyboardHeightVh}
+          onHeightVhChange={setVirtualKeyboardHeightVh}
+          onKeyPress={handleVirtualKeyPress}
+          onResizingChange={handleKeyboardResizingChange}
+        />
       </section>
 
       <section
@@ -431,7 +673,10 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
                 id="show-incorrect-answers-btn"
                 type="button"
                 className="btn-secondary"
-                onClick={() => setShowIncorrectModal(true)}
+                onClick={() => {
+                  setShowIncorrectModal(true);
+                  resetIdleTimer();
+                }}
               >
                 Onde Eu Errei?
               </button>
@@ -442,6 +687,25 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
             </button>
           </div>
         )}
+      </section>
+
+      <section
+        id="idle-screen"
+        className={`screen ${snapshot.screen === 'idle-screen' ? 'active' : ''}`}
+        aria-hidden={snapshot.screen !== 'idle-screen'}
+        onClick={handleWakeFromIdle}
+        onTouchStart={handleWakeFromIdle}
+      >
+        <div className="screen-content">
+          <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+          <p className="slogan">{texts.initialScreenSlogan}</p>
+          <h2 id="idle-call-to-action">
+            {eventWindow.idleCallToActionTitle}
+            {eventWindow.idleCallToActionSubtitle && (
+              <small>{eventWindow.idleCallToActionSubtitle}</small>
+            )}
+          </h2>
+        </div>
       </section>
 
       {alertMessage && (
@@ -463,7 +727,10 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               id="alert-ok-btn"
               type="button"
               className="btn modal-close-btn"
-              onClick={() => setAlertMessage(null)}
+              onClick={() => {
+                setAlertMessage(null);
+                resetIdleTimer();
+              }}
             >
               OK
             </button>
@@ -502,7 +769,10 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
               id="close-incorrect-answers-modal-btn"
               type="button"
               className="btn modal-close-btn"
-              onClick={() => setShowIncorrectModal(false)}
+              onClick={() => {
+                setShowIncorrectModal(false);
+                resetIdleTimer();
+              }}
             >
               Fechar
             </button>

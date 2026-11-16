@@ -189,7 +189,23 @@ export interface QuestionTimeVisualState {
   isFlashing: boolean;
 }
 
-export type TotemScreenId = 'initial-screen' | 'quiz-screen' | 'result-screen';
+export type TotemScreenId = 'idle-screen' | 'initial-screen' | 'quiz-screen' | 'result-screen';
+
+export type EventWindowStatus = 'before' | 'during' | 'after' | 'no_event';
+
+export interface EventWindowState {
+  status: EventWindowStatus;
+  isBlocked: boolean;
+  idleCallToActionTitle: string;
+  idleCallToActionSubtitle: string | null;
+  initialScreenMessage: string | null;
+}
+
+export interface IdleTimingConfig {
+  idleTimeoutMs: number;
+  fadeOutLeadMs: number;
+  fadeOutStartMs: number;
+}
 
 export interface ActiveQuestionState {
   index: number;
@@ -219,6 +235,7 @@ export interface TotemSessionSnapshot {
   initialized: boolean;
   screen: TotemScreenId;
   event: EventConfig;
+  eventWindow: EventWindowState;
   availableQuestionsCount: number;
   activeMatch: {
     participantName: string;

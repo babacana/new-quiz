@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CUSTOMIZATIONS,
   DEFAULT_EVENT_CONFIG,
   DEFAULT_QUIZ_QUESTIONS,
   DEFAULT_SETTINGS,
@@ -13,6 +14,9 @@ import type {
   DifficultyPercentages,
   EventCustomizationTexts,
   EventSettings,
+  EventWindowState,
+  EventWindowStatus,
+  IdleTimingConfig,
   IncorrectAnswerReviewItem,
   MatchAnswer,
   MatchRecord,
@@ -28,6 +32,8 @@ import type {
 } from './types';
 
 const BRAZIL_PHONE_REGEX = /^\(\d{2}\)\s\d{4,5}-\d{4}$/;
+const MIN_IDLE_TIMEOUT_SECONDS = 15;
+const MIN_FADE_OUT_LEAD_SECONDS = 3;
 
 // Normaliza o nome do Participante mantendo apenas letras Latin-1, acentos e espaços em maiúsculas.
 export function normalizeParticipantName(rawName: string): string {
@@ -129,6 +135,105 @@ export class TotemSessionEngine {
     return Math.max(0, Math.floor((this.clock.now() - this.activeMatch.startedAtMs) / 1000));
   }
 
+  private formatEventDateTimePtBr(timestampMs: number): string {
+    return new Date(timestampMs).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  // Avalia a janela temporal do Evento em relação ao relógio do Totem.
+  getEventWindowState(): EventWindowState {
+    const event = this.totemConfig.event;
+    const defaultCallToAction =
+      this.customizationTexts.idleScreenCallToAction ||
+      DEFAULT_CUSTOMIZATIONS.texts.idleScreenCallToAction;
+
+    let status: EventWindowStatus = 'no_event';
+    let startMs = Number.NaN;
+    let endMs = Number.NaN;
+
+    if (event.startTime && event.endTime) {
+      startMs = new Date(event.startTime).getTime();
+      endMs = new Date(event.endTime).getTime();
+      if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+        const nowMs = this.clock.now();
+        if (nowMs < startMs) {
+          status = 'before';
+        } else if (nowMs > endMs) {
+          status = 'after';
+        } else {
+          status = 'during';
+        }
+      }
+    }
+
+    const eventName = event.name.trim() || 'especial';
+
+    if (event.enableOutOfPeriodMessage && status === 'before') {
+      const formattedStart = this.formatEventDateTimePtBr(startMs);
+      return {
+        status,
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ EM BREVE!',
+        idleCallToActionSubtitle: 'Toque para mais informações',
+        initialScreenMessage: `O quiz "${eventName}" ainda não começou! Prepare-se, a diversão começa em ${formattedStart}.`,
+      };
+    }
+
+    if (event.enableOutOfPeriodMessage && status === 'after') {
+      const formattedEnd = this.formatEventDateTimePtBr(endMs);
+      return {
+        status,
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ ENCERRADO',
+        idleCallToActionSubtitle: 'Obrigado por participar!',
+        initialScreenMessage: `O quiz "${eventName}" foi encerrado em ${formattedEnd}. Obrigado pela participação!`,
+      };
+    }
+
+    return {
+      status,
+      isBlocked: false,
+      idleCallToActionTitle: defaultCallToAction,
+      idleCallToActionSubtitle: null,
+      initialScreenMessage: null,
+    };
+  }
+
+  // Valida e converte para milissegundos os tempos de inatividade e esmaecimento prévio.
+  getIdleTimingConfig(): IdleTimingConfig {
+    const defaultIdle = DEFAULT_SETTINGS.idleTimeoutSeconds;
+    const defaultFade = DEFAULT_SETTINGS.fadeOutLeadTimeSeconds;
+
+    const rawIdle = this.eventSettings.idleTimeoutSeconds;
+    const idleTimeoutSeconds =
+      Number.isFinite(rawIdle) && rawIdle >= MIN_IDLE_TIMEOUT_SECONDS ? rawIdle : defaultIdle;
+
+    const rawFade = this.eventSettings.fadeOutLeadTimeSeconds;
+    let fadeOutLeadSeconds =
+      Number.isFinite(rawFade) && rawFade >= MIN_FADE_OUT_LEAD_SECONDS ? rawFade : defaultFade;
+
+    if (fadeOutLeadSeconds >= idleTimeoutSeconds && idleTimeoutSeconds > defaultFade) {
+      fadeOutLeadSeconds = defaultFade;
+    } else if (fadeOutLeadSeconds >= idleTimeoutSeconds) {
+      fadeOutLeadSeconds = Math.max(1, Math.floor(idleTimeoutSeconds / 2));
+    }
+
+    const idleTimeoutMs = idleTimeoutSeconds * 1000;
+    const fadeOutLeadMs = fadeOutLeadSeconds * 1000;
+    const fadeOutStartMs = Math.max(0, idleTimeoutMs - fadeOutLeadMs);
+
+    return {
+      idleTimeoutMs,
+      fadeOutLeadMs,
+      fadeOutStartMs,
+    };
+  }
+
   async initialize(): Promise<TotemSessionSnapshot> {
     const storedConfig = await this.localStore.getTotemConfig();
     if (storedConfig) {
@@ -175,6 +280,14 @@ export class TotemSessionEngine {
   }
 
   async startMatch(rawName: string, rawPhone: string): Promise<StartMatchResult> {
+    const eventWindow = this.getEventWindowState();
+    if (eventWindow.isBlocked) {
+      return this.recordValidationFailure(
+        eventWindow.initialScreenMessage ??
+          'O Evento está fora do período de funcionamento configurado.',
+      );
+    }
+
     const normalizedName = normalizeParticipantName(rawName).trim();
     const formattedPhone = rawPhone.trim();
 
@@ -228,12 +341,29 @@ export class TotemSessionEngine {
     };
   }
 
-  resetToInitialScreen(): TotemSessionSnapshot {
+  private transitionWithCleanState(targetScreen: TotemScreenId): TotemSessionSnapshot {
     this.activeMatch = null;
     this.lastResult = null;
     this.lastValidationError = null;
-    this.screen = 'initial-screen';
+    this.screen = targetScreen;
     return this.getSnapshot();
+  }
+
+  resetToInitialScreen(): TotemSessionSnapshot {
+    return this.transitionWithCleanState('initial-screen');
+  }
+
+  // Entra na Tela de Descanso descartando qualquer Partida não finalizada e estado transitório.
+  enterIdleScreen(): TotemSessionSnapshot {
+    return this.transitionWithCleanState('idle-screen');
+  }
+
+  // Desperta da Tela de Descanso para a tela inicial com estado limpo.
+  wakeFromIdleScreen(): TotemSessionSnapshot {
+    if (this.screen !== 'idle-screen') {
+      return this.getSnapshot();
+    }
+    return this.transitionWithCleanState('initial-screen');
   }
 
   getPreparedQuestions(): PreparedQuestion[] {
@@ -647,6 +777,7 @@ export class TotemSessionEngine {
       initialized: this.initialized,
       screen: this.screen,
       event: structuredClone(this.totemConfig.event),
+      eventWindow: this.getEventWindowState(),
       availableQuestionsCount: activeQuestionsCount,
       activeMatch: this.activeMatch
         ? {
