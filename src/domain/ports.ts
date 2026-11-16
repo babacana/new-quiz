@@ -134,4 +134,12 @@ export interface CloudGateway {
     input: EventVisualAssetUploadInput,
   ): Promise<{ url: string; fileName: string }>;
   downloadVisualAsset(url: string): Promise<{ dataUrl: string; mimeType: string }>;
+
+  // Importação direta de registros históricos/backup sem acionar débito de estoque (T8)
+  importOperationalRecords(payload: {
+    matches: MatchRecord[];
+    prizeClaims: PrizeClaimRecord[];
+    lockouts: GiveUpLockoutRecord[];
+    replaceEventIds?: string[];
+  }): Promise<void>;
 }
