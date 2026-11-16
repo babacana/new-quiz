@@ -10,7 +10,7 @@ import type {
   QuestionsImportMode,
   SortDirection,
 } from '../domain/types';
-import { DIFFICULTY_LABELS } from './formatters';
+import { DIFFICULTY_LABELS, triggerFileDownload } from './formatters';
 
 export interface AdminQuestionsTabProps {
   controller: EventAdminController;
@@ -40,23 +40,6 @@ function buildEmptyQuestionEditor(): QuestionEditorState {
     tagsInput: '',
     isDisabled: false,
   };
-}
-
-function triggerFileDownload(filename: string, content: string, mimeType: string): void {
-  if (typeof URL.createObjectURL !== 'function') {
-    return;
-  }
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  if (typeof URL.revokeObjectURL === 'function') {
-    URL.revokeObjectURL(url);
-  }
 }
 
 // Aba administrativa do Banco de Questões Central (CRUD, filtros, lote, preview e JSON/CSV).

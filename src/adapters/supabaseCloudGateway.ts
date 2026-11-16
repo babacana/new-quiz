@@ -1,5 +1,10 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from '../domain/defaults';
+import {
+  computeExpiredLockoutIso,
+  selectDeliverableClaimIds,
+  toEventPhoneKey,
+} from '../domain/operationalRules';
 import { normalizePairingCode } from '../domain/pairingUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
@@ -203,32 +208,17 @@ export class SupabaseCloudGateway implements CloudGateway {
       throw new Error(`Erro ao buscar Bloqueios do Evento: ${lockoutsRes.error.message}`);
     }
 
-    const matches = ((matchesRes.data ?? []) as SupabaseMatchRow[]).map((row) => ({
-      id: row.id,
-      eventId: row.event_id,
-      totemId: row.totem_id,
-      participantName: row.participant_name,
-      participantPhone: row.participant_phone,
-      score: row.score,
-      totalQuestions: row.total_questions,
-      timeSeconds: row.time_seconds,
-      answers: row.answers ?? [],
-      playedAt: row.played_at,
-      syncedAt: row.synced_at,
-    }));
+    const matches = ((matchesRes.data ?? []) as SupabaseMatchRow[]).map((row) =>
+      this.mapMatchRow(row),
+    );
 
     const prizeClaims = ((claimsRes.data ?? []) as SupabasePrizeClaimRow[]).map((row) =>
       this.mapPrizeClaimRow(row),
     );
 
-    const lockouts = ((lockoutsRes.data ?? []) as SupabaseLockoutRow[]).map((row) => ({
-      id: row.id,
-      eventId: row.event_id,
-      totemId: row.totem_id,
-      participantPhone: row.participant_phone,
-      lockedAt: row.locked_at,
-      expiresAt: row.expires_at,
-    }));
+    const lockouts = ((lockoutsRes.data ?? []) as SupabaseLockoutRow[]).map((row) =>
+      this.mapLockoutRow(row),
+    );
 
     return { event, questions, matches, prizeClaims, lockouts };
   }
@@ -338,6 +328,33 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     return { syncedAt, resolvedPrizeClaim, prizeStockRemaining };
+  }
+
+  private mapMatchRow(row: SupabaseMatchRow): MatchRecord {
+    return {
+      id: row.id,
+      eventId: row.event_id,
+      totemId: row.totem_id,
+      participantName: row.participant_name,
+      participantPhone: row.participant_phone,
+      score: row.score,
+      totalQuestions: row.total_questions,
+      timeSeconds: row.time_seconds,
+      answers: row.answers ?? [],
+      playedAt: row.played_at,
+      syncedAt: row.synced_at,
+    };
+  }
+
+  private mapLockoutRow(row: SupabaseLockoutRow): GiveUpLockoutRecord {
+    return {
+      id: row.id,
+      eventId: row.event_id,
+      totemId: row.totem_id,
+      participantPhone: row.participant_phone,
+      lockedAt: row.locked_at,
+      expiresAt: row.expires_at,
+    };
   }
 
   private mapPrizeClaimRow(row: SupabasePrizeClaimRow): PrizeClaimRecord {
@@ -1056,6 +1073,19 @@ export class SupabaseCloudGateway implements CloudGateway {
             });
           },
         )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+          this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'prize_claims' }, () => {
+          this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+        })
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'give_up_lockouts' },
+          () => {
+            this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+          },
+        )
         .subscribe();
     }
 
@@ -1067,5 +1097,241 @@ export class SupabaseCloudGateway implements CloudGateway {
         void this.client.removeChannel(channel);
       }
     };
+  }
+
+  private async getCurrentStaffUserId(): Promise<string | null> {
+    const { data } = await this.client.auth.getSession();
+    return data.session?.user?.id ?? null;
+  }
+
+  async listMatches(eventId?: string): Promise<MatchRecord[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para listar Partidas.');
+    }
+
+    let query = this.client.from('matches').select('*').order('played_at', { ascending: false });
+    if (eventId) {
+      query = query.eq('event_id', eventId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Erro ao listar Partidas no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseMatchRow[]).map((row) => this.mapMatchRow(row));
+  }
+
+  async listPrizeClaims(eventId?: string): Promise<PrizeClaimRecord[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para listar Brindes.');
+    }
+
+    let query = this.client
+      .from('prize_claims')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (eventId) {
+      query = query.eq('event_id', eventId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Erro ao listar Brindes no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabasePrizeClaimRow[]).map((row) => this.mapPrizeClaimRow(row));
+  }
+
+  async listGiveUpLockouts(eventId?: string): Promise<GiveUpLockoutRecord[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para listar Bloqueios por Desistência.');
+    }
+
+    let query = this.client
+      .from('give_up_lockouts')
+      .select('*')
+      .order('locked_at', { ascending: false });
+    if (eventId) {
+      query = query.eq('event_id', eventId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new Error(`Erro ao listar Bloqueios no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseLockoutRow[]).map((row) => this.mapLockoutRow(row));
+  }
+
+  async updatePrizeClaimsStatus(
+    claimIds: string[],
+    status: 'delivered' | 'revoked',
+    deliveredAt?: string | null,
+  ): Promise<PrizeClaimRecord[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para atualizar status de Brinde.');
+    }
+
+    const uniqueIds = Array.from(new Set(claimIds));
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    if (status === 'revoked') {
+      const { data, error } = await this.client
+        .from('prize_claims')
+        .update({ status: 'revoked', delivered_at: null })
+        .in('id', uniqueIds)
+        .in('status', ['awaiting_pickup', 'delivered', 'offline_duplicate_conflict'])
+        .select('*');
+
+      if (error) {
+        throw new Error(`Erro ao despremiar Brindes no Supabase: ${error.message}`);
+      }
+
+      return ((data ?? []) as SupabasePrizeClaimRow[]).map((row) => this.mapPrizeClaimRow(row));
+    }
+
+    const { data: candidates, error: fetchError } = await this.client
+      .from('prize_claims')
+      .select('*')
+      .in('id', uniqueIds)
+      .eq('status', 'awaiting_pickup');
+
+    if (fetchError) {
+      throw new Error(`Erro ao validar Brindes para entrega: ${fetchError.message}`);
+    }
+
+    const awaitingRows = (candidates ?? []) as SupabasePrizeClaimRow[];
+    if (awaitingRows.length === 0) {
+      return [];
+    }
+
+    // Garante no máximo 1 Brinde entregue por telefone em cada Evento mesmo com seleção múltipla.
+    const eventIds = Array.from(new Set(awaitingRows.map((row) => row.event_id)));
+    const { data: existingDelivered, error: deliveredCheckError } = await this.client
+      .from('prize_claims')
+      .select('event_id, participant_phone')
+      .in('event_id', eventIds)
+      .eq('status', 'delivered');
+
+    if (deliveredCheckError) {
+      throw new Error(
+        `Erro ao verificar entregas existentes no Supabase: ${deliveredCheckError.message}`,
+      );
+    }
+
+    const alreadyDeliveredKeys = new Set(
+      ((existingDelivered ?? []) as Array<{ event_id: string; participant_phone: string }>).map(
+        (row) => toEventPhoneKey(row.event_id, row.participant_phone),
+      ),
+    );
+
+    const eligibleIds = selectDeliverableClaimIds(
+      awaitingRows.map((row) => ({
+        id: row.id,
+        eventId: row.event_id,
+        participantPhone: row.participant_phone,
+        status: row.status,
+      })),
+      alreadyDeliveredKeys,
+    );
+
+    if (eligibleIds.length === 0) {
+      return [];
+    }
+
+    const staffUserId = await this.getCurrentStaffUserId();
+    const effectiveDeliveredAt = deliveredAt ?? new Date().toISOString();
+
+    const { data: updatedRows, error: updateError } = await this.client
+      .from('prize_claims')
+      .update({
+        status: 'delivered',
+        delivered_at: effectiveDeliveredAt,
+        ...(staffUserId ? { delivered_by: staffUserId } : {}),
+      })
+      .in('id', eligibleIds)
+      .eq('status', 'awaiting_pickup')
+      .select('*');
+
+    if (updateError) {
+      throw new Error(`Erro ao confirmar entrega de Brinde no Supabase: ${updateError.message}`);
+    }
+
+    return ((updatedRows ?? []) as SupabasePrizeClaimRow[]).map((row) =>
+      this.mapPrizeClaimRow(row),
+    );
+  }
+
+  async expireGiveUpLockouts(eventId: string, participantPhones: string[]): Promise<number> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para destravar Bloqueios por Desistência.');
+    }
+
+    const phones = Array.from(new Set(participantPhones.map((phone) => phone.trim()).filter(Boolean)));
+    if (phones.length === 0) {
+      return 0;
+    }
+
+    const { data: rows, error: fetchError } = await this.client
+      .from('give_up_lockouts')
+      .select('*')
+      .eq('event_id', eventId)
+      .in('participant_phone', phones);
+
+    if (fetchError) {
+      throw new Error(`Erro ao consultar Bloqueios por Desistência: ${fetchError.message}`);
+    }
+
+    const nowMs = Date.now();
+    const staffUserId = await this.getCurrentStaffUserId();
+    let updatedCount = 0;
+
+    for (const row of (rows ?? []) as SupabaseLockoutRow[]) {
+      const nextExpiresIso = computeExpiredLockoutIso(row.locked_at, row.expires_at, nowMs);
+      if (!nextExpiresIso) {
+        continue;
+      }
+
+      const { error: updateError } = await this.client
+        .from('give_up_lockouts')
+        .update({
+          expires_at: nextExpiresIso,
+          ...(staffUserId ? { unlocked_by: staffUserId } : {}),
+        })
+        .eq('id', row.id);
+
+      if (updateError) {
+        throw new Error(`Erro ao destravar Bloqueio por Desistência: ${updateError.message}`);
+      }
+      updatedCount += 1;
+    }
+
+    return updatedCount;
+  }
+
+  async deleteMatches(matchIds: string[]): Promise<string[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para excluir Partidas.');
+    }
+
+    const uniqueIds = Array.from(new Set(matchIds));
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await this.client
+      .from('matches')
+      .delete()
+      .in('id', uniqueIds)
+      .select('id');
+
+    if (error) {
+      throw new Error(`Erro ao excluir Partidas no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
   }
 }

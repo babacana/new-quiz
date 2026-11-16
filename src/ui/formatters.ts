@@ -61,10 +61,10 @@ export function formatAwardedAtPtBr(isoString: string): string {
   return `Participação em: ${datePart} às ${timePart}`;
 }
 
-// Formata horário do último ping/heartbeat de um Totem ou indica ausência de ping.
-export function formatLastSeenPtBr(isoString: string | null): string {
+// Formata data/hora ISO em pt-BR (dd/MM/yyyy HH:mm:ss).
+export function formatDateTimePtBr(isoString: string | null, fallback = '-'): string {
   if (!isoString) {
-    return 'Sem ping registrado';
+    return fallback;
   }
   const dateObj = new Date(isoString);
   if (Number.isNaN(dateObj.getTime())) {
@@ -79,4 +79,27 @@ export function formatLastSeenPtBr(isoString: string | null): string {
     second: '2-digit',
     hour12: false,
   });
+}
+
+// Formata horário do último ping/heartbeat de um Totem ou indica ausência de ping.
+export function formatLastSeenPtBr(isoString: string | null): string {
+  return formatDateTimePtBr(isoString, 'Sem ping registrado');
+}
+
+// Dispara download local de texto (CSV/JSON) no navegador com proteção para ambientes sem objectURL.
+export function triggerFileDownload(filename: string, content: string, mimeType: string): void {
+  if (typeof URL.createObjectURL !== 'function') {
+    return;
+  }
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  if (typeof URL.revokeObjectURL === 'function') {
+    URL.revokeObjectURL(url);
+  }
 }

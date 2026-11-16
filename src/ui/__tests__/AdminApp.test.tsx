@@ -1,6 +1,6 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_ID } from '../../domain/defaults';
@@ -308,5 +308,245 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.click(reloadButtons[0]);
     expect(await screen.findByText(/Comando Reiniciar Tela enviado para "Totem Hall A"/i)).toBeInTheDocument();
     expect(totemEngine.getSnapshot().screen).toBe('idle-screen');
+  });
+
+  it('opera painel móvel do Operador (#operador) com fila de Brindes, Conflito Offline, Ranking, Despremiar e Destravar', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+    const [defaultEvent] = await cloudGateway.listEvents();
+    await cloudGateway.saveEvent({
+      ...defaultEvent!,
+      prizeStockRemaining: 8,
+    });
+
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'op-m-1',
+      match: {
+        id: 'op-match-1',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-1',
+        participantName: 'FERNANDA BRINDE',
+        participantPhone: '(61) 99222-1111',
+        score: 5,
+        totalQuestions: 5,
+        timeSeconds: 19,
+        answers: [],
+        playedAt: '2026-11-16T10:30:00.000Z',
+      },
+      prizeClaim: {
+        id: 'op-claim-1',
+        eventId: DEFAULT_EVENT_ID,
+        matchId: 'op-match-1',
+        totemId: 'totem-1',
+        participantName: 'FERNANDA BRINDE',
+        participantPhone: '(61) 99222-1111',
+        status: 'awaiting_pickup',
+        awardedAt: '2026-11-16T10:30:00.000Z',
+        deliveredAt: null,
+      },
+    });
+
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'op-m-2',
+      match: {
+        id: 'op-match-2',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-2',
+        participantName: 'FERNANDA CONFLITO',
+        participantPhone: '(61) 99222-1111',
+        score: 4,
+        totalQuestions: 5,
+        timeSeconds: 22,
+        answers: [],
+        playedAt: '2026-11-16T10:40:00.000Z',
+      },
+      prizeClaim: {
+        id: 'op-claim-2',
+        eventId: DEFAULT_EVENT_ID,
+        matchId: 'op-match-2',
+        totemId: 'totem-2',
+        participantName: 'FERNANDA CONFLITO',
+        participantPhone: '(61) 99222-1111',
+        status: 'awaiting_pickup',
+        awardedAt: '2026-11-16T10:40:00.000Z',
+        deliveredAt: null,
+      },
+    });
+
+    await cloudGateway.pushGiveUpLockout({
+      idempotencyKey: 'op-lock-1',
+      lockout: {
+        id: 'lockout-op-1',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-1',
+        participantPhone: '(61) 98333-4444',
+        lockedAt: '2026-11-16T11:50:00.000Z',
+        expiresAt: '2026-11-16T12:20:00.000Z',
+      },
+    });
+
+    render(<AdminApp controller={controller} routeMode="operator" />);
+    const user = await signInThroughUi('operador@caesb.df.gov.br', 'OPERADOR2025!');
+
+    const conflictAlert = await screen.findByRole('alert');
+    expect(within(conflictAlert).getByText(/Conflito de Premiação Offline/i)).toBeInTheDocument();
+    expect(screen.getByText(/Fila Aguardando Retirada \(1\)/i)).toBeInTheDocument();
+    expect(screen.getByText(/Ranking ao Vivo \(2\)/i)).toBeInTheDocument();
+
+    // Confirma entrega única via botão Entregue no alerta de conflito
+    await user.click(within(conflictAlert).getByRole('button', { name: 'Entregue' }));
+    expect(await screen.findByText(/Brinde entregue para "FERNANDA BRINDE"/i)).toBeInTheDocument();
+
+    const claimsAfterDelivery = await cloudGateway.listPrizeClaims(DEFAULT_EVENT_ID);
+    expect(claimsAfterDelivery.filter((c) => c.status === 'delivered')).toHaveLength(1);
+    expect(claimsAfterDelivery.filter((c) => c.status === 'offline_duplicate_conflict')).toHaveLength(1);
+
+    // Nova Partida sincronizada após montagem atualiza Ranking ao Vivo automaticamente em tempo real
+    await act(async () => {
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'op-m-live',
+        match: {
+          id: 'op-match-live',
+          eventId: DEFAULT_EVENT_ID,
+          totemId: 'totem-1',
+          participantName: 'LUCAS TEMPO REAL',
+          participantPhone: '(61) 99444-7777',
+          score: 3,
+          totalQuestions: 5,
+          timeSeconds: 25,
+          answers: [],
+          playedAt: '2026-11-16T12:01:00.000Z',
+        },
+        prizeClaim: null,
+      });
+    });
+    expect(await screen.findByText(/Ranking ao Vivo \(3\)/i)).toBeInTheDocument();
+    expect(screen.getAllByText('LUCAS TEMPO REAL').length).toBeGreaterThanOrEqual(1);
+
+    // Destrava telefone bloqueado por desistência
+    await user.click(screen.getByRole('button', { name: 'Destravar' }));
+    expect(
+      await screen.findByText(/Telefone \(61\) 98333-4444 destravado no Evento/i),
+    ).toBeInTheDocument();
+
+    // Busca rápida e Despremiar
+    await user.type(screen.getByLabelText('Buscar por Nome ou Telefone'), 'FERNANDA BRINDE');
+    const revokeBtns = screen.getAllByRole('button', { name: 'Despremiar' });
+    await user.click(revokeBtns[0]!);
+    expect(await screen.findByText(/Brinde despremiado/i)).toBeInTheDocument();
+  });
+
+  it('filtra, ordena, abre detalhes da Partida, executa ações em lote e exporta CSV/JSON nos Relatórios do Admin', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'rep-1',
+      match: {
+        id: 'rep-match-1',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-1',
+        participantName: 'GUSTAVO RELATORIO',
+        participantPhone: '(61) 99444-5555',
+        score: 4,
+        totalQuestions: 5,
+        timeSeconds: 21,
+        answers: [
+          {
+            questionId: 10,
+            questionText: 'Qual o papel da CAESB?',
+            options: ['Água e Esgoto', 'Energia', 'Gás', 'Telecom'],
+            selectedOptionText: 'Água e Esgoto',
+            correctOptionIndex: 0,
+            correctOptionText: 'Água e Esgoto',
+            isCorrect: true,
+          },
+          {
+            questionId: 11,
+            questionText: 'O que economiza água?',
+            options: ['Fechar a torneira', 'Mangueira aberta', 'Vazamento', 'Nenhum'],
+            selectedOptionText: 'Mangueira aberta',
+            correctOptionIndex: 0,
+            correctOptionText: 'Fechar a torneira',
+            isCorrect: false,
+          },
+        ],
+        playedAt: '2026-11-16T09:15:00.000Z',
+      },
+      prizeClaim: {
+        id: 'rep-claim-1',
+        eventId: DEFAULT_EVENT_ID,
+        matchId: 'rep-match-1',
+        totemId: 'totem-1',
+        participantName: 'GUSTAVO RELATORIO',
+        participantPhone: '(61) 99444-5555',
+        status: 'awaiting_pickup',
+        awardedAt: '2026-11-16T09:15:00.000Z',
+        deliveredAt: null,
+      },
+    });
+
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'rep-2',
+      match: {
+        id: 'rep-match-2',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-1',
+        participantName: 'HELENA SEM BRINDE',
+        participantPhone: '(61) 99555-6666',
+        score: 1,
+        totalQuestions: 5,
+        timeSeconds: 30,
+        answers: [],
+        playedAt: '2026-11-15T14:00:00.000Z',
+      },
+      prizeClaim: null,
+    });
+
+    const csvSpy = vi.spyOn(controller, 'exportParticipantsCsv');
+    const jsonSpy = vi.spyOn(controller, 'exportParticipantsJson');
+
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    await user.click(await screen.findByRole('button', { name: 'Relatórios e Participantes' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Relatórios Operacionais e Participantes' }),
+    ).toBeInTheDocument();
+
+    expect(await screen.findByText('GUSTAVO RELATORIO')).toBeInTheDocument();
+    expect(screen.getByText('HELENA SEM BRINDE')).toBeInTheDocument();
+
+    // Abre modal de detalhes e verifica Respostas e contagem de Partidas
+    const detailsBtns = screen.getAllByRole('button', { name: 'Ver Detalhes' });
+    await user.click(detailsBtns[0]!);
+    const modal = await screen.findByRole('dialog');
+    expect(within(modal).getByText(/Detalhes da Partida · GUSTAVO RELATORIO/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Partidas do telefone no Evento/i)).toBeInTheDocument();
+    expect(within(modal).getByText(/Alternativa correta: Fechar a torneira/i)).toBeInTheDocument();
+    await user.click(within(modal).getByRole('button', { name: 'Fechar' }));
+
+    // Ação em lote: selecionar GUSTAVO e confirmar entrega
+    await user.click(screen.getByLabelText('Selecionar Partida de GUSTAVO RELATORIO'));
+    await user.click(screen.getByRole('button', { name: 'Confirmar Entrega' }));
+    expect(await screen.findByText(/1 entrega\(s\) de Brinde confirmada\(s\)/i)).toBeInTheDocument();
+
+    // Exportar CSV e JSON com filtro aplicado
+    await user.selectOptions(screen.getByLabelText('Status do Brinde'), 'non_winners');
+    expect(screen.queryByText('GUSTAVO RELATORIO')).not.toBeInTheDocument();
+    expect(screen.getByText('HELENA SEM BRINDE')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Exportar CSV' }));
+    expect(csvSpy).toHaveBeenCalled();
+    expect(await screen.findByText(/Relatório exportado em formato CSV/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Exportar JSON' }));
+    expect(jsonSpy).toHaveBeenCalled();
+    expect(await screen.findByText(/Relatório exportado em formato JSON/i)).toBeInTheDocument();
+
+    // Excluir Partida via ação em lote
+    await user.click(screen.getByLabelText('Selecionar Partida de HELENA SEM BRINDE'));
+    await user.click(screen.getByRole('button', { name: 'Excluir' }));
+    expect(
+      await screen.findByText(/1 Partida\(s\) excluída\(s\) com atualização nos Totens/i),
+    ).toBeInTheDocument();
   });
 });

@@ -38,8 +38,10 @@ export interface LocalStore {
   saveQuestions(eventId: string, questions: Question[]): Promise<void>;
   getMatches(eventId: string): Promise<MatchRecord[]>;
   saveMatch(match: MatchRecord): Promise<void>;
+  deleteMatch(matchId: string): Promise<void>;
   getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]>;
   savePrizeClaim(claim: PrizeClaimRecord): Promise<void>;
+  deletePrizeClaim(claimId: string): Promise<void>;
   getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]>;
   saveLockout(lockout: GiveUpLockoutRecord): Promise<void>;
   getSyncQueue(): Promise<SyncQueueItem[]>;
@@ -110,4 +112,16 @@ export interface CloudGateway {
   subscribeTotemChannel(
     listener: (event: TotemChannelEvent) => void | Promise<void>,
   ): () => void;
+
+  // Relatórios operacionais, Brindes e Bloqueios na nuvem (T6)
+  listMatches(eventId?: string): Promise<MatchRecord[]>;
+  listPrizeClaims(eventId?: string): Promise<PrizeClaimRecord[]>;
+  listGiveUpLockouts(eventId?: string): Promise<GiveUpLockoutRecord[]>;
+  updatePrizeClaimsStatus(
+    claimIds: string[],
+    status: 'delivered' | 'revoked',
+    deliveredAt?: string | null,
+  ): Promise<PrizeClaimRecord[]>;
+  expireGiveUpLockouts(eventId: string, participantPhones: string[]): Promise<number>;
+  deleteMatches(matchIds: string[]): Promise<string[]>;
 }

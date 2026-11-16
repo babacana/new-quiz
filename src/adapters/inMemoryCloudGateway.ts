@@ -1,4 +1,9 @@
 import { DEFAULT_EVENT_CONFIG, DEFAULT_QUIZ_QUESTIONS } from '../domain/defaults';
+import {
+  computeExpiredLockoutIso,
+  selectDeliverableClaimIds,
+  toEventPhoneKey,
+} from '../domain/operationalRules';
 import { normalizePairingCode } from '../domain/pairingUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
@@ -418,6 +423,11 @@ export class InMemoryCloudGateway implements CloudGateway {
       prizeStockRemaining,
     });
 
+    await this.emitChannelEvent({
+      type: 'OPERATIONAL_DATA_UPDATED',
+      eventId: persistedMatch.eventId,
+    });
+
     return {
       syncedAt,
       resolvedPrizeClaim: structuredClone(resolvedPrizeClaim),
@@ -435,6 +445,10 @@ export class InMemoryCloudGateway implements CloudGateway {
 
     if (!this.lockoutsByIdempotencyKey.has(payload.idempotencyKey)) {
       this.lockoutsByIdempotencyKey.set(payload.idempotencyKey, structuredClone(payload.lockout));
+      await this.emitChannelEvent({
+        type: 'OPERATIONAL_DATA_UPDATED',
+        eventId: payload.lockout.eventId,
+      });
     }
 
     return { syncedAt: this.nowIso() };
@@ -650,5 +664,172 @@ export class InMemoryCloudGateway implements CloudGateway {
     return () => {
       this.channelListeners.delete(listener);
     };
+  }
+
+  async listMatches(eventId?: string): Promise<MatchRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para listar Partidas.');
+    }
+    return this.getSyncedMatches(eventId);
+  }
+
+  async listPrizeClaims(eventId?: string): Promise<PrizeClaimRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para listar Brindes.');
+    }
+    return this.getPrizeClaims(eventId);
+  }
+
+  async listGiveUpLockouts(eventId?: string): Promise<GiveUpLockoutRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para listar Bloqueios por Desistência.');
+    }
+    return this.getLockouts(eventId);
+  }
+
+  async updatePrizeClaimsStatus(
+    claimIds: string[],
+    status: 'delivered' | 'revoked',
+    deliveredAt?: string | null,
+  ): Promise<PrizeClaimRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para atualizar status de Brinde.');
+    }
+
+    const targetIds = new Set(claimIds);
+    if (targetIds.size === 0) {
+      return [];
+    }
+
+    const effectiveDeliveredAt = status === 'delivered' ? (deliveredAt ?? this.nowIso()) : null;
+    const updatedClaims: PrizeClaimRecord[] = [];
+
+    for (const [eventId, claims] of this.prizeClaimsByEvent.entries()) {
+      const alreadyDeliveredKeys = new Set(
+        claims
+          .filter((claim) => claim.status === 'delivered')
+          .map((claim) => toEventPhoneKey(claim.eventId, claim.participantPhone)),
+      );
+      const deliverableIds =
+        status === 'delivered'
+          ? new Set(
+              selectDeliverableClaimIds(
+                claims.filter((claim) => targetIds.has(claim.id)),
+                alreadyDeliveredKeys,
+              ),
+            )
+          : null;
+
+      let eventModified = false;
+      const nextClaims = claims.map((claim) => {
+        if (!targetIds.has(claim.id)) {
+          return claim;
+        }
+
+        if (status === 'delivered') {
+          if (!deliverableIds?.has(claim.id)) {
+            return claim;
+          }
+          const updated: PrizeClaimRecord = {
+            ...structuredClone(claim),
+            status: 'delivered',
+            deliveredAt: effectiveDeliveredAt,
+          };
+          updatedClaims.push(structuredClone(updated));
+          eventModified = true;
+          return updated;
+        }
+
+        if (claim.status === 'revoked') {
+          return claim;
+        }
+
+        const updated: PrizeClaimRecord = {
+          ...structuredClone(claim),
+          status: 'revoked',
+          deliveredAt: null,
+        };
+        updatedClaims.push(structuredClone(updated));
+        eventModified = true;
+        return updated;
+      });
+
+      if (eventModified) {
+        this.prizeClaimsByEvent.set(eventId, nextClaims);
+      }
+    }
+
+    if (updatedClaims.length > 0) {
+      await this.emitChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+    }
+
+    return updatedClaims;
+  }
+
+  async expireGiveUpLockouts(eventId: string, participantPhones: string[]): Promise<number> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para destravar Bloqueios por Desistência.');
+    }
+
+    const phoneSet = new Set(participantPhones.map((phone) => phone.trim()).filter(Boolean));
+    if (phoneSet.size === 0) {
+      return 0;
+    }
+
+    const nowMs = Date.parse(this.nowIso());
+    let updatedCount = 0;
+
+    for (const [key, lockout] of this.lockoutsByIdempotencyKey.entries()) {
+      if (lockout.eventId !== eventId || !phoneSet.has(lockout.participantPhone)) {
+        continue;
+      }
+
+      const nextExpiresIso = computeExpiredLockoutIso(lockout.lockedAt, lockout.expiresAt, nowMs);
+      if (nextExpiresIso) {
+        this.lockoutsByIdempotencyKey.set(key, {
+          ...structuredClone(lockout),
+          expiresAt: nextExpiresIso,
+        });
+        updatedCount += 1;
+      }
+    }
+
+    if (updatedCount > 0) {
+      await this.emitChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED', eventId });
+    }
+
+    return updatedCount;
+  }
+
+  async deleteMatches(matchIds: string[]): Promise<string[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para excluir Partidas.');
+    }
+
+    const matchIdSet = new Set(matchIds);
+    if (matchIdSet.size === 0) {
+      return [];
+    }
+
+    const deletedIds: string[] = [];
+    for (const [key, entry] of this.syncedMatchesByIdempotencyKey.entries()) {
+      if (matchIdSet.has(entry.match.id)) {
+        deletedIds.push(entry.match.id);
+        this.syncedMatchesByIdempotencyKey.delete(key);
+      }
+    }
+
+    if (deletedIds.length > 0) {
+      const deletedSet = new Set(deletedIds);
+      for (const [eventId, claims] of this.prizeClaimsByEvent.entries()) {
+        const remaining = claims.filter((claim) => !deletedSet.has(claim.matchId));
+        if (remaining.length !== claims.length) {
+          this.prizeClaimsByEvent.set(eventId, remaining);
+        }
+      }
+      await this.emitChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+    }
+
+    return deletedIds;
   }
 }

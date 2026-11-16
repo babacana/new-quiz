@@ -704,8 +704,30 @@ export class TotemSessionEngine {
     await this.localStore.saveTotemConfig(this.totemConfig);
     await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
 
-    for (const cloudMatch of cloudSnapshot.matches ?? []) {
-      await this.localStore.saveMatch(cloudMatch);
+    if (cloudSnapshot.matches !== undefined) {
+      const cloudMatchIds = new Set(cloudSnapshot.matches.map((match) => match.id));
+      const localMatches = await this.localStore.getMatches(this.totemConfig.event.id);
+      const deletedMatchIds = new Set<string>();
+
+      for (const localMatch of localMatches) {
+        if (Boolean(localMatch.syncedAt) && !cloudMatchIds.has(localMatch.id)) {
+          deletedMatchIds.add(localMatch.id);
+          await this.localStore.deleteMatch(localMatch.id);
+        }
+      }
+
+      if (deletedMatchIds.size > 0) {
+        const localClaims = await this.localStore.getPrizeClaims(this.totemConfig.event.id);
+        for (const claim of localClaims) {
+          if (deletedMatchIds.has(claim.matchId)) {
+            await this.localStore.deletePrizeClaim(claim.id);
+          }
+        }
+      }
+
+      for (const cloudMatch of cloudSnapshot.matches) {
+        await this.localStore.saveMatch(cloudMatch);
+      }
     }
     for (const cloudClaim of cloudSnapshot.prizeClaims ?? []) {
       await this.localStore.savePrizeClaim(cloudClaim);
@@ -1108,6 +1130,7 @@ export class TotemSessionEngine {
 
     if (shouldRefreshFromCloud) {
       await this.pullAndMergeCloudSnapshot();
+      await this.refreshRankingCache();
     }
 
     const remainingQueue = await this.localStore.getSyncQueue();

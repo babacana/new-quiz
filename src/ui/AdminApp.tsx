@@ -10,13 +10,15 @@ import type {
 } from '../domain/types';
 import { AdminEventsTab } from './AdminEventsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
+import { AdminReportsTab } from './AdminReportsTab';
 import { AdminStaffTab } from './AdminStaffTab';
 import { AdminTotemsTab } from './AdminTotemsTab';
 import type { ExternalRouteNavigationRequest } from './AppRouter';
+import { OperatorPanel } from './OperatorPanel';
 import { createDefaultCloudGateway } from './cloudFactory';
 import './styles.css';
 
-type AdminTabId = 'events' | 'questions' | 'totems' | 'staff';
+type AdminTabId = 'events' | 'reports' | 'questions' | 'totems' | 'staff';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -393,34 +395,13 @@ export function AdminApp({
       )}
 
       {showOperatorView ? (
-        <section id="operator-restricted-view" className="admin-panel-card">
-          <h3>Visão do Operador de Estande</h3>
-          <p className="admin-subtitle">
-            {isAdmin
-              ? 'Visualização enxuta de operação de estande na rota #operador.'
-              : 'Perfil com acesso restrito à operação de estande. A criação/edição de Eventos, regras do jogo, Banco de Questões e gestão da Equipe do Estande são exclusivas do Administrador.'}
-          </p>
-
-          <h4>Eventos Disponíveis ({events.length})</h4>
-          <div className="admin-events-list">
-            {events.map((ev) => (
-              <div key={ev.id} className="admin-event-row">
-                <div>
-                  <strong>{ev.name}</strong> · <code>{ev.slug}</code>
-                  <div>
-                    <small>
-                      Estoque de Brindes:{' '}
-                      {ev.prizeStockRemaining === null ? 'Ilimitado' : ev.prizeStockRemaining}
-                    </small>
-                  </div>
-                </div>
-                <span className={`admin-badge ${ev.isActive ? 'active' : 'closed'}`}>
-                  {ev.isActive ? 'Ativo' : 'Encerrado'}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
+        <OperatorPanel
+          controller={controller}
+          events={events}
+          isAdmin={isAdmin}
+          onEventsChanged={() => loadWorkspaceData()}
+          onStatusMessage={handleStatusMessage}
+        />
       ) : (
         <>
           <nav className="admin-tabs-nav" aria-label="Navegação administrativa">
@@ -430,6 +411,13 @@ export function AdminApp({
               onClick={() => requestGuardedAction({ type: 'tab', tab: 'events' })}
             >
               Eventos e Configurações
+            </button>
+            <button
+              type="button"
+              className={`admin-tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'reports' })}
+            >
+              Relatórios e Participantes
             </button>
             <button
               type="button"
@@ -464,6 +452,15 @@ export function AdminApp({
               onRequestGuardedAction={requestGuardedCallback}
               onEventsChanged={loadWorkspaceData}
               onRegisterSaveHandler={registerSaveHandler}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'reports' && (
+            <AdminReportsTab
+              controller={controller}
+              events={events}
+              onEventsChanged={() => loadWorkspaceData()}
               onStatusMessage={handleStatusMessage}
             />
           )}

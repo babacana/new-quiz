@@ -855,4 +855,495 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       expect(lockoutsEventB).toHaveLength(0);
     });
   });
+
+  describe('T6 - Slice 1: Operador de Estande, Entregas, Conflitos Offline, Despremiar, Destravar e Excluir', () => {
+    async function completeMatchOnTotem(
+      totem: TotemSessionEngine,
+      name: string,
+      phone: string,
+      options: { allCorrect?: boolean } = {},
+    ): Promise<void> {
+      const allCorrect = options.allCorrect ?? true;
+      totem.wakeFromIdleScreen();
+      const started = await totem.startMatch(name, phone);
+      expect(started.started).toBe(true);
+
+      while (totem.getSnapshot().screen === 'quiz-screen') {
+        const current = totem.getSnapshot().activeMatch?.currentQuestion;
+        if (!current) {
+          break;
+        }
+        const optionIndex = allCorrect
+          ? current.question.shuffledOptions.findIndex((option) => option.isCorrect)
+          : current.question.shuffledOptions.findIndex((option) => !option.isCorrect);
+        totem.submitAnswer(optionIndex >= 0 ? optionIndex : 0);
+        await totem.advanceAfterAnswer();
+      }
+    }
+
+    it('permite ao Operador confirmar entrega, detectar Conflito Offline entregando apenas 1 Brinde, despremiar e destravar com reflexo imediato nos Totens', async () => {
+      const clock = new FakeClock('2026-11-16T10:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const event = await adminController.createEvent({
+        name: 'Evento Operacional T6',
+        isActive: true,
+        settings: {
+          numberOfQuestions: 2,
+          minScoreForPrize: 1,
+          prizeStockLimit: 5,
+          enablePrizeLock: true,
+          requireManualPrizeConfirmation: true,
+          giveUpLockoutMinutes: 10,
+        },
+      });
+
+      const createPairedTotem = async (name: string) => {
+        const totem = new TotemSessionEngine({
+          localStore: new InMemoryLocalStore(),
+          cloudGateway,
+          clock,
+          random,
+          requirePairing: true,
+        });
+        const init = await totem.initialize();
+        await adminController.authorizeTotemPairing({
+          pairingCode: init.pairing.pairingCode!,
+          name,
+          pinCode: '1234',
+          eventId: event.id,
+        });
+        totem.wakeFromIdleScreen();
+        return totem;
+      };
+
+      const totem1 = await createPairedTotem('Totem Estande 1');
+      const totem2 = await createPairedTotem('Totem Estande 2');
+
+      // Ambos os Totens operam offline e premiam o mesmo telefone (Conflito de Premiação Offline).
+      cloudGateway.setOnline(false);
+      await completeMatchOnTotem(totem1, 'MARIA CONFLITO', '(61) 99111-2222', { allCorrect: true });
+      await completeMatchOnTotem(totem2, 'MARIA CONFLITO', '(61) 99111-2222', { allCorrect: true });
+
+      // Totem 1 também registra uma desistência offline para outro telefone e uma Partida perdedora.
+      totem1.wakeFromIdleScreen();
+      await totem1.startMatch('JOAO DESISTENTE', '(61) 98888-3333');
+      await totem1.giveUpMatch();
+      await completeMatchOnTotem(totem1, 'PEDRO SEM BRINDE', '(61) 97777-4444', {
+        allCorrect: false,
+      });
+
+      // Volta conectividade e sincroniza ambos os Totens em ordem.
+      cloudGateway.setOnline(true);
+      await totem1.syncPendingQueue();
+      await totem2.syncPendingQueue();
+
+      // Operador assume o painel móvel e valida suas permissões + fila Aguardando Retirada + Conflito.
+      const operatorController = new EventAdminController({ cloudGateway, clock, random });
+      await operatorController.login('operador@caesb.df.gov.br', 'OPERADOR2025!');
+
+      const dashboard = await operatorController.getOperatorDashboard(event.id);
+      expect(dashboard.event.id).toBe(event.id);
+      expect(dashboard.event.prizeStockRemaining).toBe(4);
+      expect(dashboard.awaitingPickupQueue).toHaveLength(1);
+      expect(dashboard.awaitingPickupQueue[0]?.participantPhone).toBe('(61) 99111-2222');
+      expect(dashboard.offlineConflicts).toHaveLength(1);
+      expect(dashboard.offlineConflicts[0]?.participantPhone).toBe('(61) 99111-2222');
+      expect(dashboard.offlineConflicts[0]?.conflictClaims).toHaveLength(1);
+      expect(dashboard.activeLockouts).toHaveLength(1);
+      expect(dashboard.ranking).toHaveLength(3);
+
+      // Tentativa de entrega passando tanto o claim ativo quanto o claim de conflito entrega APENAS 1 Brinde.
+      const primaryClaimId = dashboard.offlineConflicts[0]!.activeClaimId!;
+      const conflictClaimId = dashboard.offlineConflicts[0]!.conflictClaims[0]!.claimId;
+      const delivered = await operatorController.confirmPrizeDeliveries([
+        primaryClaimId,
+        conflictClaimId,
+      ]);
+      expect(delivered).toHaveLength(1);
+      expect(delivered[0]?.id).toBe(primaryClaimId);
+      expect(delivered[0]?.status).toBe('delivered');
+
+      const claimsAfterDelivery = await cloudGateway.listPrizeClaims(event.id);
+      expect(claimsAfterDelivery.filter((claim) => claim.status === 'delivered')).toHaveLength(1);
+      expect(
+        claimsAfterDelivery.find((claim) => claim.id === conflictClaimId)?.status,
+      ).toBe('offline_duplicate_conflict');
+
+      // Operador destrava o telefone bloqueado por desistência -> Totem 1 volta a permitir Partida imediatamente.
+      const unlocked = await operatorController.unlockParticipantPhones(event.id, ['(61) 98888-3333']);
+      expect(unlocked).toBe(1);
+      await completeMatchOnTotem(totem1, 'JOAO DESISTENTE', '(61) 98888-3333', {
+        allCorrect: false,
+      });
+
+      // Operador despremia MARIA CONFLITO -> Totem 2 recebe CONFIG_UPDATED e libera a Trava de Brinde.
+      const revoked = await operatorController.revokePhonePrizeInEvent(event.id, '(61) 99111-2222');
+      expect(revoked.length).toBeGreaterThanOrEqual(1);
+      expect(revoked.every((claim) => claim.status === 'revoked' && claim.deliveredAt === null)).toBe(
+        true,
+      );
+
+      await completeMatchOnTotem(totem2, 'MARIA CONFLITO', '(61) 99111-2222', {
+        allCorrect: false,
+      });
+
+      // Operador NÃO pode excluir Partidas (exclusivo do Administrador).
+      const pedroMatchId = dashboard.recentParticipants.find(
+        (item) => item.participantPhone === '(61) 97777-4444',
+      )!.matchId;
+      await expect(operatorController.deleteParticipantMatches([pedroMatchId])).rejects.toThrow(
+        /Administrador/i,
+      );
+    });
+
+    it('permite apenas ao Administrador excluir Partidas, removendo-as do Ranking e liberando Trava de Brinde (inclusive com conflito offline)', async () => {
+      const clock = new FakeClock('2026-11-16T11:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const event = await adminController.createEvent({
+        name: 'Evento Exclusão Admin',
+        isActive: true,
+        settings: {
+          numberOfQuestions: 2,
+          minScoreForPrize: 1,
+          enablePrizeLock: true,
+        },
+      });
+
+      const createTotem = async (name: string) => {
+        const instance = new TotemSessionEngine({
+          localStore: new InMemoryLocalStore(),
+          cloudGateway,
+          clock,
+          random,
+          requirePairing: true,
+        });
+        const init = await instance.initialize();
+        await adminController.authorizeTotemPairing({
+          pairingCode: init.pairing.pairingCode!,
+          name,
+          pinCode: '9999',
+          eventId: event.id,
+        });
+        return instance;
+      };
+
+      const totem1 = await createTotem('Totem Ranking 1');
+      const totem2 = await createTotem('Totem Ranking 2');
+
+      cloudGateway.setOnline(false);
+      await completeMatchOnTotem(totem1, 'CAMPEA EXCLUIDA', '(61) 96666-1111', {
+        allCorrect: true,
+      });
+      await completeMatchOnTotem(totem2, 'CAMPEA EXCLUIDA', '(61) 96666-1111', {
+        allCorrect: true,
+      });
+
+      cloudGateway.setOnline(true);
+      await totem1.syncPendingQueue();
+      await totem2.syncPendingQueue();
+      expect(totem2.getSnapshot().ranking).toHaveLength(2);
+
+      const claims = await cloudGateway.listPrizeClaims(event.id);
+      const primaryMatchId = claims.find((c) => c.status !== 'offline_duplicate_conflict')!.matchId;
+      const deletedIds = await adminController.deleteParticipantMatches([primaryMatchId]);
+      expect(deletedIds).toEqual([primaryMatchId]);
+
+      // Ranking local foi atualizado e o conflito offline órfão também foi limpo, liberando o telefone.
+      expect(totem2.getSnapshot().ranking).toHaveLength(1);
+      totem2.wakeFromIdleScreen();
+      const canPlayAgain = await totem2.startMatch('CAMPEA EXCLUIDA', '(61) 96666-1111');
+      expect(canPlayAgain.started).toBe(true);
+    });
+  });
+
+  describe('T6 - Slice 2: Relatórios de Participantes, Filtros Combinados, Detalhes da Partida e Exportação CSV/JSON', () => {
+    it('filtra por Evento, busca, intervalo de datas, status do Brinde, bloqueio, pontuação exata, ordena e pagina dinamicamente', async () => {
+      const clock = new FakeClock('2026-11-16T12:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const eventA = await adminController.createEvent({
+        name: 'Evento Relatório A',
+        isActive: true,
+        settings: { numberOfQuestions: 3, minScoreForPrize: 2 },
+      });
+      const eventB = await adminController.createEvent({
+        name: 'Evento Relatório B',
+        isActive: false,
+        settings: { numberOfQuestions: 3, minScoreForPrize: 2 },
+      });
+
+      const baseAnswers = [
+        {
+          questionId: 1,
+          questionText: 'Qual é o papel da CAESB no DF?',
+          options: ['Saneamento', 'Energia', 'Transporte', 'Correios'] as [
+            string,
+            string,
+            string,
+            string,
+          ],
+          selectedOptionText: 'Saneamento',
+          correctOptionIndex: 0,
+          correctOptionText: 'Saneamento',
+          isCorrect: true,
+        },
+        {
+          questionId: 2,
+          questionText: 'Como evitar desperdício de água?',
+          options: ['Banhos curtos', 'Torneira aberta', 'Lavar calçada', 'Nenhuma'] as [
+            string,
+            string,
+            string,
+            string,
+          ],
+          selectedOptionText: 'Torneira aberta',
+          correctOptionIndex: 0,
+          correctOptionText: 'Banhos curtos',
+          isCorrect: false,
+        },
+      ];
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-1',
+        match: {
+          id: 'match-1',
+          eventId: eventA.id,
+          totemId: 'totem-1',
+          participantName: 'ANA GANHADORA',
+          participantPhone: '(61) 99000-0001',
+          score: 3,
+          totalQuestions: 3,
+          timeSeconds: 18,
+          answers: baseAnswers,
+          playedAt: '2026-11-15T14:00:00.000Z',
+        },
+        prizeClaim: {
+          id: 'claim-1',
+          eventId: eventA.id,
+          matchId: 'match-1',
+          totemId: 'totem-1',
+          participantName: 'ANA GANHADORA',
+          participantPhone: '(61) 99000-0001',
+          status: 'delivered',
+          awardedAt: '2026-11-15T14:00:00.000Z',
+          deliveredAt: '2026-11-15T14:05:00.000Z',
+        },
+      });
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-2',
+        match: {
+          id: 'match-2',
+          eventId: eventA.id,
+          totemId: 'totem-1',
+          participantName: 'BRUNO AGUARDANDO',
+          participantPhone: '(61) 99000-0002',
+          score: 2,
+          totalQuestions: 3,
+          timeSeconds: 25,
+          answers: baseAnswers,
+          playedAt: '2026-11-16T10:00:00.000Z',
+        },
+        prizeClaim: {
+          id: 'claim-2',
+          eventId: eventA.id,
+          matchId: 'match-2',
+          totemId: 'totem-1',
+          participantName: 'BRUNO AGUARDANDO',
+          participantPhone: '(61) 99000-0002',
+          status: 'awaiting_pickup',
+          awardedAt: '2026-11-16T10:00:00.000Z',
+          deliveredAt: null,
+        },
+      });
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-3',
+        match: {
+          id: 'match-3',
+          eventId: eventA.id,
+          totemId: 'totem-2',
+          participantName: 'BRUNO CONFLITO OFFLINE',
+          participantPhone: '(61) 99000-0002',
+          score: 2,
+          totalQuestions: 3,
+          timeSeconds: 20,
+          answers: baseAnswers,
+          playedAt: '2026-11-16T11:00:00.000Z',
+        },
+        prizeClaim: {
+          id: 'claim-3',
+          eventId: eventA.id,
+          matchId: 'match-3',
+          totemId: 'totem-2',
+          participantName: 'BRUNO CONFLITO OFFLINE',
+          participantPhone: '(61) 99000-0002',
+          status: 'awaiting_pickup',
+          awardedAt: '2026-11-16T11:00:00.000Z',
+          deliveredAt: null,
+        },
+      });
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-4',
+        match: {
+          id: 'match-4',
+          eventId: eventA.id,
+          totemId: 'totem-1',
+          participantName: 'CARLOS BLOQUEADO',
+          participantPhone: '(61) 99000-0003',
+          score: 1,
+          totalQuestions: 3,
+          timeSeconds: 40,
+          answers: baseAnswers,
+          playedAt: '2026-11-16T11:30:00.000Z',
+        },
+        prizeClaim: null,
+      });
+
+      await cloudGateway.pushGiveUpLockout({
+        idempotencyKey: 'lock-carlos',
+        lockout: {
+          id: 'lockout-4',
+          eventId: eventA.id,
+          totemId: 'totem-1',
+          participantPhone: '(61) 99000-0003',
+          lockedAt: '2026-11-16T11:55:00.000Z',
+          expiresAt: '2026-11-16T12:15:00.000Z',
+        },
+      });
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-5',
+        match: {
+          id: 'match-5',
+          eventId: eventB.id,
+          totemId: 'totem-9',
+          participantName: 'DANIELA OUTRO EVENTO',
+          participantPhone: '(61) 99000-0004',
+          score: 3,
+          totalQuestions: 3,
+          timeSeconds: 15,
+          answers: baseAnswers,
+          playedAt: '2026-11-17T09:00:00.000Z',
+        },
+        prizeClaim: null,
+      });
+
+      // Paginação e ordenação em Event A
+      const page1 = await adminController.queryParticipantReports({
+        eventId: eventA.id,
+        sortBy: 'score',
+        sortDirection: 'desc',
+        page: 1,
+        pageSize: 2,
+      });
+      expect(page1.totalItems).toBe(4);
+      expect(page1.totalPages).toBe(2);
+      expect(page1.items.map((item) => item.matchId)).toEqual(['match-1', 'match-3']);
+      expect(page1.offlineConflicts).toHaveLength(1);
+
+      const page2 = await adminController.queryParticipantReports({
+        eventId: eventA.id,
+        sortBy: 'score',
+        sortDirection: 'desc',
+        page: 2,
+        pageSize: 2,
+      });
+      expect(page2.items.map((item) => item.matchId)).toEqual(['match-2', 'match-4']);
+
+      // Filtro por período específico + busca por dígitos do telefone + pontuação exata
+      const filtered = await adminController.queryParticipantReports({
+        eventId: eventA.id,
+        search: '990000002',
+        startDate: '2026-11-16',
+        endDate: '2026-11-16',
+        exactScore: 2,
+        prizeFilter: 'offline_conflict',
+      });
+      expect(filtered.items.map((item) => item.matchId).sort()).toEqual(['match-2', 'match-3']);
+
+      // Filtro por status: entregues, não ganhadores e bloqueados por desistência
+      const deliveredOnly = await adminController.queryParticipantReports({
+        prizeFilter: 'delivered',
+      });
+      expect(deliveredOnly.items.map((item) => item.matchId)).toEqual(['match-1']);
+
+      const nonWinners = await adminController.queryParticipantReports({
+        eventId: eventA.id,
+        prizeFilter: 'non_winners',
+      });
+      expect(nonWinners.items.map((item) => item.matchId)).toEqual(['match-4']);
+
+      const lockedOnly = await adminController.queryParticipantReports({
+        onlyLockedOut: true,
+      });
+      expect(lockedOnly.items.map((item) => item.matchId)).toEqual(['match-4']);
+      expect(lockedOnly.activeLockouts.map((lock) => lock.participantPhone)).toEqual([
+        '(61) 99000-0003',
+      ]);
+
+      // Despremiar em lote apenas o claim principal também revoga conflito órfão do mesmo telefone no Evento.
+      const batchRevoked = await adminController.revokePrizeClaims(['claim-2']);
+      expect(batchRevoked.map((claim) => claim.id).sort()).toEqual(['claim-2', 'claim-3']);
+
+      // Detalhes da Partida (posição no Ranking na ocasião, Partidas do telefone no Evento e Respostas)
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'm-later-top',
+        match: {
+          id: 'match-later-top',
+          eventId: eventA.id,
+          totemId: 'totem-1',
+          participantName: 'ELENA RECORDE POSTERIOR',
+          participantPhone: '(61) 99000-0099',
+          score: 3,
+          totalQuestions: 3,
+          timeSeconds: 10,
+          answers: baseAnswers,
+          playedAt: '2026-11-16T12:30:00.000Z',
+        },
+        prizeClaim: null,
+      });
+      const detailsFirstPlaceThen = await adminController.getParticipantMatchDetails('match-1');
+      expect(detailsFirstPlaceThen.rankingPosition).toBe(1);
+
+      const details = await adminController.getParticipantMatchDetails('match-3');
+      expect(details.participantPhone).toBe('(61) 99000-0002');
+      expect(details.totalMatchesByPhoneInEvent).toBe(2);
+      expect(details.rankingPosition).toBe(2);
+      expect(details.answers).toHaveLength(2);
+      expect(details.answers[1]?.correctOptionText).toBe('Banhos curtos');
+      expect(details.answers[1]?.isCorrect).toBe(false);
+
+      // Exportação CSV e JSON dos registros filtrados (ignorando paginação)
+      const csv = await adminController.exportParticipantsCsv({ eventId: eventA.id, pageSize: 1 });
+      const csvLines = csv.trim().split('\n');
+      expect(csvLines).toHaveLength(6);
+      expect(csv).toContain('ANA GANHADORA');
+      expect(csv).toContain('CARLOS BLOQUEADO');
+      expect(csv).not.toContain('DANIELA OUTRO EVENTO');
+
+      const jsonText = await adminController.exportParticipantsJson({
+        eventId: eventB.id,
+        pageSize: 1,
+      });
+      const parsedJson = JSON.parse(jsonText) as Array<{ participantName: string }>;
+      expect(parsedJson).toHaveLength(1);
+      expect(parsedJson[0]?.participantName).toBe('DANIELA OUTRO EVENTO');
+    });
+  });
 });

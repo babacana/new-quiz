@@ -41,12 +41,20 @@ export class InMemoryLocalStore implements LocalStore {
     this.upsertRecord(this.matchesByEvent, match.eventId, match);
   }
 
+  async deleteMatch(matchId: string): Promise<void> {
+    this.deleteRecord(this.matchesByEvent, matchId);
+  }
+
   async getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]> {
     return structuredClone(this.prizeClaimsByEvent.get(eventId) ?? []);
   }
 
   async savePrizeClaim(claim: PrizeClaimRecord): Promise<void> {
     this.upsertRecord(this.prizeClaimsByEvent, claim.eventId, claim);
+  }
+
+  async deletePrizeClaim(claimId: string): Promise<void> {
+    this.deleteRecord(this.prizeClaimsByEvent, claimId);
   }
 
   async getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]> {
@@ -70,6 +78,18 @@ export class InMemoryLocalStore implements LocalStore {
       current.push(structuredClone(record));
     }
     store.set(eventId, current);
+  }
+
+  private deleteRecord<T extends { id: string }>(
+    store: Map<string, T[]>,
+    recordId: string,
+  ): void {
+    for (const [eventId, records] of store.entries()) {
+      const remaining = records.filter((item) => item.id !== recordId);
+      if (remaining.length !== records.length) {
+        store.set(eventId, remaining);
+      }
+    }
   }
 
   async getSyncQueue(): Promise<SyncQueueItem[]> {
