@@ -156,7 +156,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: eventData, error: eventError } = await this.client
-      .from('events')
+      .from('quiz_events')
       .select('*')
       .eq('id', eventId)
       .maybeSingle<SupabaseEventRow>();
@@ -170,7 +170,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
     // Busca questões vinculadas ao Evento; se não houver vínculo explícito, usa o acervo central.
     const { data: linkedRows, error: linkError } = await this.client
-      .from('event_questions')
+      .from('quiz_event_questions')
       .select('question_id')
       .eq('event_id', eventId);
 
@@ -178,7 +178,7 @@ export class SupabaseCloudGateway implements CloudGateway {
       throw new Error(`Erro ao buscar vínculo de questões: ${linkError.message}`);
     }
 
-    let query = this.client.from('questions').select('*').order('id', { ascending: true });
+    let query = this.client.from('quiz_questions').select('*').order('id', { ascending: true });
     if (linkedRows && linkedRows.length > 0) {
       const ids = linkedRows.map((row: { question_id: number }) => row.question_id);
       query = query.in('id', ids);
@@ -195,9 +195,9 @@ export class SupabaseCloudGateway implements CloudGateway {
     );
 
     const [matchesRes, claimsRes, lockoutsRes] = await Promise.all([
-      this.client.from('matches').select('*').eq('event_id', eventId),
-      this.client.from('prize_claims').select('*').eq('event_id', eventId),
-      this.client.from('give_up_lockouts').select('*').eq('event_id', eventId),
+      this.client.from('quiz_matches').select('*').eq('event_id', eventId),
+      this.client.from('quiz_prize_claims').select('*').eq('event_id', eventId),
+      this.client.from('quiz_give_up_lockouts').select('*').eq('event_id', eventId),
     ]);
 
     if (matchesRes.error) {
@@ -238,7 +238,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     const { match, prizeClaim } = payload;
 
     // Upsert pela chave primária id (UUID gerado no Totem) garante idempotência na nuvem.
-    const { error } = await this.client.from('matches').upsert(
+    const { error } = await this.client.from('quiz_matches').upsert(
       {
         id: match.id,
         event_id: match.eventId,
@@ -265,7 +265,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     if (prizeClaim) {
       // Verifica primeiro se já existe por id para não confundir retry idempotente com conflito.
       const { data: existingClaimRow, error: lookupError } = await this.client
-        .from('prize_claims')
+        .from('quiz_prize_claims')
         .select('*')
         .eq('id', prizeClaim.id)
         .maybeSingle<SupabasePrizeClaimRow>();
@@ -278,13 +278,13 @@ export class SupabaseCloudGateway implements CloudGateway {
         resolvedPrizeClaim = this.mapPrizeClaimRow(existingClaimRow);
       } else {
         const { error: claimError } = await this.client
-          .from('prize_claims')
+          .from('quiz_prize_claims')
           .insert(this.mapPrizeClaimToInsertRow(prizeClaim));
 
         if (!claimError) {
           // Consome estoque atomicamente apenas quando o Brinde ativo foi aceito.
           const { data: stockData, error: stockError } = await this.client.rpc(
-            'consume_event_prize_stock',
+            'quiz_consume_event_prize_stock',
             { p_event_id: match.eventId },
           );
           if (stockError) {
@@ -297,7 +297,7 @@ export class SupabaseCloudGateway implements CloudGateway {
               status: 'revoked',
               deliveredAt: null,
             };
-            await this.client.rpc('revoke_exhausted_prize_claim', {
+            await this.client.rpc('quiz_revoke_exhausted_prize_claim', {
               p_claim_id: revokedClaim.id,
             });
             resolvedPrizeClaim = revokedClaim;
@@ -314,7 +314,7 @@ export class SupabaseCloudGateway implements CloudGateway {
             deliveredAt: null,
           };
           const { error: conflictError } = await this.client
-            .from('prize_claims')
+            .from('quiz_prize_claims')
             .upsert(this.mapPrizeClaimToInsertRow(conflictClaim), {
               onConflict: 'id',
               ignoreDuplicates: true,
@@ -396,7 +396,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { lockout } = payload;
-    const { error } = await this.client.from('give_up_lockouts').upsert(
+    const { error } = await this.client.from('quiz_give_up_lockouts').upsert(
       {
         id: lockout.id,
         event_id: lockout.eventId,
@@ -489,7 +489,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: profileRow, error: profileError } = await this.client
-      .from('profiles')
+      .from('quiz_profiles')
       .select('*')
       .eq('id', data.user.id)
       .maybeSingle<SupabaseProfileRow>();
@@ -521,7 +521,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: profileRow } = await this.client
-      .from('profiles')
+      .from('quiz_profiles')
       .select('*')
       .eq('id', data.session.user.id)
       .maybeSingle<SupabaseProfileRow>();
@@ -539,7 +539,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async listStaffProfiles(): Promise<UserProfile[]> {
     const { data, error } = await this.client
-      .from('profiles')
+      .from('quiz_profiles')
       .select('*')
       .order('created_at', { ascending: true });
 
@@ -579,7 +579,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: insertedRow, error: profileError } = await this.client
-      .from('profiles')
+      .from('quiz_profiles')
       .upsert(
         {
           id: data.user.id,
@@ -601,7 +601,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async updateStaffProfileRole(profileId: string, role: UserRole): Promise<UserProfile> {
     const { data, error } = await this.client
-      .from('profiles')
+      .from('quiz_profiles')
       .update({ role })
       .eq('id', profileId)
       .select('*')
@@ -615,7 +615,7 @@ export class SupabaseCloudGateway implements CloudGateway {
   }
 
   async deleteStaffProfile(profileId: string): Promise<void> {
-    const { error } = await this.client.from('profiles').delete().eq('id', profileId);
+    const { error } = await this.client.from('quiz_profiles').delete().eq('id', profileId);
     if (error) {
       throw new Error(`Erro ao revogar acesso no Supabase: ${error.message}`);
     }
@@ -623,7 +623,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async listEvents(): Promise<EventConfig[]> {
     const { data, error } = await this.client
-      .from('events')
+      .from('quiz_events')
       .select('*')
       .order('created_at', { ascending: false });
 
@@ -651,7 +651,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     };
 
     const { data, error } = await this.client
-      .from('events')
+      .from('quiz_events')
       .upsert(payload, { onConflict: 'id' })
       .select('*')
       .single<SupabaseEventRow>();
@@ -665,7 +665,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async getEventQuestionIds(eventId: string): Promise<number[]> {
     const { data, error } = await this.client
-      .from('event_questions')
+      .from('quiz_event_questions')
       .select('question_id')
       .eq('event_id', eventId);
 
@@ -678,7 +678,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async setEventQuestions(eventId: string, questionIds: number[]): Promise<void> {
     const { error: deleteError } = await this.client
-      .from('event_questions')
+      .from('quiz_event_questions')
       .delete()
       .eq('event_id', eventId);
 
@@ -692,7 +692,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { error: insertError } = await this.client
-      .from('event_questions')
+      .from('quiz_event_questions')
       .insert(uniqueIds.map((questionId) => ({ event_id: eventId, question_id: questionId })));
 
     if (insertError) {
@@ -702,7 +702,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async listAllQuestions(): Promise<Question[]> {
     const { data, error } = await this.client
-      .from('questions')
+      .from('quiz_questions')
       .select('*')
       .order('id', { ascending: true });
 
@@ -727,7 +727,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async saveQuestion(question: Question): Promise<Question> {
     const { data, error } = await this.client
-      .from('questions')
+      .from('quiz_questions')
       .upsert(
         {
           ...this.mapQuestionToRow(question),
@@ -749,7 +749,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     if (ids.length === 0) {
       return 0;
     }
-    const { error } = await this.client.from('questions').delete().in('id', ids);
+    const { error } = await this.client.from('quiz_questions').delete().in('id', ids);
     if (error) {
       throw new Error(`Erro ao excluir questões no Supabase: ${error.message}`);
     }
@@ -761,7 +761,7 @@ export class SupabaseCloudGateway implements CloudGateway {
       return 0;
     }
     const { error } = await this.client
-      .from('questions')
+      .from('quiz_questions')
       .update({ is_disabled: isDisabled, updated_at: new Date().toISOString() })
       .in('id', ids);
     if (error) {
@@ -771,7 +771,7 @@ export class SupabaseCloudGateway implements CloudGateway {
   }
 
   async replaceAllQuestions(questions: Question[]): Promise<Question[]> {
-    const { error: deleteError } = await this.client.from('questions').delete().gte('id', 0);
+    const { error: deleteError } = await this.client.from('quiz_questions').delete().gte('id', 0);
     if (deleteError) {
       throw new Error(`Erro ao limpar Banco de Questões no Supabase: ${deleteError.message}`);
     }
@@ -781,7 +781,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error: insertError } = await this.client
-      .from('questions')
+      .from('quiz_questions')
       .insert(questions.map((question) => this.mapQuestionToRow(question)))
       .select('*')
       .order('id', { ascending: true });
@@ -851,7 +851,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error } = await this.client
-      .rpc('request_totem_pairing', {
+      .rpc('quiz_request_totem_pairing', {
         p_id: input.id,
         p_pairing_code: normalizePairingCode(input.pairingCode),
         p_current_screen: input.currentScreen,
@@ -879,12 +879,12 @@ export class SupabaseCloudGateway implements CloudGateway {
     const normalizedCode = normalizePairingCode(input.pairingCode);
     const [{ data: existingRow, error: lookupError }, { data: eventRow }] = await Promise.all([
       this.client
-        .from('totems')
+        .from('quiz_totems')
         .select('*')
         .eq('pairing_code', normalizedCode)
         .maybeSingle<SupabaseTotemRow>(),
       this.client
-        .from('events')
+        .from('quiz_events')
         .select('config_version')
         .eq('id', input.eventId)
         .maybeSingle<{ config_version: number }>(),
@@ -913,7 +913,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     };
 
     const { data, error } = await this.client
-      .from('totems')
+      .from('quiz_totems')
       .upsert(payload, { onConflict: 'id' })
       .select('*')
       .single<SupabaseTotemRow>();
@@ -934,7 +934,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error } = await this.client
-      .rpc('claim_totem_pairing', {
+      .rpc('quiz_claim_totem_pairing', {
         p_pairing_code: normalizePairingCode(pairingCode),
       })
       .maybeSingle<SupabaseTotemRow>();
@@ -953,7 +953,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
   async listTotems(): Promise<TotemRecord[]> {
     const { data, error } = await this.client
-      .from('totems')
+      .from('quiz_totems')
       .select('*')
       .order('created_at', { ascending: true });
 
@@ -970,7 +970,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error } = await this.client
-      .rpc('publish_totem_heartbeat', {
+      .rpc('quiz_publish_totem_heartbeat', {
         p_totem_id: payload.totemId,
         p_device_token: payload.deviceToken ?? '',
         p_online_status: payload.onlineStatus,
@@ -996,7 +996,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error } = await this.client
-      .from('totem_commands')
+      .from('quiz_totem_commands')
       .insert({
         id: command.id,
         type: command.type,
@@ -1015,7 +1015,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     if (command.type === 'SWITCH_EVENT' && command.eventId) {
-      let updateQuery = this.client.from('totems').update({ event_id: command.eventId });
+      let updateQuery = this.client.from('quiz_totems').update({ event_id: command.eventId });
       if (command.targetTotemId) {
         updateQuery = updateQuery.eq('id', command.targetTotemId);
       } else if (command.targetEventId) {
@@ -1052,7 +1052,7 @@ export class SupabaseCloudGateway implements CloudGateway {
         })
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'totems' },
+          { event: '*', schema: 'public', table: 'quiz_totems' },
           (change) => {
             const row = (change.new ?? null) as SupabaseTotemRow | null;
             if (!row?.id) return;
@@ -1065,7 +1065,7 @@ export class SupabaseCloudGateway implements CloudGateway {
         )
         .on(
           'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'totem_commands' },
+          { event: 'INSERT', schema: 'public', table: 'quiz_totem_commands' },
           (change) => {
             const row = (change.new ?? null) as SupabaseTotemCommandRow | null;
             if (!row?.id) return;
@@ -1075,15 +1075,15 @@ export class SupabaseCloudGateway implements CloudGateway {
             });
           },
         )
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'matches' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_matches' }, () => {
           this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
         })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'prize_claims' }, () => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'quiz_prize_claims' }, () => {
           this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
         })
         .on(
           'postgres_changes',
-          { event: '*', schema: 'public', table: 'give_up_lockouts' },
+          { event: '*', schema: 'public', table: 'quiz_give_up_lockouts' },
           () => {
             this.dispatchLocalChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
           },
@@ -1111,7 +1111,7 @@ export class SupabaseCloudGateway implements CloudGateway {
       throw new Error('Navegador sem conectividade para listar Partidas.');
     }
 
-    let query = this.client.from('matches').select('*').order('played_at', { ascending: false });
+    let query = this.client.from('quiz_matches').select('*').order('played_at', { ascending: false });
     if (eventId) {
       query = query.eq('event_id', eventId);
     }
@@ -1130,7 +1130,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     let query = this.client
-      .from('prize_claims')
+      .from('quiz_prize_claims')
       .select('*')
       .order('created_at', { ascending: false });
     if (eventId) {
@@ -1151,7 +1151,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     let query = this.client
-      .from('give_up_lockouts')
+      .from('quiz_give_up_lockouts')
       .select('*')
       .order('locked_at', { ascending: false });
     if (eventId) {
@@ -1182,7 +1182,7 @@ export class SupabaseCloudGateway implements CloudGateway {
 
     if (status === 'revoked') {
       const { data, error } = await this.client
-        .from('prize_claims')
+        .from('quiz_prize_claims')
         .update({ status: 'revoked', delivered_at: null })
         .in('id', uniqueIds)
         .in('status', ['awaiting_pickup', 'delivered', 'offline_duplicate_conflict'])
@@ -1196,7 +1196,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: candidates, error: fetchError } = await this.client
-      .from('prize_claims')
+      .from('quiz_prize_claims')
       .select('*')
       .in('id', uniqueIds)
       .eq('status', 'awaiting_pickup');
@@ -1213,7 +1213,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     // Garante no máximo 1 Brinde entregue por telefone em cada Evento mesmo com seleção múltipla.
     const eventIds = Array.from(new Set(awaitingRows.map((row) => row.event_id)));
     const { data: existingDelivered, error: deliveredCheckError } = await this.client
-      .from('prize_claims')
+      .from('quiz_prize_claims')
       .select('event_id, participant_phone')
       .in('event_id', eventIds)
       .eq('status', 'delivered');
@@ -1248,7 +1248,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     const effectiveDeliveredAt = deliveredAt ?? new Date().toISOString();
 
     const { data: updatedRows, error: updateError } = await this.client
-      .from('prize_claims')
+      .from('quiz_prize_claims')
       .update({
         status: 'delivered',
         delivered_at: effectiveDeliveredAt,
@@ -1278,7 +1278,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data: rows, error: fetchError } = await this.client
-      .from('give_up_lockouts')
+      .from('quiz_give_up_lockouts')
       .select('*')
       .eq('event_id', eventId)
       .in('participant_phone', phones);
@@ -1298,7 +1298,7 @@ export class SupabaseCloudGateway implements CloudGateway {
       }
 
       const { error: updateError } = await this.client
-        .from('give_up_lockouts')
+        .from('quiz_give_up_lockouts')
         .update({
           expires_at: nextExpiresIso,
           ...(staffUserId ? { unlocked_by: staffUserId } : {}),
@@ -1325,7 +1325,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const { data, error } = await this.client
-      .from('matches')
+      .from('quiz_matches')
       .delete()
       .in('id', uniqueIds)
       .select('id');
@@ -1348,7 +1348,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     const storagePath = `${input.eventId}/${input.kind}-${Date.now()}-${safeFileName}`;
 
     const { error: uploadError } = await this.client.storage
-      .from('event-assets')
+      .from('quiz_event_assets')
       .upload(storagePath, input.bytes, {
         contentType: input.mimeType || 'image/png',
         upsert: true,
@@ -1358,7 +1358,7 @@ export class SupabaseCloudGateway implements CloudGateway {
       throw new Error(`Erro ao enviar imagem para o Supabase Storage: ${uploadError.message}`);
     }
 
-    const { data } = this.client.storage.from('event-assets').getPublicUrl(storagePath);
+    const { data } = this.client.storage.from('quiz_event_assets').getPublicUrl(storagePath);
     return {
       url: data.publicUrl,
       fileName: safeFileName,
@@ -1396,21 +1396,21 @@ export class SupabaseCloudGateway implements CloudGateway {
     const replaceIds = Array.from(new Set(payload.replaceEventIds ?? []));
     if (replaceIds.length > 0) {
       const { error: delClaimsErr } = await this.client
-        .from('prize_claims')
+        .from('quiz_prize_claims')
         .delete()
         .in('event_id', replaceIds);
       if (delClaimsErr) {
         throw new Error(`Erro ao limpar Brindes antes da restauração: ${delClaimsErr.message}`);
       }
       const { error: delMatchesErr } = await this.client
-        .from('matches')
+        .from('quiz_matches')
         .delete()
         .in('event_id', replaceIds);
       if (delMatchesErr) {
         throw new Error(`Erro ao limpar Partidas antes da restauração: ${delMatchesErr.message}`);
       }
       const { error: delLockoutsErr } = await this.client
-        .from('give_up_lockouts')
+        .from('quiz_give_up_lockouts')
         .delete()
         .in('event_id', replaceIds);
       if (delLockoutsErr) {
@@ -1435,7 +1435,7 @@ export class SupabaseCloudGateway implements CloudGateway {
         played_at: match.playedAt,
         synced_at: match.syncedAt ?? syncedAt,
       }));
-      const { error } = await this.client.from('matches').upsert(matchRows, { onConflict: 'id' });
+      const { error } = await this.client.from('quiz_matches').upsert(matchRows, { onConflict: 'id' });
       if (error) {
         throw new Error(`Erro ao importar Partidas do backup: ${error.message}`);
       }
@@ -1444,7 +1444,7 @@ export class SupabaseCloudGateway implements CloudGateway {
     if (payload.prizeClaims.length > 0) {
       const claimRows = payload.prizeClaims.map((claim) => this.mapPrizeClaimToInsertRow(claim));
       const { error } = await this.client
-        .from('prize_claims')
+        .from('quiz_prize_claims')
         .upsert(claimRows, { onConflict: 'id' });
       if (error) {
         throw new Error(`Erro ao importar Brindes do backup: ${error.message}`);
@@ -1461,7 +1461,7 @@ export class SupabaseCloudGateway implements CloudGateway {
         expires_at: lockout.expiresAt,
       }));
       const { error } = await this.client
-        .from('give_up_lockouts')
+        .from('quiz_give_up_lockouts')
         .upsert(lockoutRows, { onConflict: 'id' });
       if (error) {
         throw new Error(`Erro ao importar bloqueios do backup: ${error.message}`);

@@ -1,66 +1,61 @@
 -- Migração T5: Pareamento de Totens, Telemetria ao Vivo e Fila de Comandos Remotos
 -- Baseado em docs/spec.md e docs/adr/0003-pareamento-e-monitoramento-remoto-de-totens.md.
 
-ALTER TABLE public.totems
+ALTER TABLE public.quiz_totems
   ALTER COLUMN device_token DROP NOT NULL;
 
-ALTER TABLE public.totems
+ALTER TABLE public.quiz_totems
   ADD COLUMN IF NOT EXISTS config_version integer NOT NULL DEFAULT 1,
   ADD COLUMN IF NOT EXISTS is_paired boolean NOT NULL DEFAULT false;
 
--- Remove políticas abertas caso existam e mantém acesso direto à tabela totems restrito à equipe.
-DROP POLICY IF EXISTS totems_select_public_pairing ON public.totems;
-DROP POLICY IF EXISTS totems_insert_anon_pairing_request ON public.totems;
-DROP POLICY IF EXISTS totems_update_anon_telemetry ON public.totems;
-
 -- Fila persistente de comandos remotos enviados pelo Administrador aos Totens
-CREATE TABLE IF NOT EXISTS public.totem_commands (
+CREATE TABLE IF NOT EXISTS public.quiz_totem_commands (
   id uuid PRIMARY KEY,
   type text NOT NULL CHECK (type IN ('SWITCH_EVENT', 'FORCE_SYNC', 'RELOAD_SCREEN', 'CONFIG_UPDATED')),
-  target_totem_id uuid REFERENCES public.totems(id) ON DELETE CASCADE,
-  target_event_id uuid REFERENCES public.events(id) ON DELETE CASCADE,
-  event_id uuid REFERENCES public.events(id) ON DELETE SET NULL,
+  target_totem_id uuid REFERENCES public.quiz_totems(id) ON DELETE CASCADE,
+  target_event_id uuid REFERENCES public.quiz_events(id) ON DELETE CASCADE,
+  event_id uuid REFERENCES public.quiz_events(id) ON DELETE SET NULL,
   target_screen text CHECK (target_screen IN ('initial-screen', 'idle-screen')),
   config_version integer,
   issued_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_totem_commands_target_totem
-  ON public.totem_commands (target_totem_id, issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quiz_totem_commands_target_totem
+  ON public.quiz_totem_commands (target_totem_id, issued_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_totem_commands_target_event
-  ON public.totem_commands (target_event_id, issued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_quiz_totem_commands_target_event
+  ON public.quiz_totem_commands (target_event_id, issued_at DESC);
 
-ALTER TABLE public.totem_commands ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.quiz_totem_commands ENABLE ROW LEVEL SECURITY;
 
--- Políticas para TOTEM_COMMANDS
-CREATE POLICY totem_commands_select_public_and_staff
-  ON public.totem_commands
+-- Políticas para QUIZ_TOTEM_COMMANDS
+CREATE POLICY quiz_totem_commands_select_public_and_staff
+  ON public.quiz_totem_commands
   FOR SELECT
   TO anon, authenticated
   USING (true);
 
-CREATE POLICY totem_commands_insert_admin_only
-  ON public.totem_commands
+CREATE POLICY quiz_totem_commands_insert_admin_only
+  ON public.quiz_totem_commands
   FOR INSERT
   TO authenticated
-  WITH CHECK ((SELECT public.current_user_role()) = 'admin');
+  WITH CHECK ((SELECT public.quiz_current_user_role()) = 'admin');
 
-CREATE POLICY totem_commands_delete_admin_only
-  ON public.totem_commands
+CREATE POLICY quiz_totem_commands_delete_admin_only
+  ON public.quiz_totem_commands
   FOR DELETE
   TO authenticated
-  USING ((SELECT public.current_user_role()) = 'admin');
+  USING ((SELECT public.quiz_current_user_role()) = 'admin');
 
 -- RPC segura para o Totem registrar pedido de Pareamento sem expor dados de outros Totens.
-CREATE OR REPLACE FUNCTION public.request_totem_pairing(
+CREATE OR REPLACE FUNCTION public.quiz_request_totem_pairing(
   p_id uuid,
   p_pairing_code text,
   p_current_screen text,
   p_config_version integer,
   p_pending_sync_count integer
 )
-RETURNS SETOF public.totems
+RETURNS SETOF public.quiz_totems
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -69,12 +64,12 @@ DECLARE
   v_code text := upper(trim(p_pairing_code));
 BEGIN
   IF EXISTS (
-    SELECT 1 FROM public.totems WHERE id = p_id AND is_paired = true
+    SELECT 1 FROM public.quiz_totems WHERE id = p_id AND is_paired = true
   ) THEN
     RAISE EXCEPTION 'Totem já pareado não pode sobrescrever vínculo via solicitação pública.';
   END IF;
 
-  INSERT INTO public.totems (
+  INSERT INTO public.quiz_totems (
     id,
     name,
     pairing_code,
@@ -109,15 +104,15 @@ BEGIN
         current_screen = EXCLUDED.current_screen,
         config_version = EXCLUDED.config_version,
         pending_sync_count = EXCLUDED.pending_sync_count
-  WHERE public.totems.is_paired = false;
+  WHERE public.quiz_totems.is_paired = false;
 
-  RETURN QUERY SELECT * FROM public.totems WHERE id = p_id;
+  RETURN QUERY SELECT * FROM public.quiz_totems WHERE id = p_id;
 END;
 $$;
 
 -- RPC segura para ativar um Totem via código curto ou link após autorização do Administrador.
-CREATE OR REPLACE FUNCTION public.claim_totem_pairing(p_pairing_code text)
-RETURNS SETOF public.totems
+CREATE OR REPLACE FUNCTION public.quiz_claim_totem_pairing(p_pairing_code text)
+RETURNS SETOF public.quiz_totems
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -126,7 +121,7 @@ DECLARE
   v_code text := upper(trim(p_pairing_code));
 BEGIN
   RETURN QUERY
-  UPDATE public.totems
+  UPDATE public.quiz_totems
      SET online_status = 'online',
          last_seen_at = now()
    WHERE pairing_code = v_code
@@ -137,7 +132,7 @@ END;
 $$;
 
 -- RPC autenticada por device_token para publicar telemetria ao vivo sem liberar UPDATE amplo a anon.
-CREATE OR REPLACE FUNCTION public.publish_totem_heartbeat(
+CREATE OR REPLACE FUNCTION public.quiz_publish_totem_heartbeat(
   p_totem_id uuid,
   p_device_token text,
   p_online_status text,
@@ -146,7 +141,7 @@ CREATE OR REPLACE FUNCTION public.publish_totem_heartbeat(
   p_pending_sync_count integer,
   p_seen_at timestamptz DEFAULT now()
 )
-RETURNS SETOF public.totems
+RETURNS SETOF public.quiz_totems
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
@@ -157,7 +152,7 @@ BEGIN
   END IF;
 
   RETURN QUERY
-  UPDATE public.totems
+  UPDATE public.quiz_totems
      SET online_status = p_online_status,
          current_screen = p_current_screen,
          config_version = p_config_version,
@@ -173,21 +168,21 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.request_totem_pairing(uuid, text, text, integer, integer) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.request_totem_pairing(uuid, text, text, integer, integer) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.quiz_request_totem_pairing(uuid, text, text, integer, integer) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.quiz_request_totem_pairing(uuid, text, text, integer, integer) TO anon, authenticated;
 
-REVOKE ALL ON FUNCTION public.claim_totem_pairing(text) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.claim_totem_pairing(text) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.quiz_claim_totem_pairing(text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.quiz_claim_totem_pairing(text) TO anon, authenticated;
 
-REVOKE ALL ON FUNCTION public.publish_totem_heartbeat(uuid, text, text, text, integer, integer, timestamptz) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.publish_totem_heartbeat(uuid, text, text, text, integer, integer, timestamptz) TO anon, authenticated;
+REVOKE ALL ON FUNCTION public.quiz_publish_totem_heartbeat(uuid, text, text, text, integer, integer, timestamptz) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.quiz_publish_totem_heartbeat(uuid, text, text, text, integer, integer, timestamptz) TO anon, authenticated;
 
 -- Publica alterações de Totens e comandos remotos via Supabase Realtime quando disponível.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_publication WHERE pubname = 'supabase_realtime') THEN
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.totems;
-    ALTER PUBLICATION supabase_realtime ADD TABLE public.totem_commands;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.quiz_totems;
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.quiz_totem_commands;
   END IF;
 EXCEPTION
   WHEN duplicate_object THEN NULL;
