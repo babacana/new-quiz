@@ -1,4 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  CheckCircle2,
+  Download,
+  Eye,
+  RotateCcw,
+  Search,
+  ShieldOff,
+  Trash2,
+  Unlock,
+} from 'lucide-react';
 import type { EventAdminController } from '../domain/eventAdminController';
 import type {
   EventConfig,
@@ -10,16 +20,30 @@ import type {
   SortDirection,
 } from '../domain/types';
 import { OfflineConflictBanner, ParticipantStatusBadges } from './OperationalBadges';
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
+import { Input } from './components/ui/input';
+import { Label } from './components/ui/label';
 import {
   PRIZE_STATUS_LABELS,
   formatDateTimePtBr,
   formatTimeMMSS,
   triggerFileDownload,
 } from './formatters';
+import { cn } from './lib/utils';
 
 export interface AdminReportsTabProps {
   controller: EventAdminController;
   events: EventConfig[];
+  selectedEventId?: string | null;
   onEventsChanged: () => Promise<void>;
   onStatusMessage: (type: 'success' | 'error', message: string) => void;
 }
@@ -34,6 +58,9 @@ const PRIZE_FILTER_OPTIONS: Array<{ value: ParticipantPrizeFilter; label: string
   { value: 'offline_conflict', label: 'Conflito Offline' },
 ];
 
+const SELECT_CLASS =
+  'h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
 function computeResponsivePageSize(): number {
   if (typeof window === 'undefined') {
     return 10;
@@ -47,14 +74,22 @@ function computeResponsivePageSize(): number {
   return 10;
 }
 
-// Aba de relatórios operacionais de Participantes, fila de Brindes, lote e exportação (Admin).
+// Aba Participantes & Ranking: tabela desktop / cards mobile, filtros, gabarito em modal, ações em lote e exportação.
 export function AdminReportsTab({
   controller,
   events,
+  selectedEventId,
   onEventsChanged,
   onStatusMessage,
 }: AdminReportsTabProps) {
-  const [eventIdFilter, setEventIdFilter] = useState<string>('all');
+  const [eventIdFilter, setEventIdFilter] = useState<string>(() => selectedEventId ?? 'all');
+
+  useEffect(() => {
+    if (selectedEventId) {
+      setEventIdFilter(selectedEventId);
+      setPage(1);
+    }
+  }, [selectedEventId]);
   const [search, setSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
@@ -380,31 +415,25 @@ export function AdminReportsTab({
   };
 
   return (
-    <section id="admin-reports-tab" className="admin-panel-card">
-      <div className="admin-panel-header">
+    <div id="admin-reports-tab" className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3>Relatórios Operacionais e Participantes</h3>
-          <p className="admin-subtitle">
+          <h1 className="text-2xl font-bold tracking-tight">Participantes &amp; Ranking</h1>
+          <p className="text-sm text-muted-foreground">
             Consulte Partidas, filtre entregas de Brindes e conflitos offline, gerencie bloqueios em
             lote e exporte os dados filtrados.
           </p>
         </div>
 
-        <div className="admin-panel-actions">
-          <button
-            type="button"
-            className="admin-btn admin-btn-secondary"
-            onClick={() => void handleExport('csv')}
-          >
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleExport('csv')}>
+            <Download className="h-4 w-4" />
             Exportar CSV
-          </button>
-          <button
-            type="button"
-            className="admin-btn admin-btn-secondary"
-            onClick={() => void handleExport('json')}
-          >
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleExport('json')}>
+            <Download className="h-4 w-4" />
             Exportar JSON
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -420,441 +449,628 @@ export function AdminReportsTab({
         }}
       />
 
-      <div className="reports-filters-grid">
-        <div className="form-group">
-          <label htmlFor="report-filter-event">Evento</label>
-          <select
-            id="report-filter-event"
-            value={eventIdFilter}
-            onChange={(e) => {
-              setEventIdFilter(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="all">Todos os Eventos</option>
-            {events.map((ev) => (
-              <option key={ev.id} value={ev.id}>
-                {ev.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Filtros */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Filtros de Busca e Segmentação</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-event">Evento</Label>
+              <select
+                id="report-filter-event"
+                className={SELECT_CLASS}
+                value={eventIdFilter}
+                onChange={(e) => {
+                  setEventIdFilter(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="all">Todos os Eventos</option>
+                {events.map((ev) => (
+                  <option key={ev.id} value={ev.id}>
+                    {ev.name}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-filter-search">Busca (Nome ou Telefone)</label>
-          <input
-            id="report-filter-search"
-            type="search"
-            value={search}
-            placeholder="Nome ou telefone..."
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-search">Busca (Nome ou Telefone)</Label>
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="report-filter-search"
+                  type="search"
+                  className="pl-8"
+                  value={search}
+                  placeholder="Nome ou telefone..."
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(1);
+                  }}
+                />
+              </div>
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-filter-start-date">Data Inicial</label>
-          <input
-            id="report-filter-start-date"
-            type="date"
-            value={startDate}
-            onChange={(e) => {
-              setStartDate(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-start-date">Data Inicial</Label>
+              <Input
+                id="report-filter-start-date"
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-filter-end-date">Data Final</label>
-          <input
-            id="report-filter-end-date"
-            type="date"
-            value={endDate}
-            onChange={(e) => {
-              setEndDate(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-end-date">Data Final</Label>
+              <Input
+                id="report-filter-end-date"
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-filter-prize">Status do Brinde</label>
-          <select
-            id="report-filter-prize"
-            value={prizeFilter}
-            onChange={(e) => {
-              setPrizeFilter(e.target.value as ParticipantPrizeFilter);
-              setPage(1);
-            }}
-          >
-            {PRIZE_FILTER_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-prize">Status do Brinde</Label>
+              <select
+                id="report-filter-prize"
+                className={SELECT_CLASS}
+                value={prizeFilter}
+                onChange={(e) => {
+                  setPrizeFilter(e.target.value as ParticipantPrizeFilter);
+                  setPage(1);
+                }}
+              >
+                {PRIZE_FILTER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-filter-score">Pontuação Exata</label>
-          <input
-            id="report-filter-score"
-            type="number"
-            min={0}
-            value={exactScoreInput}
-            placeholder="Ex: 5"
-            onChange={(e) => {
-              setExactScoreInput(e.target.value);
-              setPage(1);
-            }}
-          />
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-filter-score">Pontuação Exata</Label>
+              <Input
+                id="report-filter-score"
+                type="number"
+                min={0}
+                value={exactScoreInput}
+                placeholder="Ex: 5"
+                onChange={(e) => {
+                  setExactScoreInput(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
 
-        <div className="form-group">
-          <label htmlFor="report-page-size">Itens por página</label>
-          <select
-            id="report-page-size"
-            value={pageSize}
-            onChange={(e) => {
-              setManualPageSize(Number(e.target.value));
-              setPage(1);
-            }}
-          >
-            <option value={5}>5</option>
-            <option value={8}>8</option>
-            <option value={10}>10</option>
-            <option value={25}>25</option>
-            <option value={50}>50</option>
-          </select>
-        </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="report-page-size">Itens por página</Label>
+              <select
+                id="report-page-size"
+                className={SELECT_CLASS}
+                value={pageSize}
+                onChange={(e) => {
+                  setManualPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
+              >
+                <option value={5}>5</option>
+                <option value={8}>8</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+              </select>
+            </div>
 
-        <div className="reports-filter-checkbox-wrap">
-          <label className="admin-checkbox-label">
-            <input
-              type="checkbox"
-              checked={onlyLockedOut}
-              onChange={(e) => {
-                setOnlyLockedOut(e.target.checked);
-                setPage(1);
-              }}
-            />
-            Somente bloqueados por desistência
-          </label>
-          <button type="button" className="admin-btn admin-btn-secondary" onClick={resetFilters}>
-            Limpar Filtros
-          </button>
-        </div>
-      </div>
+            <div className="flex items-end gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={resetFilters}>
+                <RotateCcw className="h-3.5 w-3.5" />
+                Limpar Filtros
+              </Button>
+            </div>
+          </div>
 
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={onlyLockedOut}
+                onChange={(e) => {
+                  setOnlyLockedOut(e.target.checked);
+                  setPage(1);
+                }}
+                className="h-4 w-4 rounded border-input"
+              />
+              Somente com Bloqueio por Desistência ativo ({report.activeLockouts.length})
+            </label>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted-foreground">
+                {selectedMatchIds.size} selecionada(s)
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedMatchIds.size === 0}
+                onClick={() => void handleConfirmBatchDelivery()}
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Confirmar Entrega
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedMatchIds.size === 0}
+                onClick={() => void handleRevokeBatchPrizes()}
+              >
+                <ShieldOff className="h-3.5 w-3.5" />
+                Despremiar
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={selectedMatchIds.size === 0}
+                onClick={() => void handleUnlockBatchPhones()}
+              >
+                <Unlock className="h-3.5 w-3.5" />
+                Destravar Telefones
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={selectedMatchIds.size === 0}
+                onClick={() => void handleDeleteBatchMatches()}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Excluir
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Bloqueios ativos */}
       {report.activeLockouts.length > 0 && (
-        <div className="operator-lockouts-box" aria-label="Bloqueios por Desistência Ativos">
-          <h4>Bloqueios por Desistência Ativos ({report.activeLockouts.length})</h4>
-          <div className="operator-cards-list">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Bloqueios por Desistência Ativos ({report.activeLockouts.length})
+            </CardTitle>
+            <CardDescription>
+              Libere o telefone manualmente caso o Participante precise tentar novamente.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-wrap gap-2">
             {report.activeLockouts.map((lockout) => (
-              <div key={lockout.id} className="operator-mobile-card">
-                <div>
-                  <strong>{lockout.participantPhone}</strong> · {lockout.eventName}
-                  <div className="operator-card-meta">
-                    Expira em {formatDateTimePtBr(lockout.expiresAt)}
-                  </div>
-                </div>
-                <button
+              <div
+                key={lockout.id}
+                className="flex items-center gap-2 rounded-md border border-border px-3 py-1.5 text-xs"
+              >
+                <span className="font-medium">{lockout.participantPhone}</span>
+                <span className="text-muted-foreground">
+                  até {formatDateTimePtBr(lockout.expiresAt)}
+                </span>
+                <Button
                   type="button"
-                  className="admin-btn admin-btn-secondary"
+                  variant="outline"
+                  size="sm"
                   onClick={() =>
                     void handleUnlockSingleLockout(lockout.eventId, lockout.participantPhone)
                   }
                 >
                   Destravar
-                </button>
+                </Button>
               </div>
             ))}
-          </div>
-        </div>
+          </CardContent>
+        </Card>
       )}
 
-      {selectedMatchIds.size > 0 && (
-        <div className="admin-batch-toolbar" role="region" aria-label="Ações em lote nos relatórios">
-          <span>
-            <strong>{selectedMatchIds.size}</strong> Partida(s) selecionada(s)
-          </span>
-          <div className="admin-panel-actions">
-            <button
-              type="button"
-              className="admin-btn admin-btn-primary"
-              onClick={() => void handleConfirmBatchDelivery()}
-            >
-              Confirmar Entrega
-            </button>
-            <button
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() => void handleRevokeBatchPrizes()}
-            >
-              Despremiar
-            </button>
-            <button
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() => void handleUnlockBatchPhones()}
-            >
-              Destravar
-            </button>
-            <button
-              type="button"
-              className="admin-btn admin-btn-danger"
-              onClick={() => void handleDeleteBatchMatches()}
-            >
-              Excluir
-            </button>
+      {/* Tabela desktop (md+) */}
+      <Card data-testid="reports-desktop-table" className="hidden md:block">
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="border-b border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground uppercase">
+                  <th className="w-10 px-3 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label="Selecionar todas as Partidas visíveis"
+                      checked={allVisibleSelected}
+                      onChange={(e) => handleToggleSelectAll(e.target.checked)}
+                      className="h-4 w-4 rounded border-input"
+                    />
+                  </th>
+                  <th className="px-3 py-3">
+                    <button
+                      type="button"
+                      className="cursor-pointer font-medium hover:text-foreground"
+                      onClick={() => toggleSort('participantName')}
+                    >
+                      Participante{renderSortIndicator('participantName')}
+                    </button>
+                  </th>
+                  <th className="px-3 py-3">Telefone</th>
+                  <th className="px-3 py-3">Evento</th>
+                  <th className="px-3 py-3">
+                    <button
+                      type="button"
+                      className="cursor-pointer font-medium hover:text-foreground"
+                      onClick={() => toggleSort('score')}
+                    >
+                      Pontuação{renderSortIndicator('score')}
+                    </button>
+                  </th>
+                  <th className="px-3 py-3">Tempo</th>
+                  <th className="px-3 py-3">
+                    <button
+                      type="button"
+                      className="cursor-pointer font-medium hover:text-foreground"
+                      onClick={() => toggleSort('playedAt')}
+                    >
+                      Data/Hora{renderSortIndicator('playedAt')}
+                    </button>
+                  </th>
+                  <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3 text-right">Ações</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {loading && report.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                      Carregando Partidas...
+                    </td>
+                  </tr>
+                ) : report.items.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="px-4 py-8 text-center text-muted-foreground">
+                      Nenhuma Partida encontrada para os filtros selecionados.
+                    </td>
+                  </tr>
+                ) : (
+                  report.items.map((item) => (
+                    <tr key={item.matchId} className="transition-colors hover:bg-muted/30">
+                      <td className="px-3 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label={`Selecionar Partida de ${item.participantName}`}
+                          checked={selectedMatchIds.has(item.matchId)}
+                          onChange={(e) => handleToggleRow(item.matchId, e.target.checked)}
+                          className="h-4 w-4 rounded border-input"
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-medium">
+                        {item.participantName}
+                        <span className="ml-1.5 text-xs text-muted-foreground">
+                          #{item.rankingPosition}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">
+                        {item.participantPhone}
+                      </td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">{item.eventName}</td>
+                      <td className="px-3 py-3 font-medium">
+                        {item.score}/{item.totalQuestions}
+                      </td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">
+                        {formatTimeMMSS(item.timeSeconds)}
+                      </td>
+                      <td className="px-3 py-3 text-xs text-muted-foreground">
+                        {formatDateTimePtBr(item.playedAt)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <ParticipantStatusBadges
+                          prizeStatus={item.prizeStatus}
+                          hasOfflineConflict={item.hasOfflineConflict}
+                          hasActiveGiveUpLockout={item.hasActiveGiveUpLockout}
+                          showEmptyPrizeBadge
+                        />
+                      </td>
+                      <td className="px-3 py-3 text-right">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleOpenDetails(item.matchId)}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          Ver Detalhes
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
-        </div>
-      )}
+        </CardContent>
+      </Card>
 
-      <div className="reports-table-wrapper">
-        <table className="reports-table">
-          <thead>
-            <tr>
-              <th>
-                <input
-                  type="checkbox"
-                  aria-label="Selecionar todas as Partidas visíveis"
-                  checked={allVisibleSelected}
-                  onChange={(e) => handleToggleSelectAll(e.target.checked)}
-                />
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('participantName')}
-                >
-                  Participante{renderSortIndicator('participantName')}
-                </button>
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('participantPhone')}
-                >
-                  Telefone{renderSortIndicator('participantPhone')}
-                </button>
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('eventName')}
-                >
-                  Evento{renderSortIndicator('eventName')}
-                </button>
-              </th>
-              <th>
-                <button type="button" className="table-sort-btn" onClick={() => toggleSort('score')}>
-                  Pontuação{renderSortIndicator('score')}
-                </button>
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('timeSeconds')}
-                >
-                  Tempo{renderSortIndicator('timeSeconds')}
-                </button>
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('playedAt')}
-                >
-                  Data/Hora{renderSortIndicator('playedAt')}
-                </button>
-              </th>
-              <th>
-                <button
-                  type="button"
-                  className="table-sort-btn"
-                  onClick={() => toggleSort('prizeStatus')}
-                >
-                  Brinde / Status{renderSortIndicator('prizeStatus')}
-                </button>
-              </th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.items.length === 0 ? (
-              <tr>
-                <td colSpan={9} className="reports-empty-cell">
-                  {loading
-                    ? 'Carregando Partidas...'
-                    : 'Nenhuma Partida encontrada para os filtros selecionados.'}
-                </td>
-              </tr>
-            ) : (
-              report.items.map((item) => (
-                <tr key={item.matchId}>
-                  <td>
+      {/* Cards empilhados para mobile (< md) */}
+      <div data-testid="reports-mobile-cards" className="space-y-3 md:hidden">
+        {report.items.length === 0 ? (
+          <Card>
+            <CardContent className="py-8 text-center text-sm text-muted-foreground">
+              {loading
+                ? 'Carregando Partidas...'
+                : 'Nenhuma Partida encontrada para os filtros selecionados.'}
+            </CardContent>
+          </Card>
+        ) : (
+          report.items.map((item) => (
+            <Card key={item.matchId}>
+              <CardContent className="space-y-3 pt-4">
+                <div className="flex items-start justify-between gap-2">
+                  <label className="flex items-center gap-2 font-medium text-sm">
                     <input
                       type="checkbox"
                       aria-label={`Selecionar Partida de ${item.participantName}`}
                       checked={selectedMatchIds.has(item.matchId)}
                       onChange={(e) => handleToggleRow(item.matchId, e.target.checked)}
+                      className="h-4 w-4 rounded border-input"
                     />
-                  </td>
-                  <td>
-                    <strong>{item.participantName}</strong>
-                    <div className="operator-card-meta">Ranking #{item.rankingPosition}</div>
-                  </td>
-                  <td>{item.participantPhone}</td>
-                  <td>{item.eventName}</td>
-                  <td>
+                    <span>
+                      {item.participantName}{' '}
+                      <span className="text-xs text-muted-foreground">#{item.rankingPosition}</span>
+                    </span>
+                  </label>
+                  <span className="text-sm font-semibold">
                     {item.score}/{item.totalQuestions}
-                  </td>
-                  <td>{formatTimeMMSS(item.timeSeconds)}</td>
-                  <td>{formatDateTimePtBr(item.playedAt)}</td>
-                  <td>
-                    <div className="reports-badges-cell">
-                      <ParticipantStatusBadges
-                        prizeStatus={item.prizeStatus}
-                        hasOfflineConflict={item.hasOfflineConflict}
-                        hasActiveGiveUpLockout={item.hasActiveGiveUpLockout}
-                        showEmptyPrizeBadge
-                      />
-                    </div>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="admin-btn admin-btn-secondary"
-                      onClick={() => void handleOpenDetails(item.matchId)}
-                    >
-                      Ver Detalhes
-                    </button>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
+                  <div>{item.participantPhone}</div>
+                  <div className="text-right">{formatTimeMMSS(item.timeSeconds)}</div>
+                  <div>{item.eventName}</div>
+                  <div className="text-right">{formatDateTimePtBr(item.playedAt)}</div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <ParticipantStatusBadges
+                    prizeStatus={item.prizeStatus}
+                    hasOfflineConflict={item.hasOfflineConflict}
+                    hasActiveGiveUpLockout={item.hasActiveGiveUpLockout}
+                    showEmptyPrizeBadge
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleOpenDetails(item.matchId)}
+                  >
+                    <Eye className="h-3.5 w-3.5" />
+                    Ver Detalhes
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
       </div>
 
-      <div className="admin-pagination">
-        <button
+      {/* Paginação */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button
           type="button"
-          className="admin-btn admin-btn-secondary"
+          variant="outline"
+          size="sm"
           disabled={report.page <= 1}
           onClick={() => setPage((prev) => Math.max(1, prev - 1))}
         >
           Anterior
-        </button>
-        <span>
+        </Button>
+        <span className="text-xs text-muted-foreground">
           Página {report.page} de {report.totalPages} ({report.totalItems} Partida(s))
         </span>
-        <button
+        <Button
           type="button"
-          className="admin-btn admin-btn-secondary"
+          variant="outline"
+          size="sm"
           disabled={report.page >= report.totalPages}
           onClick={() => setPage((prev) => Math.min(report.totalPages, prev + 1))}
         >
           Próxima
-        </button>
+        </Button>
       </div>
 
-      {detailsModal && (
-        <div
-          id="participant-details-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="participant-details-title"
-        >
-          <div className="modal-content admin-modal participant-details-modal-content">
-            <h3 id="participant-details-title" className="modal-title">
-              Detalhes da Partida · {detailsModal.participantName}
-            </h3>
-            <dl className="totem-diagnostics-list">
-              <div>
-                <dt>Telefone</dt>
-                <dd>{detailsModal.participantPhone}</dd>
-              </div>
-              <div>
-                <dt>Evento</dt>
-                <dd>{detailsModal.eventName}</dd>
-              </div>
-              <div>
-                <dt>Data/Hora</dt>
-                <dd>{formatDateTimePtBr(detailsModal.playedAt)}</dd>
-              </div>
-              <div>
-                <dt>Pontuação</dt>
-                <dd>
-                  {detailsModal.score}/{detailsModal.totalQuestions}
-                </dd>
-              </div>
-              <div>
-                <dt>Tempo</dt>
-                <dd>{formatTimeMMSS(detailsModal.timeSeconds)}</dd>
-              </div>
-              <div>
-                <dt>Colocação no Ranking na ocasião</dt>
-                <dd>#{detailsModal.rankingPosition}</dd>
-              </div>
-              <div>
-                <dt>Partidas do telefone no Evento</dt>
-                <dd>{detailsModal.totalMatchesByPhoneInEvent}</dd>
-              </div>
-              <div>
-                <dt>Status do Brinde</dt>
-                <dd>
-                  {detailsModal.prizeStatus
-                    ? PRIZE_STATUS_LABELS[detailsModal.prizeStatus]
-                    : 'Sem Brinde'}
-                </dd>
-              </div>
-            </dl>
+      {/* Modal de Detalhes / Gabarito da Partida */}
+      <Dialog
+        open={Boolean(detailsModal)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailsModal(null);
+          }
+        }}
+      >
+        <DialogContent id="participant-details-modal" className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle id="participant-details-title">
+              Detalhes da Partida · {detailsModal?.participantName}
+            </DialogTitle>
+            <DialogDescription>
+              Resumo completo da execução e gabarito questão a questão.
+            </DialogDescription>
+          </DialogHeader>
 
-            <h4>Respostas da Partida ({detailsModal.answers.length})</h4>
-            <div className="participant-answers-list">
-              {detailsModal.answers.map((answer, idx) => (
-                <div
-                  key={`${answer.questionId}-${idx}`}
-                  className={`participant-answer-card ${answer.isCorrect ? 'is-correct' : 'is-wrong'}`}
-                >
-                  <div className="participant-answer-header">
-                    <strong>
-                      {idx + 1}. {answer.questionText}
-                    </strong>
-                    <span className={`admin-badge ${answer.isCorrect ? 'active' : 'closed'}`}>
-                      {answer.isCorrect ? 'Correta' : 'Incorreta'}
-                    </span>
-                  </div>
-                  <div className="operator-card-meta">
-                    Resposta do Participante: {answer.selectedOptionText || 'Tempo esgotado'} ·
-                    Alternativa correta: {answer.correctOptionText}
-                  </div>
+          {detailsModal && (
+            <div className="space-y-4">
+              <dl className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/30 p-3 text-xs sm:grid-cols-4">
+                <div>
+                  <dt className="text-muted-foreground">Telefone</dt>
+                  <dd className="font-medium">{detailsModal.participantPhone}</dd>
                 </div>
-              ))}
-            </div>
+                <div>
+                  <dt className="text-muted-foreground">Evento</dt>
+                  <dd className="font-medium">{detailsModal.eventName}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Data/Hora</dt>
+                  <dd className="font-medium">{formatDateTimePtBr(detailsModal.playedAt)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Pontuação</dt>
+                  <dd className="font-medium">
+                    {detailsModal.score}/{detailsModal.totalQuestions}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Tempo</dt>
+                  <dd className="font-medium">{formatTimeMMSS(detailsModal.timeSeconds)}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Colocação no Ranking</dt>
+                  <dd className="font-medium">#{detailsModal.rankingPosition}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Partidas do telefone no Evento</dt>
+                  <dd className="font-medium">{detailsModal.totalMatchesByPhoneInEvent}</dd>
+                </div>
+                <div>
+                  <dt className="text-muted-foreground">Status do Brinde</dt>
+                  <dd className="font-medium">
+                    {detailsModal.prizeStatus
+                      ? PRIZE_STATUS_LABELS[detailsModal.prizeStatus]
+                      : 'Sem Brinde'}
+                  </dd>
+                </div>
+              </dl>
 
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="admin-btn admin-btn-primary"
-                onClick={() => setDetailsModal(null)}
-              >
-                Fechar
-              </button>
+              <div className="space-y-2">
+                <h4 className="text-sm font-semibold">
+                  Respostas da Partida ({detailsModal.answers.length})
+                </h4>
+                <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                  {detailsModal.answers.map((answer, idx) => (
+                    <div
+                      key={`${answer.questionId}-${idx}`}
+                      className={cn(
+                        'rounded-md border p-2.5 text-xs',
+                        answer.isCorrect
+                          ? 'border-emerald-500/40 bg-emerald-500/5'
+                          : 'border-destructive/40 bg-destructive/5',
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-2 font-medium">
+                        <span>
+                          {idx + 1}. {answer.questionText}
+                        </span>
+                        <span
+                          className={cn(
+                            'shrink-0 rounded px-1.5 py-0.5 text-[11px] font-semibold',
+                            answer.isCorrect
+                              ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                              : 'bg-destructive/15 text-destructive',
+                          )}
+                        >
+                          {answer.isCorrect ? 'Correta' : 'Incorreta'}
+                        </span>
+                      </div>
+                      <div className="mt-1 text-muted-foreground">
+                        Resposta do Participante: {answer.selectedOptionText || 'Tempo esgotado'} ·
+                        Alternativa correta: {answer.correctOptionText}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
-    </section>
+          )}
+
+          <DialogFooter className="flex-wrap justify-between gap-2 sm:justify-between">
+            {detailsModal && (
+              <div className="flex flex-wrap items-center gap-2">
+                {detailsModal.prizeStatus === 'awaiting_pickup' && detailsModal.prizeClaimId && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      void handleConfirmSingleConflictDelivery(
+                        detailsModal.prizeClaimId!,
+                        detailsModal.participantName,
+                      ).then(() => setDetailsModal(null))
+                    }
+                  >
+                    Confirmar Brinde
+                  </Button>
+                )}
+                {(detailsModal.prizeStatus === 'awaiting_pickup' ||
+                  detailsModal.prizeStatus === 'delivered') &&
+                  detailsModal.prizeClaimId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        void controller
+                          .revokePrizeClaims([detailsModal.prizeClaimId!])
+                          .then(async () => {
+                            onStatusMessage(
+                              'success',
+                              `Brinde despremiado para "${detailsModal.participantName}".`,
+                            );
+                            setDetailsModal(null);
+                            await onEventsChanged();
+                            await loadReports();
+                          })
+                      }
+                    >
+                      Despremiar
+                    </Button>
+                  )}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    void handleUnlockSingleLockout(
+                      detailsModal.eventId,
+                      detailsModal.participantPhone,
+                    )
+                  }
+                >
+                  Destravar Telefone
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  onClick={() =>
+                    void controller.deleteParticipantMatches([detailsModal.matchId]).then(async () => {
+                      onStatusMessage('success', 'Partida excluída com atualização nos Totens.');
+                      setDetailsModal(null);
+                      await onEventsChanged();
+                      await loadReports();
+                    })
+                  }
+                >
+                  Excluir Partida
+                </Button>
+              </div>
+            )}
+            <Button type="button" onClick={() => setDetailsModal(null)}>
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }

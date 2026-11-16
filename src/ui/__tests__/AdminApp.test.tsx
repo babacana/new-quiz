@@ -515,16 +515,17 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     render(<AdminApp controller={controller} />);
     const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
 
-    await user.click(await screen.findByRole('button', { name: 'Relatórios e Participantes' }));
+    await user.click(await screen.findByRole('button', { name: 'Participantes & Ranking' }));
     expect(
-      await screen.findByRole('heading', { name: 'Relatórios Operacionais e Participantes' }),
+      await screen.findByRole('heading', { name: 'Participantes & Ranking' }),
     ).toBeInTheDocument();
 
-    expect(await screen.findByText('GUSTAVO RELATORIO')).toBeInTheDocument();
-    expect(screen.getByText('HELENA SEM BRINDE')).toBeInTheDocument();
+    const desktopReportsTable = await screen.findByTestId('reports-desktop-table');
+    expect(within(desktopReportsTable).getByText('GUSTAVO RELATORIO')).toBeInTheDocument();
+    expect(within(desktopReportsTable).getByText('HELENA SEM BRINDE')).toBeInTheDocument();
 
     // Abre modal de detalhes e verifica Respostas e contagem de Partidas
-    const detailsBtns = screen.getAllByRole('button', { name: 'Ver Detalhes' });
+    const detailsBtns = within(desktopReportsTable).getAllByRole('button', { name: 'Ver Detalhes' });
     await user.click(detailsBtns[0]!);
     const modal = await screen.findByRole('dialog');
     expect(within(modal).getByText(/Detalhes da Partida · GUSTAVO RELATORIO/i)).toBeInTheDocument();
@@ -533,14 +534,16 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.click(within(modal).getByRole('button', { name: 'Fechar' }));
 
     // Ação em lote: selecionar GUSTAVO e confirmar entrega
-    await user.click(screen.getByLabelText('Selecionar Partida de GUSTAVO RELATORIO'));
+    await user.click(
+      within(desktopReportsTable).getByLabelText('Selecionar Partida de GUSTAVO RELATORIO'),
+    );
     await user.click(screen.getByRole('button', { name: 'Confirmar Entrega' }));
     expect(await screen.findByText(/1 entrega\(s\) de Brinde confirmada\(s\)/i)).toBeInTheDocument();
 
     // Exportar CSV e JSON com filtro aplicado
     await user.selectOptions(screen.getByLabelText('Status do Brinde'), 'non_winners');
-    expect(screen.queryByText('GUSTAVO RELATORIO')).not.toBeInTheDocument();
-    expect(screen.getByText('HELENA SEM BRINDE')).toBeInTheDocument();
+    expect(within(desktopReportsTable).queryByText('GUSTAVO RELATORIO')).not.toBeInTheDocument();
+    expect(within(desktopReportsTable).getByText('HELENA SEM BRINDE')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: 'Exportar CSV' }));
     expect(csvSpy).toHaveBeenCalled();
@@ -551,7 +554,9 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(await screen.findByText(/Relatório exportado em formato JSON/i)).toBeInTheDocument();
 
     // Excluir Partida via ação em lote
-    await user.click(screen.getByLabelText('Selecionar Partida de HELENA SEM BRINDE'));
+    await user.click(
+      within(desktopReportsTable).getByLabelText('Selecionar Partida de HELENA SEM BRINDE'),
+    );
     await user.click(screen.getByRole('button', { name: 'Excluir' }));
     expect(
       await screen.findByText(/1 Partida\(s\) excluída\(s\) com atualização nos Totens/i),
@@ -676,15 +681,16 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     render(<AdminApp controller={controller} />);
     const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
 
-    // Dashboard Analítico
-    await user.click(await screen.findByRole('button', { name: 'Dashboard Analítico' }));
-    expect(await screen.findByRole('heading', { name: 'Dashboard Analítico' })).toBeInTheDocument();
+    // Análises & Questões (unificado)
+    await user.click(await screen.findByRole('button', { name: 'Análises & Questões' }));
+    expect(await screen.findByRole('heading', { name: 'Análises & Questões' })).toBeInTheDocument();
     expect(await screen.findByText('Participações ao Longo do Tempo')).toBeInTheDocument();
     expect(screen.getByText('Distribuição de Pontuações')).toBeInTheDocument();
     expect(screen.getByText('Engajamento por Hora do Dia')).toBeInTheDocument();
 
     // Clica na linha da questão para abrir detalhes, edita e fecha
-    const q1Row = await screen.findByText(/O que significa a sigla Caesb\?/i);
+    const desktopAnalyticsQuestions = await screen.findByTestId('analytics-questions-desktop-table');
+    const q1Row = await within(desktopAnalyticsQuestions).findByText(/O que significa a sigla Caesb\?/i);
     await user.click(q1Row);
     const qModal = await screen.findByRole('dialog');
     expect(within(qModal).getByText(/Detalhes da Questão #1/i)).toBeInTheDocument();
@@ -693,14 +699,12 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(await screen.findByText(/Questão #1 atualizada com sucesso/i)).toBeInTheDocument();
     await user.click(within(qModal).getByRole('button', { name: 'Fechar' }));
 
-    // Estatísticas de Questões + botão direto Desabilitar
-    await user.click(screen.getByRole('button', { name: 'Estatísticas de Questões' }));
-    expect(
-      await screen.findByRole('heading', { name: 'Estatísticas de Questões' }),
-    ).toBeInTheDocument();
-    const disableBtns = await screen.findAllByRole('button', { name: 'Desabilitar' });
+    // Botão direto Desabilitar na visão unificada
+    const disableBtns = await within(desktopAnalyticsQuestions).findAllByRole('button', {
+      name: 'Desabilitar',
+    });
     await user.click(disableBtns[0]!);
-    expect(await screen.findByText(/desabilitada com sucesso/i)).toBeInTheDocument();
+    expect(await screen.findByText(/Questão #\d+ desabilitada\./i)).toBeInTheDocument();
 
     // Backup e Migração Legada
     const exportSpy = vi.spyOn(controller, 'exportFullBackup');

@@ -14,7 +14,6 @@ import { AdminCustomizationTab } from './AdminCustomizationTab';
 import { AdminEventsTab } from './AdminEventsTab';
 import { AdminOverviewTab } from './AdminOverviewTab';
 import { AdminSettingsTab } from './AdminSettingsTab';
-import { AdminQuestionStatsTab } from './AdminQuestionStatsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
 import { AdminReportsTab } from './AdminReportsTab';
 import { AdminStaffTab } from './AdminStaffTab';
@@ -423,6 +422,7 @@ export function AdminApp({
               <AdminReportsTab
                 controller={controller}
                 events={events}
+                selectedEventId={selectedEventId}
                 onEventsChanged={() => loadWorkspaceData()}
                 onStatusMessage={handleStatusMessage}
               />
@@ -432,16 +432,8 @@ export function AdminApp({
               <AdminAnalyticsTab
                 controller={controller}
                 events={events}
+                selectedEventId={selectedEventId}
                 allQuestions={allQuestions}
-                onQuestionsChanged={() => loadWorkspaceData()}
-                onStatusMessage={handleStatusMessage}
-              />
-            )}
-
-            {activeTab === 'question-stats' && (
-              <AdminQuestionStatsTab
-                controller={controller}
-                events={events}
                 onQuestionsChanged={() => loadWorkspaceData()}
                 onStatusMessage={handleStatusMessage}
               />
