@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { LocalStore } from '../domain/ports';
 import type {
+  CachedVisualAsset,
   GiveUpLockoutRecord,
   MatchRecord,
   PrizeClaimRecord,
@@ -51,6 +52,7 @@ export class TotemLocalDB extends Dexie {
   localPrizeWinners!: Table<StoredPrizeWinnerRow, string>;
   localLockouts!: Table<StoredLockoutRow, string>;
   syncQueue!: Table<SyncQueueItem, string>;
+  visualAssets!: Table<CachedVisualAsset, string>;
 
   constructor(dbName = 'TotemLocalDB') {
     super(dbName);
@@ -61,6 +63,9 @@ export class TotemLocalDB extends Dexie {
       localPrizeWinners: 'id, [eventId+participantPhone], eventId',
       localLockouts: 'id, [eventId+participantPhone], eventId, expiresAt',
       syncQueue: 'idempotencyKey, createdAt, eventId',
+    });
+    this.version(2).stores({
+      visualAssets: 'url, eventId',
     });
   }
 }
@@ -179,6 +184,15 @@ export class DexieLocalStore implements LocalStore {
       retryCount: existing.retryCount + 1,
       lastError: errorMessage,
     });
+  }
+
+  async getVisualAsset(url: string): Promise<CachedVisualAsset | null> {
+    const row = await this.db.visualAssets.get(url);
+    return row ? structuredClone(row) : null;
+  }
+
+  async saveVisualAsset(asset: CachedVisualAsset): Promise<void> {
+    await this.db.visualAssets.put(structuredClone(asset));
   }
 
   async close(): Promise<void> {

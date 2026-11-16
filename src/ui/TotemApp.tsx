@@ -23,6 +23,8 @@ import {
   formatLastSeenPtBr,
   formatTimeMMSS,
 } from './formatters';
+import { EventLogoImage } from './EventLogoImage';
+import { buildThemeCssVariables } from './themeCss';
 import './styles.css';
 
 type ActiveTotemModal =
@@ -58,6 +60,7 @@ const INTERACTION_EVENTS = [
 
 export interface TotemAppProps {
   engine?: TotemSessionEngine;
+  simulatorModalRequest?: { type: 'top3' | 'incorrect'; nonce: number } | null;
 }
 
 function createDefaultEngine(): TotemSessionEngine {
@@ -71,13 +74,20 @@ function createDefaultEngine(): TotemSessionEngine {
 }
 
 // Interface principal do Totem desacoplada da regra de negócio via TotemSessionEngine.
-export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
+export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: TotemAppProps) {
   const engine = useMemo(() => injectedEngine ?? createDefaultEngine(), [injectedEngine]);
 
   const [snapshot, setSnapshot] = useState<TotemSessionSnapshot>(() => engine.getSnapshot());
   const [nameInput, setNameInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
   const [activeModal, setActiveModal] = useState<ActiveTotemModal>(null);
+
+  useEffect(() => {
+    if (!simulatorModalRequest) {
+      return;
+    }
+    setActiveModal({ type: simulatorModalRequest.type });
+  }, [simulatorModalRequest]);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const [isFadingToIdle, setIsFadingToIdle] = useState(false);
   const [activeVirtualField, setActiveVirtualField] = useState<VirtualKeyboardField | null>(null);
@@ -615,7 +625,9 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   }
 
   const texts = snapshot.event.customizations.texts;
-  const logoSrc = `/assets/${snapshot.event.customizations.visualIdentity.logoFileName || 'logo.png'}`;
+  const logoSrc = snapshot.resolvedAssets.logoSrc;
+  const backgroundSrc = snapshot.resolvedAssets.backgroundSrc;
+  const themeStyle = buildThemeCssVariables(snapshot.event.customizations);
   const { eventWindow } = snapshot;
   const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
   const showPairingModal =
@@ -623,7 +635,18 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   const diagnostics = activeModal?.type === 'diagnostics' ? engine.getLocalDiagnostics() : null;
 
   return (
-    <div className={containerClasses.join(' ')}>
+    <div className={containerClasses.join(' ')} style={themeStyle}>
+      {backgroundSrc && (
+        <div
+          className="quiz-custom-background-layer"
+          style={{
+            backgroundImage: `url(${backgroundSrc})`,
+            opacity: snapshot.event.customizations.visualIdentity.customBackgroundOpacity,
+          }}
+          aria-hidden="true"
+        />
+      )}
+
       <AccessibilityControls
         hiddenOnIdle={snapshot.screen === 'idle-screen'}
         onInteraction={resetIdleTimer}
@@ -636,7 +659,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         aria-hidden={snapshot.screen !== 'initial-screen'}
       >
         <div className="screen-content">
-          <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+          <EventLogoImage src={logoSrc} />
           <h2>{texts.initialScreenTitle}</h2>
           <p className="slogan">{texts.initialScreenSlogan}</p>
           {eventWindow.initialScreenMessage !== null && (
@@ -716,7 +739,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         className={`screen ${snapshot.screen === 'quiz-screen' ? 'active' : ''}`}
         aria-hidden={snapshot.screen !== 'quiz-screen'}
       >
-        <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+        <EventLogoImage src={logoSrc} />
 
         {currentQuestion && (
           <>
@@ -840,7 +863,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
       >
         {snapshot.lastResult && (
           <div className="screen-content">
-            <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+            <EventLogoImage src={logoSrc} />
 
             <h2 id="result-participant-name-title">{snapshot.lastResult.participantName},</h2>
 
@@ -923,7 +946,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         aria-hidden={snapshot.screen !== 'ranking-screen'}
       >
         <div className="screen-content">
-          <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+          <EventLogoImage src={logoSrc} />
           <h2>{texts.rankingScreenTitle}</h2>
           <ol id="ranking-list" className="ranking-list-shared-style">
             {snapshot.ranking.length === 0 ? (
@@ -959,7 +982,7 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
         onTouchStart={handleWakeFromIdle}
       >
         <div className="screen-content">
-          <img src={logoSrc} alt="Logo do Evento" className="event-logo" />
+          <EventLogoImage src={logoSrc} />
           <p className="slogan">{texts.initialScreenSlogan}</p>
           <h2 id="idle-call-to-action">
             {eventWindow.idleCallToActionTitle}

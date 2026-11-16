@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_ID } from '../defaults';
+import {
+  PREDEFINED_THEMES,
+  applyPredefinedTheme,
+  restoreDefaultCustomizations,
+} from '../customizationThemes';
 import { EventAdminController } from '../eventAdminController';
 import type { Clock, RandomSource } from '../ports';
 import { TotemSessionEngine } from '../totemSessionEngine';
@@ -1344,6 +1349,94 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       const parsedJson = JSON.parse(jsonText) as Array<{ participantName: string }>;
       expect(parsedJson).toHaveLength(1);
       expect(parsedJson[0]?.participantName).toBe('DANIELA OUTRO EVENTO');
+    });
+  });
+
+  describe('T7 - Slice 1: Galeria de Temas, Mesclagem, Restauração Parcial/Total e Upload de Imagens', () => {
+    it('aplica temas pré-definidos preservando textos customizados e restaura padrões por seção ou globalmente', () => {
+      expect(PREDEFINED_THEMES.map((theme) => theme.name)).toEqual([
+        'Padrão CAESB',
+        'Claro Moderno',
+        'Escuro Elegante',
+      ]);
+
+      const customBase = applyPredefinedTheme(undefined, 'caesbDefault');
+      customBase.texts.initialScreenTitle = 'Semana da Água';
+      customBase.visualIdentity.logoUrl = 'https://storage.local/event-assets/ev/logo-custom.png';
+
+      // Aplica Escuro Elegante mantendo os textos personalizados e o logotipo já vinculado.
+      const darkApplied = applyPredefinedTheme(customBase, 'darkElegant');
+      expect(darkApplied.colors.quizMainBackground).toBe('#1a1a2e');
+      expect(darkApplied.colors.quizPrimaryButtonBg).toBe('#e94560');
+      expect(darkApplied.fontSizes.mainFontFamily).toContain('Verdana');
+      expect(darkApplied.texts.initialScreenTitle).toBe('Semana da Água');
+      expect(darkApplied.visualIdentity.logoUrl).toBe(
+        'https://storage.local/event-assets/ev/logo-custom.png',
+      );
+      expect(darkApplied.visualIdentity.customBackgroundOpacity).toBe(0.3);
+
+      // Restauração parcial: apenas textos -> cores e fontes do Escuro Elegante permanecem.
+      const textsRestored = restoreDefaultCustomizations(darkApplied, 'texts');
+      expect(textsRestored.texts.initialScreenTitle).toBe('Bem-vindo ao Quiz!');
+      expect(textsRestored.colors.quizMainBackground).toBe('#1a1a2e');
+
+      // Restauração parcial: apenas aparência -> volta cores/fontes padrão, mantendo visualIdentity.
+      const appearanceRestored = restoreDefaultCustomizations(darkApplied, 'appearance');
+      expect(appearanceRestored.colors.quizMainBackground).toBe('#002244');
+      expect(appearanceRestored.visualIdentity.logoUrl).toBe(
+        'https://storage.local/event-assets/ev/logo-custom.png',
+      );
+
+      // Restauração global: volta tudo ao padrão CAESB.
+      const allRestored = restoreDefaultCustomizations(darkApplied, 'all');
+      expect(allRestored.texts.initialScreenTitle).toBe('Bem-vindo ao Quiz!');
+      expect(allRestored.colors.quizMainBackground).toBe('#002244');
+      expect(allRestored.visualIdentity.logoUrl ?? null).toBeNull();
+    });
+
+    it('permite ao Administrador fazer upload de logotipo/fundo na nuvem e salvar personalizações com notificação aos Totens', async () => {
+      const clock = new FakeClock('2026-11-16T13:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const logoBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+      const uploadedLogo = await adminController.uploadEventVisualAsset({
+        eventId: DEFAULT_EVENT_ID,
+        kind: 'logo',
+        fileName: 'logo-evento.png',
+        mimeType: 'image/png',
+        bytes: logoBytes,
+      });
+      expect(uploadedLogo.url).toContain('event-assets');
+
+      const [currentEvent] = await adminController.listEvents();
+      const lightTheme = applyPredefinedTheme(currentEvent!.customizations, 'lightModern');
+      lightTheme.visualIdentity.logoFileName = uploadedLogo.fileName;
+      lightTheme.visualIdentity.logoUrl = uploadedLogo.url;
+      lightTheme.visualIdentity.enableCustomBackground = true;
+      lightTheme.visualIdentity.customBackgroundOpacity = 0.45;
+
+      const saved = await adminController.saveEventCustomizations(DEFAULT_EVENT_ID, lightTheme);
+      expect(saved.customizations.colors.quizMainBackground).toBe('#f0f4f8');
+      expect(saved.customizations.visualIdentity.logoUrl).toBe(uploadedLogo.url);
+      expect(saved.customizations.visualIdentity.customBackgroundOpacity).toBe(0.45);
+      expect(saved.configVersion).toBe(currentEvent!.configVersion + 1);
+
+      // Operador não pode enviar imagens nem salvar personalizações.
+      const opController = new EventAdminController({ cloudGateway, clock, random });
+      await opController.login('operador@caesb.df.gov.br', 'OPERADOR2025!');
+      await expect(
+        opController.uploadEventVisualAsset({
+          eventId: DEFAULT_EVENT_ID,
+          kind: 'logo',
+          fileName: 'x.png',
+          mimeType: 'image/png',
+          bytes: logoBytes,
+        }),
+      ).rejects.toThrow(/Administrador/i);
     });
   });
 });

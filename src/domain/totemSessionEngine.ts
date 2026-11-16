@@ -11,6 +11,7 @@ import {
   generateShortPairingCode,
 } from './pairingUtils';
 import type { Clock, CloudEventSnapshot, CloudGateway, LocalStore, RandomSource } from './ports';
+import { resolveVisualAssetPaths } from './visualAssetUtils';
 import type {
   ActiveQuestionState,
   AnswerOutcome,
@@ -139,6 +140,8 @@ export class TotemSessionEngine {
   private stagedSnapshotsByEventId = new Map<string, CloudEventSnapshot>();
   private readonly processedCommandIds = new Set<string>();
   private lastHeartbeatAt: string | null = null;
+  private cachedLogoDataUrl: string | null = null;
+  private cachedBackgroundDataUrl: string | null = null;
   private readonly snapshotListeners = new Set<(snapshot: TotemSessionSnapshot) => void>();
   private readonly channelUnsubscribe: () => void;
 
@@ -334,6 +337,7 @@ export class TotemSessionEngine {
 
     await this.syncPendingQueue();
     await this.pullAndMergeCloudSnapshot();
+    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
     await this.refreshRankingCache();
     this.initialized = true;
     this.screen = 'initial-screen';
@@ -703,6 +707,7 @@ export class TotemSessionEngine {
     this.questions = cloudSnapshot.questions;
     await this.localStore.saveTotemConfig(this.totemConfig);
     await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
+    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
 
     if (cloudSnapshot.matches !== undefined) {
       const cloudMatchIds = new Set(cloudSnapshot.matches.map((match) => match.id));
@@ -734,6 +739,48 @@ export class TotemSessionEngine {
     }
     for (const cloudLockout of cloudSnapshot.lockouts ?? []) {
       await this.localStore.saveLockout(cloudLockout);
+    }
+  }
+
+  private async resolveAndCacheVisualAssets(event: EventConfig): Promise<void> {
+    const visual = event.customizations.visualIdentity;
+    this.cachedLogoDataUrl = await this.loadOrCacheVisualAsset(event.id, visual.logoUrl, 'logo');
+    this.cachedBackgroundDataUrl = visual.enableCustomBackground
+      ? await this.loadOrCacheVisualAsset(event.id, visual.customBackgroundUrl, 'background')
+      : null;
+  }
+
+  private async loadOrCacheVisualAsset(
+    eventId: string,
+    url: string | null | undefined,
+    kind: 'logo' | 'background',
+  ): Promise<string | null> {
+    if (!url) {
+      return null;
+    }
+
+    const cached = await this.localStore.getVisualAsset(url);
+    if (cached) {
+      return cached.dataUrl;
+    }
+
+    if (!this.isEffectiveOnline()) {
+      return null;
+    }
+
+    try {
+      const downloaded = await this.cloudGateway.downloadVisualAsset(url);
+      await this.localStore.saveVisualAsset({
+        url,
+        eventId,
+        kind,
+        dataUrl: downloaded.dataUrl,
+        mimeType: downloaded.mimeType,
+        cachedAt: this.clock.toISOString(),
+      });
+      return downloaded.dataUrl;
+    } catch {
+      return null;
     }
   }
 
@@ -787,6 +834,7 @@ export class TotemSessionEngine {
   async openRankingScreen(): Promise<TotemSessionSnapshot> {
     await this.syncPendingQueue();
     await this.pullAndMergeCloudSnapshot();
+    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
     await this.refreshRankingCache();
     this.transitionWithCleanState('ranking-screen');
     await this.sendHeartbeat();
@@ -828,6 +876,7 @@ export class TotemSessionEngine {
           awardedAt: existingWinner.awardedAt,
         };
         this.lastValidationError = null;
+        this.notifySubscribers();
         return {
           started: false,
           alreadyWonPrizeAt: existingWinner.awardedAt,
@@ -1508,7 +1557,15 @@ export class TotemSessionEngine {
       },
       deferredCommands: structuredClone(this.deferredCommands),
       lastHeartbeatAt: this.lastHeartbeatAt,
+      resolvedAssets: this.buildResolvedVisualAssets(),
     };
+  }
+
+  private buildResolvedVisualAssets(): { logoSrc: string; backgroundSrc: string | null } {
+    return resolveVisualAssetPaths(this.totemConfig.event.customizations.visualIdentity, {
+      logoDataUrl: this.cachedLogoDataUrl,
+      backgroundDataUrl: this.cachedBackgroundDataUrl,
+    });
   }
 
   verifyDiagnosticPin(pinInput: string): boolean {

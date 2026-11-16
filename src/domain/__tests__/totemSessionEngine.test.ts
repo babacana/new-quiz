@@ -1748,4 +1748,101 @@ describe('TotemSessionEngine', () => {
       expect(reconnectedSnap.event.name).toBe('Evento Destino Pós-Reconexão');
     });
   });
+
+  describe('T7 - Slice 2: Cache local e fallback seguro de logotipo e plano de fundo no Totem', () => {
+    it('baixa e armazena logotipo e fundo no cache local quando online e preserva ao reiniciar offline', async () => {
+      const clock = new FakeClock();
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+      const sharedLocalStore = new InMemoryLocalStore();
+
+      const uploadedLogo = await cloudGateway.uploadEventVisualAsset({
+        eventId: DEFAULT_EVENT_ID,
+        kind: 'logo',
+        fileName: 'logo-evento.png',
+        mimeType: 'image/png',
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      });
+      const uploadedBg = await cloudGateway.uploadEventVisualAsset({
+        eventId: DEFAULT_EVENT_ID,
+        kind: 'background',
+        fileName: 'fundo-evento.png',
+        mimeType: 'image/png',
+        bytes: new Uint8Array([5, 6, 7, 8]),
+      });
+
+      const [baseEvent] = await cloudGateway.listEvents();
+      await cloudGateway.saveEvent({
+        ...baseEvent!,
+        customizations: {
+          ...baseEvent!.customizations,
+          visualIdentity: {
+            logoFileName: uploadedLogo.fileName,
+            logoUrl: uploadedLogo.url,
+            customBackgroundFileName: uploadedBg.fileName,
+            customBackgroundUrl: uploadedBg.url,
+            enableCustomBackground: true,
+            customBackgroundOpacity: 0.5,
+          },
+        },
+      });
+
+      const onlineEngine = new TotemSessionEngine({
+        localStore: sharedLocalStore,
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: false,
+      });
+      const onlineSnap = await onlineEngine.initialize();
+      expect(onlineSnap.resolvedAssets.logoSrc).toMatch(/^data:image\/png;base64,/);
+      expect(onlineSnap.resolvedAssets.backgroundSrc).toMatch(/^data:image\/png;base64,/);
+
+      // Reinicia o Totem 100% offline com o mesmo LocalStore -> deve carregar imagens do cache local.
+      cloudGateway.setOnline(false);
+      const offlineRestartedEngine = new TotemSessionEngine({
+        localStore: sharedLocalStore,
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: false,
+      });
+      const offlineSnap = await offlineRestartedEngine.initialize();
+      expect(offlineSnap.resolvedAssets.logoSrc).toBe(onlineSnap.resolvedAssets.logoSrc);
+      expect(offlineSnap.resolvedAssets.backgroundSrc).toBe(onlineSnap.resolvedAssets.backgroundSrc);
+    });
+
+    it('faz fallback seguro para o logotipo padrão quando a imagem em nuvem falha ao baixar e não há cache', async () => {
+      const clock = new FakeClock();
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const [baseEvent] = await cloudGateway.listEvents();
+      await cloudGateway.saveEvent({
+        ...baseEvent!,
+        customizations: {
+          ...baseEvent!.customizations,
+          visualIdentity: {
+            logoFileName: 'logo-custom-inexistente.png',
+            logoUrl: 'https://storage.local/event-assets/inexistente.png',
+            customBackgroundFileName: 'bg-inexistente.png',
+            customBackgroundUrl: 'https://storage.local/event-assets/bg-inexistente.png',
+            enableCustomBackground: true,
+            customBackgroundOpacity: 0.7,
+          },
+        },
+      });
+
+      const engine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: false,
+      });
+      const snap = await engine.initialize();
+      expect(snap.resolvedAssets.logoSrc).toBe('/assets/logo.png');
+      expect(snap.resolvedAssets.backgroundSrc).toBeNull();
+    });
+  });
 });

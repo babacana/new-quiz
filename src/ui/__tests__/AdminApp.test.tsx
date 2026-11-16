@@ -549,4 +549,89 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
       await screen.findByText(/1 Partida\(s\) excluída\(s\) com atualização nos Totens/i),
     ).toBeInTheDocument();
   });
+
+  it('aplica tema da galeria, personaliza textos, faz upload com opacidade, restaura por seção e reflete na pré-visualização ao vivo (T7)', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    await user.click(await screen.findByRole('button', { name: 'Personalização Visual' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Personalização Visual do Evento' }),
+    ).toBeInTheDocument();
+
+    // Aplica tema Escuro Elegante e verifica reflexo imediato na pré-visualização ao vivo
+    await user.click(screen.getByRole('button', { name: 'Escuro Elegante' }));
+    const preview = document.getElementById('customization-live-preview')!;
+    expect(preview.style.backgroundColor).toBe('rgb(26, 26, 46)');
+
+    // Edita texto e alterna abas da pré-visualização (Inicial, Quiz, Resultado)
+    const titleInput = screen.getByLabelText('Título da Tela Inicial');
+    await user.clear(titleInput);
+    await user.type(titleInput, 'Quiz Especial Águas');
+    expect(within(preview).getByText('Quiz Especial Águas')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Tela de Quiz' }));
+    expect(within(preview).getByText(/principal serviço prestado pela CAESB/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('tab', { name: 'Tela de Resultado' }));
+    expect(within(preview).getByText('MARIA CLARA,')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Tela Inicial' }));
+
+    // Upload de logotipo e ajuste de opacidade do fundo
+    const logoFile = new File([new Uint8Array([137, 80, 78, 71])], 'logo-evento.png', {
+      type: 'image/png',
+    });
+    await user.upload(screen.getByLabelText('Upload de Logotipo'), logoFile);
+    expect(await screen.findByText(/Logotipo enviado para a nuvem/i)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText(/Opacidade do Plano de Fundo/i), {
+      target: { value: '60' },
+    });
+    expect(screen.getByText(/Opacidade do Plano de Fundo \(60%\)/i)).toBeInTheDocument();
+
+    // Restauração parcial de textos preserva o tema Escuro Elegante
+    await user.click(screen.getByRole('button', { name: 'Restaurar Textos' }));
+    expect(within(preview).getByText('Bem-vindo ao Quiz!')).toBeInTheDocument();
+    expect(preview.style.backgroundColor).toBe('rgb(26, 26, 46)');
+
+    // Salva personalização e valida persistência no Evento
+    await user.click(screen.getByRole('button', { name: 'Salvar Personalização' }));
+    expect(await screen.findByText(/Personalização visual salva/i)).toBeInTheDocument();
+
+    const [savedEvent] = await cloudGateway.listEvents();
+    expect(savedEvent?.customizations.colors.quizMainBackground).toBe('#1a1a2e');
+    expect(savedEvent?.customizations.visualIdentity.logoUrl).toContain('logo-evento.png');
+    expect(savedEvent?.customizations.visualIdentity.customBackgroundOpacity).toBe(0.6);
+  });
+
+  it('abre Modo Desenvolvedor / Simulador isolado e simula telas, modais e estados temporais sem afetar métricas reais (T7)', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    await user.click(await screen.findByRole('button', { name: 'Modo Desenvolvedor / Simulador' }));
+    const simDialog = await screen.findByRole('dialog');
+    expect(
+      within(simDialog).getByRole('heading', { name: 'Modo Desenvolvedor / Simulador Isolado' }),
+    ).toBeInTheDocument();
+
+    await user.click(within(simDialog).getByRole('button', { name: 'Antes do Início' }));
+    expect(await within(simDialog).findByText(/Estado temporal simulado: before/i)).toBeInTheDocument();
+
+    await user.click(within(simDialog).getByRole('button', { name: 'Durante' }));
+    await user.click(within(simDialog).getByRole('button', { name: 'Já Ganhou Brinde' }));
+    expect(await within(simDialog).findByText(/Modal simulado: Já Ganhou Brinde/i)).toBeInTheDocument();
+    expect(await within(simDialog).findByText(/Segura a emoção, campeão\(ã\)!/i)).toBeInTheDocument();
+
+    await user.click(within(simDialog).getByRole('button', { name: 'Ganhador #1' }));
+    expect(await within(simDialog).findByText(/Cenário simulado: winner_top1/i)).toBeInTheDocument();
+
+    // Nenhuma Partida simulada deve contaminar o CloudGateway real
+    expect(await cloudGateway.listMatches()).toHaveLength(0);
+    expect(await cloudGateway.listPrizeClaims()).toHaveLength(0);
+
+    await user.click(within(simDialog).getByRole('button', { name: 'Fechar Simulador' }));
+    expect(document.getElementById('dev-simulator-window')).not.toBeInTheDocument();
+  });
 });
