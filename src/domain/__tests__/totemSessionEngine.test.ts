@@ -691,4 +691,320 @@ describe('TotemSessionEngine', () => {
       expect(cloudGateway.getSyncedMatches(DEFAULT_EVENT_ID)).toHaveLength(1);
     });
   });
+
+  describe('Fatia 8: Janela temporal do Evento e bloqueio fora do período', () => {
+    it('retorna no_event quando datas do Evento estão ausentes ou inválidas e during dentro da janela', async () => {
+      const noDatesHarness = createHarness();
+      await noDatesHarness.engine.initialize();
+      const noDatesWindow = noDatesHarness.engine.getEventWindowState();
+
+      expect(noDatesWindow).toEqual({
+        status: 'no_event',
+        isBlocked: false,
+        idleCallToActionTitle: 'TOQUE PARA COMEÇAR',
+        idleCallToActionSubtitle: null,
+        initialScreenMessage: null,
+      });
+      expect(noDatesHarness.engine.getSnapshot().eventWindow).toEqual(noDatesWindow);
+
+      const invalidDateEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        startTime: 'data-invalida',
+        endTime: '2026-11-15T18:00:00.000Z',
+        enableOutOfPeriodMessage: true,
+      };
+      const invalidHarness = createHarness({ event: invalidDateEvent });
+      await invalidHarness.engine.initialize();
+      expect(invalidHarness.engine.getEventWindowState().status).toBe('no_event');
+      expect(invalidHarness.engine.getEventWindowState().isBlocked).toBe(false);
+
+      const duringEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        startTime: '2026-11-15T12:00:00.000Z',
+        endTime: '2026-11-15T18:00:00.000Z',
+        enableOutOfPeriodMessage: true,
+      };
+      const duringHarness = createHarness({ event: duringEvent });
+      await duringHarness.engine.initialize();
+      expect(duringHarness.engine.getEventWindowState()).toEqual({
+        status: 'during',
+        isBlocked: false,
+        idleCallToActionTitle: 'TOQUE PARA COMEÇAR',
+        idleCallToActionSubtitle: null,
+        initialScreenMessage: null,
+      });
+    });
+
+    it('mantém status before/after sem bloquear quando enableOutOfPeriodMessage está desabilitado', async () => {
+      const beforeUnblockedEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        startTime: '2026-11-15T16:00:00.000Z',
+        endTime: '2026-11-15T18:00:00.000Z',
+        enableOutOfPeriodMessage: false,
+      };
+      const { engine, clock } = createHarness({ event: beforeUnblockedEvent });
+      await engine.initialize();
+
+      expect(engine.getEventWindowState()).toEqual({
+        status: 'before',
+        isBlocked: false,
+        idleCallToActionTitle: 'TOQUE PARA COMEÇAR',
+        idleCallToActionSubtitle: null,
+        initialScreenMessage: null,
+      });
+
+      clock.advanceMs(5 * 60 * 60 * 1000); // 19:00 UTC -> após endTime
+      expect(engine.getEventWindowState()).toEqual({
+        status: 'after',
+        isBlocked: false,
+        idleCallToActionTitle: 'TOQUE PARA COMEÇAR',
+        idleCallToActionSubtitle: null,
+        initialScreenMessage: null,
+      });
+    });
+
+    it('bloqueia e fornece mensagens pt-BR na Tela de Descanso e tela inicial para before e after com aviso habilitado', async () => {
+      const scheduledEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        name: 'FITABES 2026',
+        startTime: '2026-11-15T16:30:00',
+        endTime: '2026-11-15T18:45:00',
+        enableOutOfPeriodMessage: true,
+      };
+      const clock = new FakeClock('2026-11-15T15:00:00');
+      const random = new DeterministicRandomSource();
+      const localStore = new InMemoryLocalStore();
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      cloudGateway.seedEvent(scheduledEvent, DEFAULT_QUIZ_QUESTIONS);
+
+      const engine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random,
+      });
+      await engine.initialize();
+
+      const beforeState = engine.getEventWindowState();
+      expect(beforeState).toEqual({
+        status: 'before',
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ EM BREVE!',
+        idleCallToActionSubtitle: 'Toque para mais informações',
+        initialScreenMessage:
+          'O quiz "FITABES 2026" ainda não começou! Prepare-se, a diversão começa em 15/11/2026, 16:30.',
+      });
+
+      clock.advanceMs(4 * 60 * 60 * 1000); // 19:00 local -> após endTime
+      const afterState = engine.getEventWindowState();
+      expect(afterState).toEqual({
+        status: 'after',
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ ENCERRADO',
+        idleCallToActionSubtitle: 'Obrigado por participar!',
+        initialScreenMessage:
+          'O quiz "FITABES 2026" foi encerrado em 15/11/2026, 18:45. Obrigado pela participação!',
+      });
+      expect(engine.getSnapshot().eventWindow).toEqual(afterState);
+    });
+
+    it('recusa iniciar Partida fora do período quando isBlocked é true e permite quando dentro ou desabilitado', async () => {
+      const scheduledEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        name: 'FITABES 2026',
+        startTime: '2026-11-15T16:30:00',
+        endTime: '2026-11-15T18:45:00',
+        enableOutOfPeriodMessage: true,
+      };
+      const clock = new FakeClock('2026-11-15T15:00:00');
+      const random = new DeterministicRandomSource();
+      const localStore = new InMemoryLocalStore();
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      cloudGateway.seedEvent(scheduledEvent, DEFAULT_QUIZ_QUESTIONS);
+
+      const engine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random,
+      });
+      await engine.initialize();
+
+      const blockedBefore = await engine.startMatch('MARIA', '(61) 99876-5432');
+      expect(blockedBefore.started).toBe(false);
+      expect(blockedBefore.errorMessage).toBe(
+        'O quiz "FITABES 2026" ainda não começou! Prepare-se, a diversão começa em 15/11/2026, 16:30.',
+      );
+      expect(blockedBefore.snapshot.lastValidationError).toBe(blockedBefore.errorMessage);
+      expect(blockedBefore.snapshot.activeMatch).toBeNull();
+      expect(blockedBefore.snapshot.screen).toBe('initial-screen');
+
+      // Avança para após o término
+      clock.advanceMs(4 * 60 * 60 * 1000);
+      const blockedAfter = await engine.startMatch('JOÃO', '(61) 99876-5432');
+      expect(blockedAfter.started).toBe(false);
+      expect(blockedAfter.errorMessage).toBe(
+        'O quiz "FITABES 2026" foi encerrado em 15/11/2026, 18:45. Obrigado pela participação!',
+      );
+      expect(blockedAfter.snapshot.lastValidationError).toBe(blockedAfter.errorMessage);
+
+      // Com bloqueio desabilitado fora do período, a Partida é permitida
+      const unblockedHarness = createHarness({
+        event: { ...scheduledEvent, enableOutOfPeriodMessage: false },
+      });
+      await unblockedHarness.engine.initialize();
+      const allowed = await unblockedHarness.engine.startMatch('LUCAS', '(61) 99876-5432');
+      expect(allowed.started).toBe(true);
+    });
+  });
+
+  describe('Fatia 9: Configuração de inatividade e transições da Tela de Descanso', () => {
+    it('calcula tempos de inatividade e fade-out em ms aplicando validações e fallbacks', async () => {
+      // Valores padrão (60s / 5s)
+      const defaultHarness = createHarness();
+      await defaultHarness.engine.initialize();
+      expect(defaultHarness.engine.getIdleTimingConfig()).toEqual({
+        idleTimeoutMs: 60_000,
+        fadeOutLeadMs: 5_000,
+        fadeOutStartMs: 55_000,
+      });
+
+      // Valores customizados válidos (20s / 3s)
+      const validCustomHarness = createHarness({
+        event: {
+          ...DEFAULT_EVENT_CONFIG,
+          settings: {
+            ...DEFAULT_EVENT_CONFIG.settings,
+            idleTimeoutSeconds: 20,
+            fadeOutLeadTimeSeconds: 3,
+          },
+        },
+      });
+      await validCustomHarness.engine.initialize();
+      expect(validCustomHarness.engine.getIdleTimingConfig()).toEqual({
+        idleTimeoutMs: 20_000,
+        fadeOutLeadMs: 3_000,
+        fadeOutStartMs: 17_000,
+      });
+
+      // idleTimeoutSeconds < 15 cai no fallback 60s; fadeOutLeadTimeSeconds >= idle cai no default 5s
+      const invalidHarness = createHarness({
+        event: {
+          ...DEFAULT_EVENT_CONFIG,
+          settings: {
+            ...DEFAULT_EVENT_CONFIG.settings,
+            idleTimeoutSeconds: 10,
+            fadeOutLeadTimeSeconds: 70,
+          },
+        },
+      });
+      await invalidHarness.engine.initialize();
+      expect(invalidHarness.engine.getIdleTimingConfig()).toEqual({
+        idleTimeoutMs: 60_000,
+        fadeOutLeadMs: 5_000,
+        fadeOutStartMs: 55_000,
+      });
+
+      // fadeOutLeadTimeSeconds >= idleTimeoutSeconds válido (20s / 25s) usa default 5s; < 3s também usa default 5s
+      const highFadeHarness = createHarness({
+        event: {
+          ...DEFAULT_EVENT_CONFIG,
+          settings: {
+            ...DEFAULT_EVENT_CONFIG.settings,
+            idleTimeoutSeconds: 20,
+            fadeOutLeadTimeSeconds: 25,
+          },
+        },
+      });
+      await highFadeHarness.engine.initialize();
+      expect(highFadeHarness.engine.getIdleTimingConfig()).toEqual({
+        idleTimeoutMs: 20_000,
+        fadeOutLeadMs: 5_000,
+        fadeOutStartMs: 15_000,
+      });
+
+      const lowFadeHarness = createHarness({
+        event: {
+          ...DEFAULT_EVENT_CONFIG,
+          settings: {
+            ...DEFAULT_EVENT_CONFIG.settings,
+            idleTimeoutSeconds: 18,
+            fadeOutLeadTimeSeconds: 1,
+          },
+        },
+      });
+      await lowFadeHarness.engine.initialize();
+      const lowFadeConfig = lowFadeHarness.engine.getIdleTimingConfig();
+      expect(lowFadeConfig.idleTimeoutMs).toBe(18_000);
+      expect(lowFadeConfig.fadeOutLeadMs).toBe(5_000);
+      expect(lowFadeConfig.fadeOutStartMs).toBe(13_000);
+    });
+
+    it('enterIdleScreen cancela Partida em andamento sem persistir e limpa resultados/erros; wakeFromIdleScreen desperta para initial-screen', async () => {
+      const event1Q: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: { ...DEFAULT_EVENT_CONFIG.settings, numberOfQuestions: 1 },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const { engine, localStore } = createHarness({ event: event1Q, questions });
+      await engine.initialize();
+
+      // Caso 1: Partida em andamento abandonada por inatividade
+      await engine.startMatch('VISITANTE INATIVO', '(61) 99999-1234');
+      expect(engine.getSnapshot().screen).toBe('quiz-screen');
+      expect(engine.getSnapshot().activeMatch).not.toBeNull();
+
+      // wakeFromIdleScreen fora da idle-screen não interrompe a Partida ativa
+      const stillInQuiz = engine.wakeFromIdleScreen();
+      expect(stillInQuiz.screen).toBe('quiz-screen');
+      expect(stillInQuiz.activeMatch).not.toBeNull();
+
+      const idleFromQuiz = engine.enterIdleScreen();
+      expect(idleFromQuiz.screen).toBe('idle-screen');
+      expect(idleFromQuiz.activeMatch).toBeNull();
+      expect(idleFromQuiz.lastResult).toBeNull();
+      expect(idleFromQuiz.lastValidationError).toBeNull();
+      expect(engine.getPreparedQuestions()).toEqual([]);
+      expect(engine.getActiveAnswers()).toEqual([]);
+      expect(await localStore.getMatches(DEFAULT_EVENT_ID)).toHaveLength(0);
+      expect(await localStore.getSyncQueue()).toHaveLength(0);
+
+      // Despertar da Tela de Descanso leva à tela inicial com estado limpo
+      const wokenFromQuiz = engine.wakeFromIdleScreen();
+      expect(wokenFromQuiz.screen).toBe('initial-screen');
+      expect(wokenFromQuiz.activeMatch).toBeNull();
+      expect(wokenFromQuiz.lastResult).toBeNull();
+      expect(wokenFromQuiz.lastValidationError).toBeNull();
+
+      // Caso 2: Erro de validação na initial-screen é limpo ao entrar em idle-screen
+      await engine.startMatch('', '(61) 99999-1234');
+      expect(engine.getSnapshot().lastValidationError).not.toBeNull();
+      const idleFromError = engine.enterIdleScreen();
+      expect(idleFromError.screen).toBe('idle-screen');
+      expect(idleFromError.lastValidationError).toBeNull();
+      expect(engine.wakeFromIdleScreen().screen).toBe('initial-screen');
+
+      // Caso 3: lastResult da result-screen é limpo ao entrar em idle-screen
+      await engine.startMatch('MARINA', '(61) 98888-7777');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const resultSnap = await engine.advanceAfterAnswer();
+      expect(resultSnap.screen).toBe('result-screen');
+      expect(resultSnap.lastResult).not.toBeNull();
+
+      const idleFromResult = engine.enterIdleScreen();
+      expect(idleFromResult.screen).toBe('idle-screen');
+      expect(idleFromResult.lastResult).toBeNull();
+      expect(idleFromResult.activeMatch).toBeNull();
+      expect(engine.wakeFromIdleScreen().screen).toBe('initial-screen');
+    });
+  });
 });
