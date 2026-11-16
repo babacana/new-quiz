@@ -215,6 +215,8 @@ export type SyncQueueItem = SyncQueueMatchItem | SyncQueueLockoutItem;
 
 export interface TotemConfigSnapshot {
   totemId: string | null;
+  totemName?: string | null;
+  pairingCode?: string | null;
   deviceToken: string | null;
   pinCode: string;
   event: EventConfig;
@@ -312,6 +314,9 @@ export interface TotemSessionSnapshot {
   pendingSyncCount: number;
   isOnline: boolean;
   lastValidationError: string | null;
+  pairing: TotemPairingState;
+  deferredCommands: RemoteCommandPayload[];
+  lastHeartbeatAt: string | null;
 }
 
 export interface StartMatchResult {
@@ -441,4 +446,113 @@ export interface UnsavedNavigationPrompt {
   dirtySections: DirtySection[];
   message: string;
   options: readonly ['save_and_leave', 'discard_and_leave', 'cancel'];
+}
+
+// Tipos de Pareamento de Totem, Monitoramento ao Vivo, Comandos Remotos e Diagnóstico Local (T5).
+export type TotemOnlineStatus = 'online' | 'offline';
+export type TotemPairingStatus = 'unpaired' | 'awaiting_authorization' | 'paired';
+
+export interface TotemPairingState {
+  isPaired: boolean;
+  status: TotemPairingStatus;
+  pairingCode: string | null;
+  totemId: string | null;
+  totemName: string | null;
+  activationLink: string | null;
+}
+
+export interface TotemRecord {
+  id: string;
+  name: string;
+  pairingCode: string;
+  deviceToken: string;
+  eventId: string | null;
+  pinCode: string;
+  isPaired: boolean;
+  onlineStatus: TotemOnlineStatus;
+  lastSeenAt: string | null;
+  currentScreen: TotemScreenId;
+  configVersion: number;
+  pendingSyncCount: number;
+  createdAt: string;
+}
+
+export interface AuthorizeTotemPairingInput {
+  pairingCode?: string;
+  name: string;
+  pinCode: string;
+  eventId: string;
+}
+
+export interface TotemPairingRequestInput {
+  id: string;
+  pairingCode: string;
+  currentScreen: TotemScreenId;
+  configVersion: number;
+  pendingSyncCount: number;
+}
+
+export interface TotemPairingAuthorizationPayload {
+  id: string;
+  pairingCode: string;
+  deviceToken: string;
+  name: string;
+  pinCode: string;
+  eventId: string;
+}
+
+export interface TotemHeartbeatPayload {
+  totemId: string;
+  deviceToken?: string | null;
+  eventId?: string | null;
+  onlineStatus: TotemOnlineStatus;
+  currentScreen: TotemScreenId;
+  configVersion: number;
+  pendingSyncCount: number;
+  seenAt?: string;
+}
+
+export type RemoteCommandType =
+  | 'SWITCH_EVENT'
+  | 'FORCE_SYNC'
+  | 'RELOAD_SCREEN'
+  | 'CONFIG_UPDATED';
+
+export interface RemoteCommandPayload {
+  id: string;
+  type: RemoteCommandType;
+  targetTotemId: string | null;
+  targetEventId: string | null;
+  eventId?: string;
+  targetScreen?: 'initial-screen' | 'idle-screen';
+  configVersion?: number;
+  issuedAt: string;
+}
+
+export interface DispatchRemoteCommandInput {
+  type: RemoteCommandType;
+  targetTotemId?: string | null;
+  targetEventId?: string | null;
+  eventId?: string;
+  targetScreen?: 'initial-screen' | 'idle-screen';
+}
+
+export type TotemChannelEvent =
+  | { type: 'PAIRING_AUTHORIZED'; totem: TotemRecord }
+  | { type: 'TELEMETRY_UPDATED'; totem: TotemRecord }
+  | { type: 'REMOTE_COMMAND'; command: RemoteCommandPayload };
+
+export interface TotemLocalDiagnostics {
+  isOnline: boolean;
+  totemId: string | null;
+  totemName: string | null;
+  pairingCode: string | null;
+  isPaired: boolean;
+  eventId: string;
+  eventName: string;
+  configVersion: number;
+  currentScreen: TotemScreenId;
+  pendingSyncCount: number;
+  lastHeartbeatAt: string | null;
+  deferredCommandsCount: number;
 }

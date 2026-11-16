@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
+import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
+import { DEFAULT_EVENT_ID } from '../../domain/defaults';
 import { EventAdminController } from '../../domain/eventAdminController';
 import type { Clock, RandomSource } from '../../domain/ports';
+import { TotemSessionEngine } from '../../domain/totemSessionEngine';
 import { AdminApp } from '../AdminApp';
 import { AppRouter } from '../AppRouter';
 
@@ -222,5 +225,88 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     render(<AppRouter />);
     expect(screen.getByRole('heading', { name: 'Painel Administrativo do Quiz' })).toBeInTheDocument();
     window.location.hash = '';
+  });
+
+  it('autoriza Pareamento de Totem, monitora telemetria ao vivo e envia comandos remotos', async () => {
+    const clock = new AdminUiClock();
+    const random = new AdminUiRandom();
+    const cloudGateway = new InMemoryCloudGateway({
+      online: true,
+      seedDefaultEvent: true,
+      nowIso: () => clock.toISOString(),
+    });
+    const controller = new EventAdminController({ cloudGateway, clock, random });
+    const totemEngine = new TotemSessionEngine({
+      localStore: new InMemoryLocalStore(),
+      cloudGateway,
+      clock,
+      random,
+      requirePairing: true,
+    });
+    const pendingSnap = await totemEngine.initialize();
+
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    // Cria um segundo Evento para validar comando SWITCH_EVENT
+    await screen.findByDisplayValue('Quiz Interativo CAESB');
+    await user.click(screen.getByRole('button', { name: '+ Novo Evento' }));
+    await user.type(screen.getByLabelText('Nome do Evento'), 'Expo Água Secundária');
+    await user.click(screen.getByRole('button', { name: 'Salvar Evento e Configurações' }));
+    expect(await screen.findByText('Expo Água Secundária')).toBeInTheDocument();
+
+    // Navega para aba Totens e Pareamento
+    await user.click(screen.getByRole('button', { name: 'Totens e Pareamento' }));
+    expect(await screen.findByRole('heading', { name: 'Autorizar Pareamento de Totem' })).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('Código de Pareamento'), pendingSnap.pairing.pairingCode!);
+    await user.type(screen.getByLabelText('Nome do Totem'), 'Totem Hall A');
+    await user.clear(screen.getByLabelText('PIN Local'));
+    await user.type(screen.getByLabelText('PIN Local'), '2468');
+    await user.selectOptions(screen.getByLabelText('Evento Vinculado'), DEFAULT_EVENT_ID);
+    await user.click(screen.getByRole('button', { name: 'Autorizar Pareamento' }));
+
+    expect(await screen.findByText('Totem Hall A')).toBeInTheDocument();
+    expect(document.getElementById('generated-activation-link')?.textContent).toContain(
+      `?pairingCode=${pendingSnap.pairing.pairingCode}`,
+    );
+    expect(screen.getByText('Online')).toBeInTheDocument();
+    expect(screen.getByText('Tela: Inicial')).toBeInTheDocument();
+    expect(screen.getByText(/Fila local: 0 item\(ns\)/i)).toBeInTheDocument();
+
+    // Totem inicia Partida -> monitoramento atualiza ao vivo para Em Partida
+    await act(async () => {
+      await totemEngine.startMatch('FELIPE', '(61) 98888-0001');
+    });
+    expect(await screen.findByText('Tela: Em Partida')).toBeInTheDocument();
+
+    // Encerra Partida via desistência e testa comandos remotos individuais
+    await act(async () => {
+      await totemEngine.giveUpMatch();
+    });
+    expect(await screen.findByText('Tela: Inicial')).toBeInTheDocument();
+
+    const rowSelect = screen.getByLabelText('Trocar Evento de Totem Hall A');
+    const secondaryEventOption = Array.from(rowSelect.querySelectorAll('option')).find(
+      (opt) => opt.textContent === 'Expo Água Secundária',
+    );
+    expect(secondaryEventOption).toBeDefined();
+    await user.selectOptions(rowSelect, secondaryEventOption!.value);
+
+    const rowButtons = screen.getAllByRole('button', { name: 'Trocar Evento' });
+    await user.click(rowButtons[0]);
+    expect(await screen.findByText(/Comando Trocar Evento enviado para "Totem Hall A"/i)).toBeInTheDocument();
+    expect(totemEngine.getSnapshot().event.name).toBe('Expo Água Secundária');
+
+    const syncButtons = screen.getAllByRole('button', { name: 'Forçar Sincronização' });
+    await user.click(syncButtons[0]);
+    expect(await screen.findByText(/Comando Forçar Sincronização enviado para "Totem Hall A"/i)).toBeInTheDocument();
+
+    const reloadTargetSelect = screen.getByLabelText('Tela de reinício de Totem Hall A');
+    await user.selectOptions(reloadTargetSelect, 'idle-screen');
+    const reloadButtons = screen.getAllByRole('button', { name: 'Reiniciar Tela' });
+    await user.click(reloadButtons[0]);
+    expect(await screen.findByText(/Comando Reiniciar Tela enviado para "Totem Hall A"/i)).toBeInTheDocument();
+    expect(totemEngine.getSnapshot().screen).toBe('idle-screen');
   });
 });

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_CONFIG } from '../../domain/defaults';
+import { EventAdminController } from '../../domain/eventAdminController';
 import type { Clock, RandomSource } from '../../domain/ports';
 import { TotemSessionEngine } from '../../domain/totemSessionEngine';
 import type { EventConfig, Question } from '../../domain/types';
@@ -760,5 +761,169 @@ describe('TotemApp (Interface do Totem)', () => {
     expect(
       await screen.findByText(/Você desistiu recentemente do quiz e está bloqueado por 4 minuto\(s\)/i),
     ).toBeInTheDocument();
+  });
+
+  it('exibe modal de Pareamento com código curto quando requirePairing está ativo e conclui ao autorizar na nuvem', async () => {
+    const { cloudGateway, event } = createUiTestRig({ numberOfQuestions: 1 });
+    const pairedEvent: EventConfig = {
+      ...event,
+      id: '00000000-0000-4000-8000-000000000555',
+      name: 'Congresso Pareado UI',
+      customizations: {
+        ...event.customizations,
+        texts: {
+          ...event.customizations.texts,
+          initialScreenTitle: 'Bem-vindo ao Congresso Pareado UI!',
+        },
+      },
+    };
+    cloudGateway.seedEvent(pairedEvent, [
+      {
+        id: 201,
+        text: 'Pergunta do evento pareado?',
+        options: ['A', 'B', 'C', 'D'],
+        correctIndex: 0,
+        difficulty: 'facil',
+        tags: [],
+        isDisabled: false,
+      },
+    ]);
+
+    const engine = new TotemSessionEngine({
+      localStore: new InMemoryLocalStore(),
+      cloudGateway,
+      clock: new UiTestClock(),
+      random: new UiTestRandom(),
+      requirePairing: true,
+    });
+
+    render(<TotemApp engine={engine} />);
+
+    expect(await screen.findByRole('heading', { name: 'Pareamento do Totem' })).toBeInTheDocument();
+    const codeText = document.getElementById('totem-pairing-code')?.textContent ?? '';
+    expect(codeText).toMatch(/^[A-Z0-9]{6}$/);
+
+    const totems = await cloudGateway.listTotems();
+    await act(async () => {
+      await cloudGateway.authorizeTotemPairing({
+        id: totems[0].id,
+        pairingCode: codeText,
+        deviceToken: 'tok-ui-paired',
+        name: 'Totem Recepção UI',
+        pinCode: '9876',
+        eventId: pairedEvent.id,
+      });
+    });
+
+    await waitFor(() => {
+      expect(document.getElementById('totem-pairing-modal')).toBeNull();
+    });
+    expect(screen.getByText('Bem-vindo ao Congresso Pareado UI!')).toBeInTheDocument();
+  });
+
+  it('botão ⚙️ exige PIN do Totem, exibe diagnóstico local sem painel admin e força sincronização', async () => {
+    const user = userEvent.setup();
+    const { cloudGateway, localStore, event } = createUiTestRig({
+      online: true,
+      numberOfQuestions: 1,
+    });
+    await localStore.saveTotemConfig({
+      totemId: 'totem-ui-diag',
+      totemName: 'Totem Balcão UI',
+      pairingCode: 'UI4567',
+      deviceToken: 'tok-ui-diag',
+      pinCode: '4567',
+      event,
+    });
+    const engine = new TotemSessionEngine({
+      localStore,
+      cloudGateway,
+      clock: new UiTestClock(),
+      random: new UiTestRandom(),
+    });
+
+    render(<TotemApp engine={engine} />);
+    await screen.findByLabelText('Nome');
+
+    // Joga 1 Partida offline para gerar 1 item pendente na syncQueue
+    cloudGateway.setOnline(false);
+    await user.type(screen.getByLabelText('Nome'), 'lucia');
+    await user.type(screen.getByLabelText('Telefone'), '61991112233');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+    await user.click(await screen.findByRole('button', { name: 'CAESB' }));
+    await user.click(screen.getByRole('button', { name: 'Finalizar Quiz' }));
+
+    // Abre modal de PIN via botão discreto ⚙️
+    await user.click(screen.getByRole('button', { name: 'Diagnóstico local do Totem' }));
+    expect(screen.getByRole('heading', { name: 'Acesso ao Diagnóstico Local' })).toBeInTheDocument();
+    expect(screen.queryByText('Painel Administrativo do Quiz')).not.toBeInTheDocument();
+
+    // PIN errado é rejeitado
+    await user.type(screen.getByLabelText('PIN do Totem'), '0000');
+    await user.click(screen.getByRole('button', { name: 'Acessar Diagnóstico' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('PIN inválido para este Totem.');
+
+    // PIN correto abre diagnóstico local
+    await user.clear(screen.getByLabelText('PIN do Totem'));
+    await user.type(screen.getByLabelText('PIN do Totem'), '4567');
+    await user.click(screen.getByRole('button', { name: 'Acessar Diagnóstico' }));
+
+    expect(await screen.findByRole('heading', { name: 'Diagnóstico Local do Totem' })).toBeInTheDocument();
+    expect(document.getElementById('diagnostics-connection-status')).toHaveTextContent('Offline');
+    expect(document.getElementById('diagnostics-totem-name')).toHaveTextContent('Totem Balcão UI');
+    expect(document.getElementById('diagnostics-totem-code')).toHaveTextContent('UI4567');
+    expect(document.getElementById('diagnostics-pending-sync')).toHaveTextContent('1');
+
+    // Reconecta e força sincronização pelo modal de diagnóstico
+    cloudGateway.setOnline(true);
+    await user.click(screen.getByRole('button', { name: 'Forçar Sincronização' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      'Sincronização concluída: 1 enviado(s), 0 pendente(s).',
+    );
+    expect(document.getElementById('diagnostics-connection-status')).toHaveTextContent('Online');
+    expect(document.getElementById('diagnostics-pending-sync')).toHaveTextContent('0');
+
+    await user.click(screen.getByRole('button', { name: 'Fechar Diagnóstico' }));
+    expect(document.getElementById('totem-diagnostics-modal')).toBeNull();
+  });
+
+  it('aguarda término da Partida em andamento antes de aplicar CONFIG_UPDATED na interface', async () => {
+    const user = userEvent.setup();
+    const clock = new UiTestClock();
+    const random = new UiTestRandom();
+    const { engine, cloudGateway, event } = createUiTestRig({
+      online: true,
+      numberOfQuestions: 2,
+    });
+    const controller = new EventAdminController({ cloudGateway, clock, random });
+    await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    render(<TotemApp engine={engine} />);
+
+    await user.type(await screen.findByLabelText('Nome'), 'rafael');
+    await user.type(screen.getByLabelText('Telefone'), '61992223344');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+
+    expect(await screen.findByText('Qual a sigla da companhia de saneamento do DF?')).toBeInTheDocument();
+
+    // Administrador altera título enquanto Partida está ativa
+    await act(async () => {
+      await controller.updateEvent(event.id, {
+        customizations: { texts: { initialScreenTitle: 'Título Pós-Partida v2' } },
+      });
+    });
+
+    // Quiz continua sem interrupção
+    expect(document.getElementById('quiz-screen')).toHaveClass('active');
+    await user.click(screen.getByRole('button', { name: 'CAESB' }));
+    await user.click(screen.getByRole('button', { name: 'Próxima Pergunta' }));
+    await user.click(await screen.findByRole('button', { name: '115' }));
+    await user.click(screen.getByRole('button', { name: 'Finalizar Quiz' }));
+
+    // Ao voltar para a tela inicial após concluir a Partida, a nova configuração já está visível
+    await user.click(await screen.findByRole('button', { name: 'OK!' }));
+    await user.click(screen.getByRole('button', { name: 'Jogar Novamente' }));
+    expect(screen.getByText('Título Pós-Partida v2')).toBeInTheDocument();
   });
 });

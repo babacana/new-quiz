@@ -11,11 +11,12 @@ import type {
 import { AdminEventsTab } from './AdminEventsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
 import { AdminStaffTab } from './AdminStaffTab';
+import { AdminTotemsTab } from './AdminTotemsTab';
 import type { ExternalRouteNavigationRequest } from './AppRouter';
 import { createDefaultCloudGateway } from './cloudFactory';
 import './styles.css';
 
-type AdminTabId = 'events' | 'questions' | 'staff';
+type AdminTabId = 'events' | 'questions' | 'totems' | 'staff';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -439,6 +440,13 @@ export function AdminApp({
             </button>
             <button
               type="button"
+              className={`admin-tab-btn ${activeTab === 'totems' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'totems' })}
+            >
+              Totens e Pareamento
+            </button>
+            <button
+              type="button"
               className={`admin-tab-btn ${activeTab === 'staff' ? 'active' : ''}`}
               onClick={() => requestGuardedAction({ type: 'tab', tab: 'staff' })}
             >
@@ -466,6 +474,14 @@ export function AdminApp({
               onRequestGuardedAction={requestGuardedCallback}
               onQuestionsChanged={() => loadWorkspaceData()}
               onRegisterSaveHandler={registerSaveHandler}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'totems' && (
+            <AdminTotemsTab
+              controller={controller}
+              events={events}
               onStatusMessage={handleStatusMessage}
             />
           )}

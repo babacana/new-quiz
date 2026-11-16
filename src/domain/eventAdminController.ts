@@ -1,11 +1,18 @@
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from './defaults';
+import {
+  buildTotemActivationLink,
+  generateShortPairingCode,
+  normalizePairingCode,
+} from './pairingUtils';
 import type { Clock, CloudGateway, RandomSource } from './ports';
 import type {
   AuthSession,
+  AuthorizeTotemPairingInput,
   CloneEventOverrides,
   CreateStaffAccountInput,
   DifficultyLevel,
   DirtySection,
+  DispatchRemoteCommandInput,
   EventConfig,
   EventCustomizations,
   EventCustomizationsPatch,
@@ -19,6 +26,9 @@ import type {
   QuestionUpsertInput,
   QuestionsImportMode,
   QuestionsImportResult,
+  RemoteCommandPayload,
+  TotemChannelEvent,
+  TotemRecord,
   UnsavedChangesResolution,
   UnsavedNavigationPrompt,
   UserProfile,
@@ -32,6 +42,7 @@ export interface EventAdminControllerDependencies {
 }
 
 const VALID_DIFFICULTIES: readonly DifficultyLevel[] = ['facil', 'moderado', 'dificil'];
+const TOTEM_HEARTBEAT_STALE_MS = 90_000;
 
 const DIRTY_SECTION_LABELS: Record<DirtySection, string> = {
   event: 'Dados do Evento',
@@ -358,13 +369,19 @@ function normalizeImportedQuestion(raw: Record<string, unknown>): QuestionUpsert
 // Controlador administrativo de Autenticação, Multi-Evento e Banco de Questões Central (T4).
 export class EventAdminController {
   private readonly cloudGateway: CloudGateway;
+  private readonly clock?: Clock;
   private readonly random: RandomSource;
   private session: AuthSession | null = null;
   private readonly dirtySections = new Set<DirtySection>();
 
   constructor(deps: EventAdminControllerDependencies) {
     this.cloudGateway = deps.cloudGateway;
+    this.clock = deps.clock;
     this.random = deps.random;
+  }
+
+  private nowIso(): string {
+    return this.clock ? this.clock.toISOString() : new Date().toISOString();
   }
 
   async login(email: string, password: string): Promise<AuthSession> {
@@ -589,6 +606,7 @@ export class EventAdminController {
 
     this.clearDirty('event');
     this.clearDirty('settings');
+    await this.dispatchConfigUpdatedForEvent(saved.id, saved.configVersion);
     return saved;
   }
 
@@ -622,16 +640,47 @@ export class EventAdminController {
     });
   }
 
+  private async dispatchConfigUpdatedForEvent(
+    eventId: string,
+    configVersion: number,
+  ): Promise<void> {
+    await this.cloudGateway.dispatchRemoteCommand({
+      id: this.random.uuid(),
+      type: 'CONFIG_UPDATED',
+      targetTotemId: null,
+      targetEventId: eventId,
+      configVersion,
+      issuedAt: this.nowIso(),
+    });
+  }
+
+  private async notifyActiveEventsQuestionsChanged(): Promise<void> {
+    const events = await this.cloudGateway.listEvents();
+    for (const ev of events) {
+      if (!ev.isActive) {
+        continue;
+      }
+      const nextVersion = ev.configVersion + 1;
+      await this.cloudGateway.saveEvent({
+        ...structuredClone(ev),
+        configVersion: nextVersion,
+      });
+      await this.dispatchConfigUpdatedForEvent(ev.id, nextVersion);
+    }
+  }
+
   private async bumpEventConfigVersion(eventId: string): Promise<void> {
     const events = await this.cloudGateway.listEvents();
     const existing = events.find((ev) => ev.id === eventId);
     if (!existing) {
       throw new Error(`Evento não encontrado (${eventId}).`);
     }
+    const nextVersion = existing.configVersion + 1;
     await this.cloudGateway.saveEvent({
       ...structuredClone(existing),
-      configVersion: existing.configVersion + 1,
+      configVersion: nextVersion,
     });
+    await this.dispatchConfigUpdatedForEvent(eventId, nextVersion);
   }
 
   async setEventQuestions(eventId: string, questionIds: number[]): Promise<void> {
@@ -679,6 +728,7 @@ export class EventAdminController {
 
     const saved = await this.cloudGateway.saveQuestion(buildQuestionEntity(nextId, normalized));
     this.clearDirty('question');
+    await this.notifyActiveEventsQuestionsChanged();
     return saved;
   }
 
@@ -704,17 +754,26 @@ export class EventAdminController {
     const saved = await this.cloudGateway.saveQuestion(buildQuestionEntity(id, normalized));
 
     this.clearDirty('question');
+    await this.notifyActiveEventsQuestionsChanged();
     return saved;
   }
 
   async deleteQuestions(ids: number[]): Promise<number> {
     this.requireAdmin();
-    return this.cloudGateway.deleteQuestions(ids);
+    const count = await this.cloudGateway.deleteQuestions(ids);
+    if (count > 0) {
+      await this.notifyActiveEventsQuestionsChanged();
+    }
+    return count;
   }
 
   async setQuestionsDisabled(ids: number[], isDisabled: boolean): Promise<number> {
     this.requireAdmin();
-    return this.cloudGateway.setQuestionsDisabled(ids, isDisabled);
+    const count = await this.cloudGateway.setQuestionsDisabled(ids, isDisabled);
+    if (count > 0) {
+      await this.notifyActiveEventsQuestionsChanged();
+    }
+    return count;
   }
 
   async listAllQuestions(eventId?: string): Promise<Question[]> {
@@ -964,6 +1023,7 @@ export class EventAdminController {
     if (mode === 'replace') {
       const normalized = parsedQuestions.map((item, idx) => buildQuestionEntity(idx + 1, item));
       const saved = await this.cloudGateway.replaceAllQuestions(normalized);
+      await this.notifyActiveEventsQuestionsChanged();
       return {
         importedCount: saved.length,
         totalAfterImport: saved.length,
@@ -986,6 +1046,10 @@ export class EventAdminController {
         await this.cloudGateway.saveQuestion(buildQuestionEntity(nextId, item));
       }
       importedCount += 1;
+    }
+
+    if (importedCount > 0) {
+      await this.notifyActiveEventsQuestionsChanged();
     }
 
     const finalList = await this.cloudGateway.listAllQuestions();
@@ -1059,5 +1123,136 @@ export class EventAdminController {
     }
     this.dirtySections.clear();
     return true;
+  }
+
+  async authorizeTotemPairing(input: AuthorizeTotemPairingInput): Promise<TotemRecord> {
+    this.requireAdmin();
+
+    const name = input.name.trim();
+    if (!name) {
+      throw new Error('O nome do Totem é obrigatório.');
+    }
+
+    const pinCode = input.pinCode.trim();
+    if (!/^\d{4,8}$/.test(pinCode)) {
+      throw new Error('O PIN local do Totem deve conter entre 4 e 8 dígitos numéricos.');
+    }
+
+    const events = await this.cloudGateway.listEvents();
+    if (!events.some((ev) => ev.id === input.eventId)) {
+      throw new Error('Evento selecionado para Pareamento não encontrado.');
+    }
+
+    const pairingCode = input.pairingCode?.trim()
+      ? normalizePairingCode(input.pairingCode)
+      : generateShortPairingCode(this.random, 6);
+    if (!/^[A-Z0-9]{4,12}$/.test(pairingCode)) {
+      throw new Error(
+        'Código de Pareamento inválido. Utilize de 4 a 12 caracteres alfanuméricos.',
+      );
+    }
+
+    return this.cloudGateway.authorizeTotemPairing({
+      id: this.random.uuid(),
+      pairingCode,
+      deviceToken: this.random.uuid(),
+      name,
+      pinCode,
+      eventId: input.eventId,
+    });
+  }
+
+  buildTotemActivationLink(pairingCode: string, baseOrigin = ''): string {
+    return buildTotemActivationLink(pairingCode, baseOrigin);
+  }
+
+  async listTotems(): Promise<TotemRecord[]> {
+    this.requireAdmin();
+    const totems = await this.cloudGateway.listTotems();
+    const nowMs = this.clock ? this.clock.now() : Date.now();
+    return totems.map((totem) => {
+      if (totem.onlineStatus !== 'online' || !totem.lastSeenAt) {
+        return totem;
+      }
+      const lastSeenMs = Date.parse(totem.lastSeenAt);
+      if (Number.isFinite(lastSeenMs) && nowMs - lastSeenMs > TOTEM_HEARTBEAT_STALE_MS) {
+        return {
+          ...totem,
+          onlineStatus: 'offline',
+        };
+      }
+      return totem;
+    });
+  }
+
+  subscribeTotemUpdates(listener: (event: TotemChannelEvent) => void): () => void {
+    return this.cloudGateway.subscribeTotemChannel(listener);
+  }
+
+  async dispatchRemoteCommand(input: DispatchRemoteCommandInput): Promise<RemoteCommandPayload> {
+    this.requireAdmin();
+
+    if (!input.targetTotemId && !input.targetEventId) {
+      throw new Error('Informe um Totem ou Evento de destino para o comando remoto.');
+    }
+
+    let targetConfigVersion: number | undefined;
+    if (input.type === 'SWITCH_EVENT') {
+      if (!input.eventId) {
+        throw new Error('Informe o Evento de destino para trocar.');
+      }
+      const events = await this.cloudGateway.listEvents();
+      const targetEvent = events.find((ev) => ev.id === input.eventId);
+      if (!targetEvent) {
+        throw new Error(`Evento de destino não encontrado (${input.eventId}).`);
+      }
+      targetConfigVersion = targetEvent.configVersion;
+    }
+
+    const command: RemoteCommandPayload = {
+      id: this.random.uuid(),
+      type: input.type,
+      targetTotemId: input.targetTotemId ?? null,
+      targetEventId: input.targetEventId ?? null,
+      eventId: input.eventId,
+      targetScreen: input.targetScreen,
+      configVersion: targetConfigVersion,
+      issuedAt: this.nowIso(),
+    };
+
+    return this.cloudGateway.dispatchRemoteCommand(command);
+  }
+
+  async switchTotemEvent(
+    target: { totemId?: string; eventId?: string },
+    newEventId: string,
+  ): Promise<RemoteCommandPayload> {
+    return this.dispatchRemoteCommand({
+      type: 'SWITCH_EVENT',
+      targetTotemId: target.totemId ?? null,
+      targetEventId: target.eventId ?? null,
+      eventId: newEventId,
+      targetScreen: 'initial-screen',
+    });
+  }
+
+  async forceSyncTotems(target: { totemId?: string; eventId?: string }): Promise<RemoteCommandPayload> {
+    return this.dispatchRemoteCommand({
+      type: 'FORCE_SYNC',
+      targetTotemId: target.totemId ?? null,
+      targetEventId: target.eventId ?? null,
+    });
+  }
+
+  async reloadTotemScreen(
+    target: { totemId?: string; eventId?: string },
+    targetScreen: 'initial-screen' | 'idle-screen' = 'initial-screen',
+  ): Promise<RemoteCommandPayload> {
+    return this.dispatchRemoteCommand({
+      type: 'RELOAD_SCREEN',
+      targetTotemId: target.totemId ?? null,
+      targetEventId: target.eventId ?? null,
+      targetScreen,
+    });
   }
 }

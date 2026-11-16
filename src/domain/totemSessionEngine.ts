@@ -5,7 +5,12 @@ import {
   DEFAULT_SETTINGS,
   TIMEOUT_OPTION_TEXT,
 } from './defaults';
-import type { Clock, CloudGateway, LocalStore, RandomSource } from './ports';
+import {
+  buildTotemActivationLink,
+  extractPairingCodeFromInput,
+  generateShortPairingCode,
+} from './pairingUtils';
+import type { Clock, CloudEventSnapshot, CloudGateway, LocalStore, RandomSource } from './ports';
 import type {
   ActiveQuestionState,
   AnswerOutcome,
@@ -29,9 +34,14 @@ import type {
   Question,
   QuestionTimeVisualState,
   RankingEntry,
+  RemoteCommandPayload,
   StartMatchResult,
   TimeBarPhase,
+  TotemChannelEvent,
   TotemConfigSnapshot,
+  TotemLocalDiagnostics,
+  TotemPairingStatus,
+  TotemRecord,
   TotemScreenId,
   TotemSessionSnapshot,
 } from './types';
@@ -80,6 +90,7 @@ export interface TotemSessionEngineDependencies {
   cloudGateway: CloudGateway;
   clock: Clock;
   random: RandomSource;
+  requirePairing?: boolean;
 }
 
 interface ActiveMatchInternal {
@@ -102,11 +113,14 @@ export class TotemSessionEngine {
   private readonly cloudGateway: CloudGateway;
   private readonly clock: Clock;
   private readonly random: RandomSource;
+  private readonly requirePairing: boolean;
 
   private initialized = false;
   private screen: TotemScreenId = 'initial-screen';
   private totemConfig: TotemConfigSnapshot = {
     totemId: null,
+    totemName: null,
+    pairingCode: null,
     deviceToken: null,
     pinCode: '0000',
     event: structuredClone(DEFAULT_EVENT_CONFIG),
@@ -119,12 +133,45 @@ export class TotemSessionEngine {
   private pendingSyncCount = 0;
   private lastValidationError: string | null = null;
   private syncInFlight: Promise<{ synced: number; failed: number; pending: number }> | null = null;
+  private pairingStatus: TotemPairingStatus = 'unpaired';
+  private deviceOnlineOverride: boolean | null = null;
+  private deferredCommands: RemoteCommandPayload[] = [];
+  private stagedSnapshotsByEventId = new Map<string, CloudEventSnapshot>();
+  private lastHeartbeatAt: string | null = null;
+  private readonly snapshotListeners = new Set<(snapshot: TotemSessionSnapshot) => void>();
+  private readonly channelUnsubscribe: () => void;
 
   constructor(deps: TotemSessionEngineDependencies) {
     this.localStore = deps.localStore;
     this.cloudGateway = deps.cloudGateway;
     this.clock = deps.clock;
     this.random = deps.random;
+    this.requirePairing = deps.requirePairing ?? false;
+    this.channelUnsubscribe = this.cloudGateway.subscribeTotemChannel((event) =>
+      this.handleChannelEvent(event),
+    );
+  }
+
+  subscribe(listener: (snapshot: TotemSessionSnapshot) => void): () => void {
+    this.snapshotListeners.add(listener);
+    return () => {
+      this.snapshotListeners.delete(listener);
+    };
+  }
+
+  dispose(): void {
+    this.channelUnsubscribe();
+    this.snapshotListeners.clear();
+  }
+
+  private notifySubscribers(): void {
+    if (this.snapshotListeners.size === 0) {
+      return;
+    }
+    const snap = this.getSnapshot();
+    for (const listener of this.snapshotListeners) {
+      listener(structuredClone(snap));
+    }
   }
 
   private get eventSettings(): EventSettings {
@@ -245,10 +292,18 @@ export class TotemSessionEngine {
     };
   }
 
-  async initialize(): Promise<TotemSessionSnapshot> {
+  async initialize(options?: {
+    activationCode?: string;
+    requirePairing?: boolean;
+  }): Promise<TotemSessionSnapshot> {
     const storedConfig = await this.localStore.getTotemConfig();
     if (storedConfig) {
       this.totemConfig = storedConfig;
+      if (storedConfig.totemId && storedConfig.deviceToken) {
+        this.pairingStatus = 'paired';
+      } else if (storedConfig.totemId && storedConfig.pairingCode) {
+        this.pairingStatus = 'awaiting_authorization';
+      }
     }
 
     const storedQuestions = await this.localStore.getQuestions(this.totemConfig.event.id);
@@ -263,18 +318,359 @@ export class TotemSessionEngine {
       await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
     }
 
+    let preservedError: string | null = null;
+    if (options?.activationCode) {
+      await this.activateWithCode(options.activationCode);
+      preservedError = this.lastValidationError;
+      if (this.pairingStatus !== 'paired') {
+        await this.requestPairing();
+      }
+    } else if ((options?.requirePairing ?? this.requirePairing) && this.pairingStatus !== 'paired') {
+      await this.requestPairing();
+    }
+
     await this.syncPendingQueue();
     await this.pullAndMergeCloudSnapshot();
     await this.refreshRankingCache();
     this.initialized = true;
     this.screen = 'initial-screen';
-    this.lastValidationError = null;
+    this.lastValidationError = preservedError;
+    if (this.totemConfig.totemId && this.pairingStatus === 'paired') {
+      await this.sendHeartbeat();
+    }
 
     return this.getSnapshot();
   }
 
+  private isEffectiveOnline(): boolean {
+    return (this.deviceOnlineOverride ?? true) && this.cloudGateway.isOnline();
+  }
+
+  async setDeviceOnline(online: boolean): Promise<TotemSessionSnapshot> {
+    this.deviceOnlineOverride = online;
+    await this.sendHeartbeat();
+    this.notifySubscribers();
+    return this.getSnapshot();
+  }
+
+  async sendHeartbeat(allowReconcile = true): Promise<TotemSessionSnapshot> {
+    const queue = await this.localStore.getSyncQueue();
+    this.pendingSyncCount = queue.length;
+
+    if (!this.totemConfig.totemId) {
+      return this.getSnapshot();
+    }
+
+    const effectiveOnline = this.isEffectiveOnline();
+    const seenAt = this.clock.toISOString();
+
+    try {
+      const updated = await this.cloudGateway.publishTotemHeartbeat({
+        totemId: this.totemConfig.totemId,
+        deviceToken: this.totemConfig.deviceToken,
+        eventId: this.totemConfig.event.id,
+        onlineStatus: effectiveOnline ? 'online' : 'offline',
+        currentScreen: this.screen,
+        configVersion: this.totemConfig.event.configVersion,
+        pendingSyncCount: this.pendingSyncCount,
+        seenAt,
+      });
+      if (effectiveOnline) {
+        this.lastHeartbeatAt = updated?.lastSeenAt ?? seenAt;
+        if (
+          allowReconcile &&
+          updated?.isPaired &&
+          updated.eventId &&
+          updated.eventId !== this.totemConfig.event.id
+        ) {
+          const alreadyDeferred = this.deferredCommands.some(
+            (cmd) => cmd.type === 'SWITCH_EVENT' && cmd.eventId === updated.eventId,
+          );
+          if (!alreadyDeferred) {
+            const missedSwitch: RemoteCommandPayload = {
+              id: this.random.uuid(),
+              type: 'SWITCH_EVENT',
+              targetTotemId: updated.id,
+              targetEventId: this.totemConfig.event.id,
+              eventId: updated.eventId,
+              targetScreen: 'initial-screen',
+              issuedAt: seenAt,
+            };
+            if (this.activeMatch !== null) {
+              await this.receiveRemoteCommand(missedSwitch);
+            } else {
+              await this.executeRemoteCommandNow(missedSwitch);
+              await this.sendHeartbeat(false);
+              this.notifySubscribers();
+            }
+          }
+        }
+      } else if (updated?.lastSeenAt) {
+        this.lastHeartbeatAt = updated.lastSeenAt;
+      }
+    } catch {
+      // Falha ao enviar telemetria não interrompe o funcionamento local do Totem.
+    }
+
+    return this.getSnapshot();
+  }
+
+  async requestPairing(): Promise<TotemSessionSnapshot> {
+    const pairingCode = generateShortPairingCode(this.random, 6);
+    const totemId = this.totemConfig.totemId ?? this.random.uuid();
+
+    this.totemConfig = {
+      ...this.totemConfig,
+      totemId,
+      pairingCode,
+      deviceToken: null,
+    };
+    this.pairingStatus = 'awaiting_authorization';
+    this.lastValidationError = null;
+    await this.localStore.saveTotemConfig(this.totemConfig);
+
+    if (this.isEffectiveOnline()) {
+      try {
+        await this.cloudGateway.requestTotemPairing({
+          id: totemId,
+          pairingCode,
+          currentScreen: this.screen,
+          configVersion: this.totemConfig.event.configVersion,
+          pendingSyncCount: this.pendingSyncCount,
+        });
+      } catch {
+        // Permite aguardar reconexão sem quebrar inicialização local.
+      }
+    }
+
+    this.notifySubscribers();
+    return this.getSnapshot();
+  }
+
+  private async applyAuthorizedPairing(totem: TotemRecord): Promise<void> {
+    if (!totem.eventId) {
+      return;
+    }
+
+    this.totemConfig = {
+      totemId: totem.id,
+      totemName: totem.name,
+      pairingCode: totem.pairingCode,
+      deviceToken: totem.deviceToken,
+      pinCode: totem.pinCode || '0000',
+      event: {
+        ...structuredClone(this.totemConfig.event),
+        id: totem.eventId,
+      },
+    };
+    this.pairingStatus = 'paired';
+    this.lastValidationError = null;
+    await this.localStore.saveTotemConfig(this.totemConfig);
+
+    await this.pullAndMergeCloudSnapshot();
+    await this.refreshRankingCache();
+    this.screen = 'initial-screen';
+    await this.sendHeartbeat();
+    this.notifySubscribers();
+  }
+
+  async activateWithCode(codeOrLink: string): Promise<TotemSessionSnapshot> {
+    if (!this.isEffectiveOnline()) {
+      this.lastValidationError = 'Sem conectividade com a nuvem para ativar Pareamento.';
+      this.notifySubscribers();
+      return this.getSnapshot();
+    }
+    const code = extractPairingCodeFromInput(codeOrLink);
+    if (!code) {
+      this.lastValidationError =
+        'Código ou link de ativação inválido ou ainda não autorizado pelo Administrador.';
+      this.notifySubscribers();
+      return this.getSnapshot();
+    }
+
+    try {
+      const claimed = await this.cloudGateway.claimTotemPairing(code);
+      if (!claimed) {
+        this.lastValidationError =
+          'Código ou link de ativação inválido ou ainda não autorizado pelo Administrador.';
+        this.notifySubscribers();
+        return this.getSnapshot();
+      }
+      await this.applyAuthorizedPairing(claimed);
+      return this.getSnapshot();
+    } catch (error) {
+      this.lastValidationError =
+        error instanceof Error
+          ? error.message
+          : 'Erro ao ativar Pareamento do Totem.';
+      this.notifySubscribers();
+      return this.getSnapshot();
+    }
+  }
+
+  private async handleChannelEvent(event: TotemChannelEvent): Promise<void> {
+    if (event.type === 'PAIRING_AUTHORIZED') {
+      const matchesCode = Boolean(
+        this.totemConfig.pairingCode && event.totem.pairingCode === this.totemConfig.pairingCode,
+      );
+      const matchesId = Boolean(
+        this.totemConfig.totemId && event.totem.id === this.totemConfig.totemId,
+      );
+      if (this.pairingStatus === 'awaiting_authorization' && (matchesCode || matchesId)) {
+        await this.applyAuthorizedPairing(event.totem);
+      }
+      return;
+    }
+
+    if (event.type === 'REMOTE_COMMAND' && this.isEffectiveOnline()) {
+      await this.receiveRemoteCommand(event.command);
+    }
+  }
+
+  private commandAppliesToThisTotem(command: RemoteCommandPayload): boolean {
+    if (command.targetTotemId) {
+      return this.totemConfig.totemId === command.targetTotemId;
+    }
+    if (command.targetEventId) {
+      return this.totemConfig.event.id === command.targetEventId;
+    }
+    return false;
+  }
+
+  async receiveRemoteCommand(command: RemoteCommandPayload): Promise<TotemSessionSnapshot> {
+    if (!this.commandAppliesToThisTotem(command)) {
+      return this.getSnapshot();
+    }
+
+    if (this.activeMatch !== null) {
+      if (command.type === 'CONFIG_UPDATED' || command.type === 'SWITCH_EVENT') {
+        const targetEventId =
+          command.type === 'SWITCH_EVENT' ? command.eventId : this.totemConfig.event.id;
+        if (targetEventId && this.isEffectiveOnline()) {
+          try {
+            const downloaded = await this.cloudGateway.pullEventSnapshot(targetEventId);
+            if (downloaded) {
+              this.stagedSnapshotsByEventId.set(targetEventId, downloaded);
+            }
+          } catch {
+            // Falha transitória será repetida ao finalizar a Partida.
+          }
+        }
+      }
+
+      this.deferredCommands = [
+        ...this.deferredCommands.filter((existing) => existing.type !== command.type),
+        structuredClone(command),
+      ];
+      this.notifySubscribers();
+      return this.getSnapshot();
+    }
+
+    await this.executeRemoteCommandNow(command);
+    await this.sendHeartbeat();
+    this.notifySubscribers();
+    return this.getSnapshot();
+  }
+
+  private async applyStagedOrPullSnapshot(eventId: string): Promise<void> {
+    const staged = this.stagedSnapshotsByEventId.get(eventId);
+    if (staged) {
+      this.stagedSnapshotsByEventId.delete(eventId);
+      await this.applyCloudSnapshotData(staged);
+    } else {
+      await this.pullAndMergeCloudSnapshot();
+    }
+    await this.refreshRankingCache();
+  }
+
+  private async executeRemoteCommandNow(command: RemoteCommandPayload): Promise<void> {
+    if (command.type === 'FORCE_SYNC') {
+      await this.syncPendingQueue();
+      await this.pullAndMergeCloudSnapshot();
+      await this.refreshRankingCache();
+      return;
+    }
+
+    if (command.type === 'RELOAD_SCREEN') {
+      this.transitionWithCleanState(command.targetScreen ?? 'initial-screen');
+      return;
+    }
+
+    if (command.type === 'CONFIG_UPDATED') {
+      await this.applyStagedOrPullSnapshot(this.totemConfig.event.id);
+      return;
+    }
+
+    if (command.type === 'SWITCH_EVENT') {
+      const nextEventId = command.eventId;
+      if (!nextEventId) {
+        return;
+      }
+      this.totemConfig = {
+        ...this.totemConfig,
+        event: {
+          ...structuredClone(this.totemConfig.event),
+          id: nextEventId,
+        },
+      };
+      await this.localStore.saveTotemConfig(this.totemConfig);
+
+      await this.applyStagedOrPullSnapshot(nextEventId);
+      this.transitionWithCleanState(command.targetScreen ?? 'initial-screen');
+    }
+  }
+
+  private async flushDeferredCommands(): Promise<void> {
+    if (this.deferredCommands.length === 0) {
+      return;
+    }
+    const queue = [...this.deferredCommands];
+    this.deferredCommands = [];
+    for (const command of queue) {
+      await this.executeRemoteCommandNow(command);
+    }
+  }
+
+  private async applyCloudSnapshotData(cloudSnapshot: CloudEventSnapshot): Promise<void> {
+    // Preserva débitos de estoque pendentes na fila local caso algum item ainda aguarde envio.
+    const pendingQueue = await this.localStore.getSyncQueue();
+    const pendingPrizesCount = pendingQueue.filter(
+      (item) =>
+        item.type === 'match_completed' &&
+        item.eventId === cloudSnapshot.event.id &&
+        item.prizeClaim !== undefined &&
+        item.prizeClaim !== null,
+    ).length;
+
+    const mergedEvent: EventConfig = {
+      ...cloudSnapshot.event,
+      prizeStockRemaining:
+        cloudSnapshot.event.prizeStockRemaining !== null
+          ? Math.max(0, cloudSnapshot.event.prizeStockRemaining - pendingPrizesCount)
+          : null,
+    };
+
+    this.totemConfig = {
+      ...this.totemConfig,
+      event: mergedEvent,
+    };
+    this.questions = cloudSnapshot.questions;
+    await this.localStore.saveTotemConfig(this.totemConfig);
+    await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
+
+    for (const cloudMatch of cloudSnapshot.matches ?? []) {
+      await this.localStore.saveMatch(cloudMatch);
+    }
+    for (const cloudClaim of cloudSnapshot.prizeClaims ?? []) {
+      await this.localStore.savePrizeClaim(cloudClaim);
+    }
+    for (const cloudLockout of cloudSnapshot.lockouts ?? []) {
+      await this.localStore.saveLockout(cloudLockout);
+    }
+  }
+
   private async pullAndMergeCloudSnapshot(): Promise<void> {
-    if (!this.cloudGateway.isOnline()) {
+    if (!this.isEffectiveOnline()) {
       return;
     }
     try {
@@ -282,42 +678,7 @@ export class TotemSessionEngine {
       if (!cloudSnapshot) {
         return;
       }
-
-      // Preserva débitos de estoque pendentes na fila local caso algum item ainda aguarde envio.
-      const pendingQueue = await this.localStore.getSyncQueue();
-      const pendingPrizesCount = pendingQueue.filter(
-        (item) =>
-          item.type === 'match_completed' &&
-          item.eventId === cloudSnapshot.event.id &&
-          item.prizeClaim !== undefined &&
-          item.prizeClaim !== null,
-      ).length;
-
-      const mergedEvent: EventConfig = {
-        ...cloudSnapshot.event,
-        prizeStockRemaining:
-          cloudSnapshot.event.prizeStockRemaining !== null
-            ? Math.max(0, cloudSnapshot.event.prizeStockRemaining - pendingPrizesCount)
-            : null,
-      };
-
-      this.totemConfig = {
-        ...this.totemConfig,
-        event: mergedEvent,
-      };
-      this.questions = cloudSnapshot.questions;
-      await this.localStore.saveTotemConfig(this.totemConfig);
-      await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
-
-      for (const cloudMatch of cloudSnapshot.matches ?? []) {
-        await this.localStore.saveMatch(cloudMatch);
-      }
-      for (const cloudClaim of cloudSnapshot.prizeClaims ?? []) {
-        await this.localStore.savePrizeClaim(cloudClaim);
-      }
-      for (const cloudLockout of cloudSnapshot.lockouts ?? []) {
-        await this.localStore.saveLockout(cloudLockout);
-      }
+      await this.applyCloudSnapshotData(cloudSnapshot);
     } catch {
       // Falha transitória de rede não impede operação offline usando o cache local.
     }
@@ -360,6 +721,7 @@ export class TotemSessionEngine {
     await this.pullAndMergeCloudSnapshot();
     await this.refreshRankingCache();
     this.transitionWithCleanState('ranking-screen');
+    await this.sendHeartbeat();
     return this.getSnapshot();
   }
 
@@ -462,6 +824,7 @@ export class TotemSessionEngine {
     this.lastResult = null;
     this.alreadyWonModal = null;
     this.lastValidationError = null;
+    await this.sendHeartbeat();
 
     return {
       started: true,
@@ -480,6 +843,14 @@ export class TotemSessionEngine {
     this.alreadyWonModal = null;
     this.lastValidationError = null;
     this.screen = targetScreen;
+    if (this.deferredCommands.length > 0) {
+      void this.flushDeferredCommands().then(() => {
+        void this.sendHeartbeat();
+        this.notifySubscribers();
+      });
+    } else {
+      void this.sendHeartbeat();
+    }
     return this.getSnapshot();
   }
 
@@ -534,6 +905,9 @@ export class TotemSessionEngine {
       await this.syncPendingQueue();
     }
 
+    await this.flushDeferredCommands();
+    await this.sendHeartbeat();
+    this.notifySubscribers();
     return this.getSnapshot();
   }
 
@@ -632,7 +1006,7 @@ export class TotemSessionEngine {
     pending: number;
   }> {
     const queue = await this.localStore.getSyncQueue();
-    if (!this.cloudGateway.isOnline()) {
+    if (!this.isEffectiveOnline()) {
       this.pendingSyncCount = queue.length;
       return { synced: 0, failed: 0, pending: queue.length };
     }
@@ -793,7 +1167,7 @@ export class TotemSessionEngine {
     await this.syncPendingQueue();
 
     // Quando online, consolida Ranking com Partidas de outros Totens após sincronizar a Partida atual.
-    if (this.cloudGateway.isOnline()) {
+    if (this.isEffectiveOnline()) {
       await this.pullAndMergeCloudSnapshot();
       const cloudRanking = await this.refreshRankingCache();
       const updatedPosition =
@@ -803,6 +1177,10 @@ export class TotemSessionEngine {
         this.lastResult.isTop3 = updatedPosition > 0 && updatedPosition <= 3;
       }
     }
+
+    await this.flushDeferredCommands();
+    await this.sendHeartbeat();
+    this.notifySubscribers();
   }
 
   private recordQuestionOutcome(params: {
@@ -1042,8 +1420,61 @@ export class TotemSessionEngine {
       ranking: structuredClone(this.rankingCache),
       alreadyWonModal: this.alreadyWonModal ? structuredClone(this.alreadyWonModal) : null,
       pendingSyncCount: this.pendingSyncCount,
-      isOnline: this.cloudGateway.isOnline(),
+      isOnline: this.isEffectiveOnline(),
       lastValidationError: this.lastValidationError,
+      pairing: {
+        isPaired: this.pairingStatus === 'paired',
+        status: this.pairingStatus,
+        pairingCode: this.totemConfig.pairingCode ?? null,
+        totemId: this.totemConfig.totemId,
+        totemName: this.totemConfig.totemName ?? null,
+        activationLink: this.totemConfig.pairingCode
+          ? buildTotemActivationLink(this.totemConfig.pairingCode)
+          : null,
+      },
+      deferredCommands: structuredClone(this.deferredCommands),
+      lastHeartbeatAt: this.lastHeartbeatAt,
+    };
+  }
+
+  verifyDiagnosticPin(pinInput: string): boolean {
+    const expectedPin = (this.totemConfig.pinCode || '0000').trim();
+    return pinInput.trim() === expectedPin;
+  }
+
+  getLocalDiagnostics(): TotemLocalDiagnostics {
+    return {
+      isOnline: this.isEffectiveOnline(),
+      totemId: this.totemConfig.totemId,
+      totemName: this.totemConfig.totemName ?? null,
+      pairingCode: this.totemConfig.pairingCode ?? null,
+      isPaired: this.pairingStatus === 'paired',
+      eventId: this.totemConfig.event.id,
+      eventName: this.totemConfig.event.name,
+      configVersion: this.totemConfig.event.configVersion,
+      currentScreen: this.screen,
+      pendingSyncCount: this.pendingSyncCount,
+      lastHeartbeatAt: this.lastHeartbeatAt,
+      deferredCommandsCount: this.deferredCommands.length,
+    };
+  }
+
+  async forceSync(): Promise<{
+    synced: number;
+    failed: number;
+    pending: number;
+    snapshot: TotemSessionSnapshot;
+  }> {
+    const syncResult = await this.syncPendingQueue();
+    if (this.activeMatch === null) {
+      await this.pullAndMergeCloudSnapshot();
+      await this.refreshRankingCache();
+    }
+    await this.sendHeartbeat();
+    this.notifySubscribers();
+    return {
+      ...syncResult,
+      snapshot: this.getSnapshot(),
     };
   }
 }

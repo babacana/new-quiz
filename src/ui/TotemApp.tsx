@@ -6,6 +6,7 @@ import {
   formatPhoneMask,
   normalizeParticipantName,
 } from '../domain/totemSessionEngine';
+import { extractPairingCodeFromInput } from '../domain/pairingUtils';
 import type { TotemSessionSnapshot } from '../domain/types';
 import { AccessibilityControls } from './AccessibilityControls';
 import {
@@ -17,7 +18,9 @@ import { createDefaultCloudGateway } from './cloudFactory';
 import {
   DIFFICULTY_LABELS,
   PRIZE_STATUS_LABELS,
+  TOTEM_ONLINE_STATUS_LABELS,
   formatAwardedAtPtBr,
+  formatLastSeenPtBr,
   formatTimeMMSS,
 } from './formatters';
 import './styles.css';
@@ -27,7 +30,22 @@ type ActiveTotemModal =
   | { type: 'incorrect' }
   | { type: 'top3' }
   | { type: 'give-up' }
+  | { type: 'pin-prompt' }
+  | { type: 'diagnostics' }
+  | { type: 'pairing' }
   | null;
+
+function extractInitialActivationCode(): string | undefined {
+  if (typeof window === 'undefined') {
+    return undefined;
+  }
+  const combined = `${window.location.search}${window.location.hash}`;
+  if (!/(?:pairingCode|pairing|code)=/i.test(combined)) {
+    return undefined;
+  }
+  const code = extractPairingCodeFromInput(combined);
+  return code || undefined;
+}
 
 const INTERACTION_EVENTS = [
   'click',
@@ -48,6 +66,7 @@ function createDefaultEngine(): TotemSessionEngine {
     cloudGateway: createDefaultCloudGateway(),
     clock: new SystemClock(),
     random: new CryptoRandomSource(),
+    requirePairing: true,
   });
 }
 
@@ -71,6 +90,11 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     () => snapshot.event.settings.timePerQuestion * 1000,
   );
   const [flashActive, setFlashActive] = useState(false);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [activationInput, setActivationInput] = useState('');
+  const [diagnosticsSyncMessage, setDiagnosticsSyncMessage] = useState<string | null>(null);
+  const [isForcingSync, setIsForcingSync] = useState(false);
 
   const questionStartMsRef = useRef<number>(engine.getNowMs());
   const timeoutHandledForIndexRef = useRef<number | null>(null);
@@ -104,7 +128,12 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
 
   // Reinicia o temporizador de ociosidade respeitando a configuração do Evento e o arraste do teclado.
   const resetIdleTimer = useCallback(() => {
-    if (isResizingKeyboardRef.current || engine.getSnapshot().screen === 'idle-screen') {
+    const currentSnap = engine.getSnapshot();
+    if (
+      isResizingKeyboardRef.current ||
+      currentSnap.screen === 'idle-screen' ||
+      currentSnap.pairing.status === 'awaiting_authorization'
+    ) {
       return;
     }
 
@@ -141,26 +170,73 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
 
   useEffect(() => {
     let cancelled = false;
-    void engine.initialize().then((initialSnap) => {
+    const unsubscribe = engine.subscribe((nextSnap) => {
       if (!cancelled) {
-        setSnapshot(initialSnap);
+        setSnapshot(nextSnap);
+        if (nextSnap.pairing.status === 'paired') {
+          setActiveModal((prev) => (prev?.type === 'pairing' ? null : prev));
+        }
       }
     });
 
-    const syncQueueAndRefresh = () => {
-      void engine.syncPendingQueue().then(() => {
+    const activationCode = extractInitialActivationCode();
+    void engine
+      .initialize(activationCode ? { activationCode } : undefined)
+      .then((initialSnap) => {
         if (!cancelled) {
-          setSnapshot(engine.getSnapshot());
+          setSnapshot(initialSnap);
+        }
+      });
+
+    const syncQueueAndRefresh = () => {
+      void engine
+        .syncPendingQueue()
+        .then(() => engine.sendHeartbeat())
+        .then((nextSnap) => {
+          if (!cancelled) {
+            setSnapshot(nextSnap);
+          }
+        });
+    };
+
+    const handleOfflineStatus = () => {
+      void engine.sendHeartbeat().then((nextSnap) => {
+        if (!cancelled) {
+          setSnapshot(nextSnap);
         }
       });
     };
 
     window.addEventListener('online', syncQueueAndRefresh);
+    window.addEventListener('offline', handleOfflineStatus);
     return () => {
       cancelled = true;
+      unsubscribe();
       window.removeEventListener('online', syncQueueAndRefresh);
+      window.removeEventListener('offline', handleOfflineStatus);
     };
   }, [engine]);
+
+  // Publica heartbeat periódico em segundo plano para monitoramento ao vivo no painel administrativo.
+  useEffect(() => {
+    if (!snapshot.initialized || !snapshot.pairing.isPaired) {
+      return;
+    }
+
+    let cancelled = false;
+    const heartbeatInterval = window.setInterval(() => {
+      void engine.sendHeartbeat().then((nextSnap) => {
+        if (!cancelled) {
+          setSnapshot(nextSnap);
+        }
+      });
+    }, 30_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(heartbeatInterval);
+    };
+  }, [engine, snapshot.initialized, snapshot.pairing.isPaired]);
 
   // Retentativa periódica em segundo plano enquanto houver itens pendentes na fila local.
   useEffect(() => {
@@ -450,6 +526,54 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
     }
   };
 
+  const handleOpenDiagnosticsPrompt = () => {
+    setPinInput('');
+    setPinError(null);
+    setDiagnosticsSyncMessage(null);
+    setActiveModal({ type: 'pin-prompt' });
+    resetIdleTimer();
+  };
+
+  const handlePinSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    resetIdleTimer();
+    if (engine.verifyDiagnosticPin(pinInput)) {
+      setPinError(null);
+      setPinInput('');
+      setActiveModal({ type: 'diagnostics' });
+    } else {
+      setPinError('PIN inválido para este Totem.');
+    }
+  };
+
+  const handleForceDiagnosticsSync = async () => {
+    setIsForcingSync(true);
+    resetIdleTimer();
+    try {
+      const result = await engine.forceSync();
+      setSnapshot(result.snapshot);
+      setDiagnosticsSyncMessage(
+        `Sincronização concluída: ${result.synced} enviado(s), ${result.pending} pendente(s).`,
+      );
+    } catch (error) {
+      setDiagnosticsSyncMessage(
+        error instanceof Error ? error.message : 'Falha ao sincronizar fila local.',
+      );
+    } finally {
+      setIsForcingSync(false);
+    }
+  };
+
+  const handleActivateWithCodeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const nextSnap = await engine.activateWithCode(activationInput);
+    setSnapshot(nextSnap);
+    if (nextSnap.pairing.isPaired) {
+      setActivationInput('');
+      setActiveModal(null);
+    }
+  };
+
   const containerClasses = ['quiz-container'];
   if (isFadingToIdle && snapshot.screen !== 'idle-screen') {
     containerClasses.push('fading-to-idle');
@@ -467,12 +591,16 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
   const logoSrc = `/assets/${snapshot.event.customizations.visualIdentity.logoFileName || 'logo.png'}`;
   const { eventWindow } = snapshot;
   const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
+  const showPairingModal =
+    snapshot.pairing.status === 'awaiting_authorization' || activeModal?.type === 'pairing';
+  const diagnostics = activeModal?.type === 'diagnostics' ? engine.getLocalDiagnostics() : null;
 
   return (
     <div className={containerClasses.join(' ')}>
       <AccessibilityControls
         hiddenOnIdle={snapshot.screen === 'idle-screen'}
         onInteraction={resetIdleTimer}
+        onOpenDiagnostics={handleOpenDiagnosticsPrompt}
       />
 
       <section
@@ -989,6 +1117,207 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
                 }}
               >
                 Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showPairingModal && (
+        <div
+          id="totem-pairing-modal"
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="totem-pairing-title"
+        >
+          <div className="modal-content">
+            <h3 id="totem-pairing-title" className="modal-title">
+              Pareamento do Totem
+            </h3>
+            <p className="modal-text">
+              Autorize este código no Painel Administrativo para vincular o Totem a um Evento:
+            </p>
+            <p className="totem-pairing-code-box">
+              <strong id="totem-pairing-code">{snapshot.pairing.pairingCode ?? '------'}</strong>
+            </p>
+
+            <form
+              className="totem-modal-form"
+              onSubmit={(e) => void handleActivateWithCodeSubmit(e)}
+            >
+              <div className="form-group">
+                <label htmlFor="totem-activation-input">Código ou Link de Ativação</label>
+                <input
+                  id="totem-activation-input"
+                  type="text"
+                  value={activationInput}
+                  onChange={(e) => setActivationInput(e.target.value)}
+                  placeholder="Ex.: ABC123 ou ?pairingCode=ABC123"
+                />
+              </div>
+
+              {snapshot.lastValidationError && (
+                <p className="totem-modal-error" role="alert">
+                  {snapshot.lastValidationError}
+                </p>
+              )}
+
+              <div className="modal-actions">
+                <button id="totem-activate-code-btn" type="submit" className="btn">
+                  Ativar com Código
+                </button>
+                {activeModal?.type === 'pairing' &&
+                  snapshot.pairing.status !== 'awaiting_authorization' && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => setActiveModal(null)}
+                    >
+                      Fechar
+                    </button>
+                  )}
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeModal?.type === 'pin-prompt' && (
+        <div
+          id="totem-pin-modal"
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="totem-pin-title"
+        >
+          <div className="modal-content">
+            <h3 id="totem-pin-title" className="modal-title">
+              Acesso ao Diagnóstico Local
+            </h3>
+            <p className="modal-text">
+              Informe o PIN numérico rápido configurado para este Totem:
+            </p>
+            <form className="totem-modal-form" onSubmit={handlePinSubmit}>
+              <div className="form-group">
+                <label htmlFor="totem-pin-input">PIN do Totem</label>
+                <input
+                  id="totem-pin-input"
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={pinInput}
+                  onChange={(e) => {
+                    setPinInput(e.target.value);
+                    setPinError(null);
+                  }}
+                />
+              </div>
+
+              {pinError && (
+                <p id="totem-pin-error" className="totem-modal-error" role="alert">
+                  {pinError}
+                </p>
+              )}
+
+              <div className="modal-actions">
+                <button id="totem-pin-submit-btn" type="submit" className="btn">
+                  Acessar Diagnóstico
+                </button>
+                <button
+                  id="totem-pin-cancel-btn"
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    setActiveModal(null);
+                    setPinError(null);
+                    resetIdleTimer();
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {activeModal?.type === 'diagnostics' && diagnostics && (
+        <div
+          id="totem-diagnostics-modal"
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="totem-diagnostics-title"
+        >
+          <div className="modal-content">
+            <h3 id="totem-diagnostics-title" className="modal-title">
+              Diagnóstico Local do Totem
+            </h3>
+
+            <dl className="totem-diagnostics-list">
+              <div>
+                <dt>Status de Conexão</dt>
+                <dd id="diagnostics-connection-status">
+                  {TOTEM_ONLINE_STATUS_LABELS[diagnostics.isOnline ? 'online' : 'offline']}
+                </dd>
+              </div>
+              <div>
+                <dt>Evento Atual</dt>
+                <dd id="diagnostics-event-name">
+                  {diagnostics.eventName} (v{diagnostics.configVersion})
+                </dd>
+              </div>
+              <div>
+                <dt>Totem</dt>
+                <dd id="diagnostics-totem-name">
+                  {diagnostics.totemName ?? 'Não vinculado'}
+                </dd>
+              </div>
+              <div>
+                <dt>Código do Totem</dt>
+                <dd id="diagnostics-totem-code">
+                  {diagnostics.pairingCode ?? diagnostics.totemId ?? 'Não pareado'}
+                </dd>
+              </div>
+              <div>
+                <dt>Itens pendentes na syncQueue</dt>
+                <dd id="diagnostics-pending-sync">{diagnostics.pendingSyncCount}</dd>
+              </div>
+              <div>
+                <dt>Último Ping</dt>
+                <dd id="diagnostics-last-ping">
+                  {formatLastSeenPtBr(diagnostics.lastHeartbeatAt)}
+                </dd>
+              </div>
+            </dl>
+
+            {diagnosticsSyncMessage && (
+              <p id="diagnostics-sync-status" className="modal-text" role="status">
+                {diagnosticsSyncMessage}
+              </p>
+            )}
+
+            <div className="modal-actions">
+              <button
+                id="diagnostics-force-sync-btn"
+                type="button"
+                className="btn"
+                disabled={isForcingSync}
+                onClick={() => void handleForceDiagnosticsSync()}
+              >
+                {isForcingSync ? 'Sincronizando...' : 'Forçar Sincronização'}
+              </button>
+              <button
+                id="close-diagnostics-modal-btn"
+                type="button"
+                className="btn-secondary"
+                onClick={() => {
+                  setActiveModal(null);
+                  resetIdleTimer();
+                }}
+              >
+                Fechar Diagnóstico
               </button>
             </div>
           </div>

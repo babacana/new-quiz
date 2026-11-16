@@ -1,5 +1,6 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from '../domain/defaults';
+import { normalizePairingCode } from '../domain/pairingUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
   AuthSession,
@@ -14,6 +15,15 @@ import type {
   PrizeClaimRecord,
   PrizeClaimStatus,
   Question,
+  RemoteCommandPayload,
+  RemoteCommandType,
+  TotemChannelEvent,
+  TotemHeartbeatPayload,
+  TotemOnlineStatus,
+  TotemPairingAuthorizationPayload,
+  TotemPairingRequestInput,
+  TotemRecord,
+  TotemScreenId,
   UserProfile,
   UserRole,
 } from '../domain/types';
@@ -85,11 +95,40 @@ interface SupabaseLockoutRow {
   expires_at: string;
 }
 
+interface SupabaseTotemRow {
+  id: string;
+  name: string;
+  pairing_code: string;
+  device_token: string | null;
+  event_id: string | null;
+  pin_code: string;
+  is_paired: boolean;
+  online_status: TotemOnlineStatus;
+  last_seen_at: string | null;
+  current_screen: TotemScreenId;
+  config_version: number;
+  pending_sync_count: number;
+  created_at: string;
+}
+
+interface SupabaseTotemCommandRow {
+  id: string;
+  type: RemoteCommandType;
+  target_totem_id: string | null;
+  target_event_id: string | null;
+  event_id: string | null;
+  target_screen: 'initial-screen' | 'idle-screen' | null;
+  config_version: number | null;
+  issued_at: string;
+}
+
 // Adaptador de nuvem apoiado no Supabase Postgres para sincronização do Totem.
 export class SupabaseCloudGateway implements CloudGateway {
   private readonly client: SupabaseClient;
   private readonly supabaseUrl: string;
   private readonly supabaseAnonKey: string;
+  private readonly channelListeners = new Set<(event: TotemChannelEvent) => void | Promise<void>>();
+  private realtimeChannel: RealtimeChannel | null = null;
 
   constructor(supabaseUrl: string, supabaseAnonKey: string) {
     this.supabaseUrl = supabaseUrl;
@@ -733,5 +772,298 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     return ((data ?? []) as SupabaseQuestionRow[]).map((row) => this.mapQuestionRow(row));
+  }
+
+  private mapTotemRow(row: SupabaseTotemRow): TotemRecord {
+    return {
+      id: row.id,
+      name: row.name,
+      pairingCode: row.pairing_code,
+      deviceToken: row.device_token ?? '',
+      eventId: row.event_id,
+      pinCode: row.pin_code,
+      isPaired: row.is_paired,
+      onlineStatus: row.online_status,
+      lastSeenAt: row.last_seen_at,
+      currentScreen: row.current_screen,
+      configVersion: row.config_version,
+      pendingSyncCount: row.pending_sync_count,
+      createdAt: row.created_at,
+    };
+  }
+
+  private mapCommandRow(row: SupabaseTotemCommandRow): RemoteCommandPayload {
+    return {
+      id: row.id,
+      type: row.type,
+      targetTotemId: row.target_totem_id,
+      targetEventId: row.target_event_id,
+      eventId: row.event_id ?? undefined,
+      targetScreen: row.target_screen ?? undefined,
+      configVersion: row.config_version ?? undefined,
+      issuedAt: row.issued_at,
+    };
+  }
+
+  private async broadcastChannelEvent(event: TotemChannelEvent): Promise<void> {
+    const channel: RealtimeChannel =
+      this.realtimeChannel ??
+      this.client.channel('totem:presence', { config: { broadcast: { self: true } } });
+    const isTemporary = this.realtimeChannel === null;
+
+    try {
+      await channel.send({
+        type: 'broadcast',
+        event: event.type,
+        payload: event,
+      });
+    } catch {
+      // Falha transitória de broadcast Realtime não impede a persistência no banco.
+    } finally {
+      if (isTemporary) {
+        void this.client.removeChannel(channel);
+      }
+    }
+  }
+
+  async requestTotemPairing(input: TotemPairingRequestInput): Promise<TotemRecord> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para solicitar Pareamento.');
+    }
+
+    const { data, error } = await this.client
+      .rpc('request_totem_pairing', {
+        p_id: input.id,
+        p_pairing_code: normalizePairingCode(input.pairingCode),
+        p_current_screen: input.currentScreen,
+        p_config_version: input.configVersion,
+        p_pending_sync_count: input.pendingSyncCount,
+      })
+      .single<SupabaseTotemRow>();
+
+    if (error || !data) {
+      throw new Error(
+        `Erro ao solicitar Pareamento no Supabase: ${error?.message ?? 'sem retorno.'}`,
+      );
+    }
+
+    const record = this.mapTotemRow(data);
+    await this.broadcastChannelEvent({ type: 'TELEMETRY_UPDATED', totem: record });
+    return record;
+  }
+
+  async authorizeTotemPairing(input: TotemPairingAuthorizationPayload): Promise<TotemRecord> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para autorizar Pareamento.');
+    }
+
+    const normalizedCode = normalizePairingCode(input.pairingCode);
+    const [{ data: existingRow, error: lookupError }, { data: eventRow }] = await Promise.all([
+      this.client
+        .from('totems')
+        .select('*')
+        .eq('pairing_code', normalizedCode)
+        .maybeSingle<SupabaseTotemRow>(),
+      this.client
+        .from('events')
+        .select('config_version')
+        .eq('id', input.eventId)
+        .maybeSingle<{ config_version: number }>(),
+    ]);
+
+    if (lookupError) {
+      throw new Error(`Erro ao consultar código de Pareamento: ${lookupError.message}`);
+    }
+
+    const configVersion = existingRow?.config_version ?? eventRow?.config_version ?? 1;
+    const payload = {
+      id: existingRow?.id ?? input.id,
+      name: input.name.trim(),
+      pairing_code: normalizedCode,
+      device_token: input.deviceToken,
+      event_id: input.eventId,
+      pin_code: input.pinCode.trim(),
+      is_paired: true,
+      online_status: existingRow?.online_status ?? ('offline' as const),
+      last_seen_at: existingRow?.last_seen_at ?? null,
+      current_screen: existingRow?.current_screen ?? ('initial-screen' as const),
+      config_version: configVersion,
+      pending_sync_count: existingRow?.pending_sync_count ?? 0,
+    };
+
+    const { data, error } = await this.client
+      .from('totems')
+      .upsert(payload, { onConflict: 'id' })
+      .select('*')
+      .single<SupabaseTotemRow>();
+
+    if (error || !data) {
+      throw new Error(`Erro ao autorizar Pareamento no Supabase: ${error?.message ?? 'sem retorno.'}`);
+    }
+
+    const totem = this.mapTotemRow(data);
+    await this.broadcastChannelEvent({ type: 'PAIRING_AUTHORIZED', totem });
+    await this.broadcastChannelEvent({ type: 'TELEMETRY_UPDATED', totem });
+    return totem;
+  }
+
+  async claimTotemPairing(pairingCode: string): Promise<TotemRecord | null> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para ativar Pareamento.');
+    }
+
+    const { data, error } = await this.client
+      .rpc('claim_totem_pairing', {
+        p_pairing_code: normalizePairingCode(pairingCode),
+      })
+      .maybeSingle<SupabaseTotemRow>();
+
+    if (error) {
+      throw new Error(`Erro ao validar código de ativação: ${error.message}`);
+    }
+    if (!data) {
+      return null;
+    }
+
+    const record = this.mapTotemRow(data);
+    await this.broadcastChannelEvent({ type: 'TELEMETRY_UPDATED', totem: record });
+    return record;
+  }
+
+  async listTotems(): Promise<TotemRecord[]> {
+    const { data, error } = await this.client
+      .from('totems')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      throw new Error(`Erro ao listar Totens no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseTotemRow[]).map((row) => this.mapTotemRow(row));
+  }
+
+  async publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null> {
+    if (!this.isOnline()) {
+      return null;
+    }
+
+    const { data, error } = await this.client
+      .rpc('publish_totem_heartbeat', {
+        p_totem_id: payload.totemId,
+        p_device_token: payload.deviceToken ?? '',
+        p_online_status: payload.onlineStatus,
+        p_current_screen: payload.currentScreen,
+        p_config_version: payload.configVersion,
+        p_pending_sync_count: payload.pendingSyncCount,
+        p_seen_at: payload.seenAt ?? new Date().toISOString(),
+      })
+      .maybeSingle<SupabaseTotemRow>();
+
+    if (error || !data) {
+      return null;
+    }
+
+    const record = this.mapTotemRow(data);
+    await this.broadcastChannelEvent({ type: 'TELEMETRY_UPDATED', totem: record });
+    return record;
+  }
+
+  async dispatchRemoteCommand(command: RemoteCommandPayload): Promise<RemoteCommandPayload> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para enviar comando remoto.');
+    }
+
+    const { data, error } = await this.client
+      .from('totem_commands')
+      .insert({
+        id: command.id,
+        type: command.type,
+        target_totem_id: command.targetTotemId,
+        target_event_id: command.targetEventId,
+        event_id: command.eventId ?? null,
+        target_screen: command.targetScreen ?? null,
+        config_version: command.configVersion ?? null,
+        issued_at: command.issuedAt,
+      })
+      .select('*')
+      .single<SupabaseTotemCommandRow>();
+
+    if (error || !data) {
+      throw new Error(`Erro ao registrar comando remoto no Supabase: ${error?.message ?? 'sem retorno.'}`);
+    }
+
+    if (command.type === 'SWITCH_EVENT' && command.eventId) {
+      let updateQuery = this.client.from('totems').update({ event_id: command.eventId });
+      if (command.targetTotemId) {
+        updateQuery = updateQuery.eq('id', command.targetTotemId);
+      } else if (command.targetEventId) {
+        updateQuery = updateQuery.eq('event_id', command.targetEventId);
+      }
+      await updateQuery;
+    }
+
+    const mapped = this.mapCommandRow(data);
+    await this.broadcastChannelEvent({ type: 'REMOTE_COMMAND', command: mapped });
+    return mapped;
+  }
+
+  private dispatchLocalChannelEvent(event: TotemChannelEvent): void {
+    for (const listener of this.channelListeners) {
+      void listener(structuredClone(event));
+    }
+  }
+
+  subscribeTotemChannel(listener: (event: TotemChannelEvent) => void | Promise<void>): () => void {
+    this.channelListeners.add(listener);
+
+    if (!this.realtimeChannel) {
+      this.realtimeChannel = this.client
+        .channel('totem:presence', { config: { broadcast: { self: true } } })
+        .on('broadcast', { event: 'PAIRING_AUTHORIZED' }, ({ payload }) => {
+          this.dispatchLocalChannelEvent(payload as TotemChannelEvent);
+        })
+        .on('broadcast', { event: 'TELEMETRY_UPDATED' }, ({ payload }) => {
+          this.dispatchLocalChannelEvent(payload as TotemChannelEvent);
+        })
+        .on('broadcast', { event: 'REMOTE_COMMAND' }, ({ payload }) => {
+          this.dispatchLocalChannelEvent(payload as TotemChannelEvent);
+        })
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'totems' },
+          (change) => {
+            const row = (change.new ?? null) as SupabaseTotemRow | null;
+            if (!row?.id) return;
+            const totem = this.mapTotemRow(row);
+            if (totem.isPaired) {
+              this.dispatchLocalChannelEvent({ type: 'PAIRING_AUTHORIZED', totem });
+            }
+            this.dispatchLocalChannelEvent({ type: 'TELEMETRY_UPDATED', totem });
+          },
+        )
+        .on(
+          'postgres_changes',
+          { event: 'INSERT', schema: 'public', table: 'totem_commands' },
+          (change) => {
+            const row = (change.new ?? null) as SupabaseTotemCommandRow | null;
+            if (!row?.id) return;
+            this.dispatchLocalChannelEvent({
+              type: 'REMOTE_COMMAND',
+              command: this.mapCommandRow(row),
+            });
+          },
+        )
+        .subscribe();
+    }
+
+    return () => {
+      this.channelListeners.delete(listener);
+      if (this.channelListeners.size === 0 && this.realtimeChannel) {
+        const channel = this.realtimeChannel;
+        this.realtimeChannel = null;
+        void this.client.removeChannel(channel);
+      }
+    };
   }
 }
