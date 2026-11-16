@@ -1,9 +1,16 @@
-import type { DifficultyLevel } from '../domain/types';
+import type { DifficultyLevel, PrizeClaimStatus } from '../domain/types';
 
 export const DIFFICULTY_LABELS: Record<DifficultyLevel, string> = {
   facil: 'Fácil',
   moderado: 'Moderado',
   dificil: 'Difícil',
+};
+
+export const PRIZE_STATUS_LABELS: Record<PrizeClaimStatus, string> = {
+  delivered: 'Entregue',
+  awaiting_pickup: 'Aguardando Retirada',
+  revoked: 'Revogado',
+  offline_duplicate_conflict: 'Conflito Offline',
 };
 
 // Formata quantidade inteira de segundos no padrão MM:SS.
@@ -15,4 +22,23 @@ export function formatTimeMMSS(totalSeconds: number): string {
   const minutes = Math.floor(wholeSeconds / 60);
   const seconds = wholeSeconds % 60;
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+// Formata data/hora ISO para exibição amigável na Trava de Brinde (dd/MM/yyyy às HH:mm).
+export function formatAwardedAtPtBr(isoString: string): string {
+  const dateObj = new Date(isoString);
+  if (Number.isNaN(dateObj.getTime())) {
+    return isoString;
+  }
+  const datePart = dateObj.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+  const timePart = dateObj.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+  return `Participação em: ${datePart} às ${timePart}`;
 }

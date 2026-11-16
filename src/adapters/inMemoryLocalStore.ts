@@ -1,6 +1,8 @@
 import type { LocalStore } from '../domain/ports';
 import type {
+  GiveUpLockoutRecord,
   MatchRecord,
+  PrizeClaimRecord,
   Question,
   SyncQueueItem,
   TotemConfigSnapshot,
@@ -11,6 +13,8 @@ export class InMemoryLocalStore implements LocalStore {
   private totemConfig: TotemConfigSnapshot | null = null;
   private questionsByEvent = new Map<string, Question[]>();
   private matchesByEvent = new Map<string, MatchRecord[]>();
+  private prizeClaimsByEvent = new Map<string, PrizeClaimRecord[]>();
+  private lockoutsByEvent = new Map<string, GiveUpLockoutRecord[]>();
   private syncQueue = new Map<string, SyncQueueItem>();
 
   async getTotemConfig(): Promise<TotemConfigSnapshot | null> {
@@ -34,14 +38,38 @@ export class InMemoryLocalStore implements LocalStore {
   }
 
   async saveMatch(match: MatchRecord): Promise<void> {
-    const current = this.matchesByEvent.get(match.eventId) ?? [];
-    const index = current.findIndex((item) => item.id === match.id);
+    this.upsertRecord(this.matchesByEvent, match.eventId, match);
+  }
+
+  async getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]> {
+    return structuredClone(this.prizeClaimsByEvent.get(eventId) ?? []);
+  }
+
+  async savePrizeClaim(claim: PrizeClaimRecord): Promise<void> {
+    this.upsertRecord(this.prizeClaimsByEvent, claim.eventId, claim);
+  }
+
+  async getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]> {
+    return structuredClone(this.lockoutsByEvent.get(eventId) ?? []);
+  }
+
+  async saveLockout(lockout: GiveUpLockoutRecord): Promise<void> {
+    this.upsertRecord(this.lockoutsByEvent, lockout.eventId, lockout);
+  }
+
+  private upsertRecord<T extends { id: string }>(
+    store: Map<string, T[]>,
+    eventId: string,
+    record: T,
+  ): void {
+    const current = store.get(eventId) ?? [];
+    const index = current.findIndex((item) => item.id === record.id);
     if (index >= 0) {
-      current[index] = structuredClone(match);
+      current[index] = structuredClone(record);
     } else {
-      current.push(structuredClone(match));
+      current.push(structuredClone(record));
     }
-    this.matchesByEvent.set(match.eventId, current);
+    store.set(eventId, current);
   }
 
   async getSyncQueue(): Promise<SyncQueueItem[]> {

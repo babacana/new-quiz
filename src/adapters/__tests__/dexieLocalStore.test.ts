@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { DexieLocalStore } from '../dexieLocalStore';
 import { DEFAULT_EVENT_CONFIG, DEFAULT_EVENT_ID, DEFAULT_QUIZ_QUESTIONS } from '../../domain/defaults';
-import type { MatchRecord } from '../../domain/types';
+import type { GiveUpLockoutRecord, MatchRecord, PrizeClaimRecord } from '../../domain/types';
 
 describe('DexieLocalStore', () => {
   const storesToClose: DexieLocalStore[] = [];
@@ -13,7 +13,7 @@ describe('DexieLocalStore', () => {
     }
   });
 
-  it('persiste e recupera configuração do Totem, Banco de Questões, Partidas e fila syncQueue', async () => {
+  it('persiste e recupera configuração do Totem, Banco de Questões, Partidas, Brindes, Bloqueios e syncQueue', async () => {
     const dbName = `TotemLocalDB_Test_${Date.now()}_${Math.random()}`;
     const store = new DexieLocalStore(dbName);
     storesToClose.push(store);
@@ -52,11 +52,41 @@ describe('DexieLocalStore', () => {
     expect(storedMatches).toHaveLength(1);
     expect(storedMatches[0].id).toBe('match-id-1');
 
+    const prizeClaim: PrizeClaimRecord = {
+      id: 'claim-id-1',
+      eventId: DEFAULT_EVENT_ID,
+      matchId: 'match-id-1',
+      totemId: 'totem-dexie-1',
+      participantName: 'ALINE',
+      participantPhone: '(61) 99999-8888',
+      status: 'delivered',
+      awardedAt: match.playedAt,
+      deliveredAt: match.playedAt,
+    };
+    await store.savePrizeClaim(prizeClaim);
+    const storedClaims = await store.getPrizeClaims(DEFAULT_EVENT_ID);
+    expect(storedClaims).toHaveLength(1);
+    expect(storedClaims[0].status).toBe('delivered');
+
+    const lockout: GiveUpLockoutRecord = {
+      id: 'lockout-id-1',
+      eventId: DEFAULT_EVENT_ID,
+      totemId: 'totem-dexie-1',
+      participantPhone: '(61) 98888-7777',
+      lockedAt: '2026-11-15T15:00:00.000Z',
+      expiresAt: '2026-11-15T15:10:00.000Z',
+    };
+    await store.saveLockout(lockout);
+    const storedLockouts = await store.getLockouts(DEFAULT_EVENT_ID);
+    expect(storedLockouts).toHaveLength(1);
+    expect(storedLockouts[0].participantPhone).toBe('(61) 98888-7777');
+
     await store.enqueueSyncItem({
       idempotencyKey: 'match-id-1',
       type: 'match_completed',
       eventId: DEFAULT_EVENT_ID,
       payload: match,
+      prizeClaim,
       createdAt: match.playedAt,
       retryCount: 0,
     });
@@ -67,6 +97,7 @@ describe('DexieLocalStore', () => {
       type: 'match_completed',
       eventId: DEFAULT_EVENT_ID,
       payload: match,
+      prizeClaim,
       createdAt: match.playedAt,
       retryCount: 0,
     });

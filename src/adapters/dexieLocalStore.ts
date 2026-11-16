@@ -1,7 +1,9 @@
 import Dexie, { type Table } from 'dexie';
 import type { LocalStore } from '../domain/ports';
 import type {
+  GiveUpLockoutRecord,
   MatchRecord,
+  PrizeClaimRecord,
   Question,
   SyncQueueItem,
   TotemConfigSnapshot,
@@ -30,6 +32,7 @@ export interface StoredPrizeWinnerRow {
   eventId: string;
   participantPhone: string;
   awardedAt: string;
+  claim: PrizeClaimRecord;
 }
 
 export interface StoredLockoutRow {
@@ -37,6 +40,7 @@ export interface StoredLockoutRow {
   eventId: string;
   participantPhone: string;
   expiresAt: string;
+  lockout: GiveUpLockoutRecord;
 }
 
 // Banco local IndexedDB via Dexie seguindo a estrutura definida em docs/spec.md.
@@ -111,6 +115,36 @@ export class DexieLocalStore implements LocalStore {
       eventId: match.eventId,
       playedAt: match.playedAt,
       match: structuredClone(match),
+    });
+  }
+
+  async getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]> {
+    const rows = await this.db.localPrizeWinners.where('eventId').equals(eventId).toArray();
+    return rows.map((row) => structuredClone(row.claim));
+  }
+
+  async savePrizeClaim(claim: PrizeClaimRecord): Promise<void> {
+    await this.db.localPrizeWinners.put({
+      id: claim.id,
+      eventId: claim.eventId,
+      participantPhone: claim.participantPhone,
+      awardedAt: claim.awardedAt,
+      claim: structuredClone(claim),
+    });
+  }
+
+  async getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]> {
+    const rows = await this.db.localLockouts.where('eventId').equals(eventId).toArray();
+    return rows.map((row) => structuredClone(row.lockout));
+  }
+
+  async saveLockout(lockout: GiveUpLockoutRecord): Promise<void> {
+    await this.db.localLockouts.put({
+      id: lockout.id,
+      eventId: lockout.eventId,
+      participantPhone: lockout.participantPhone,
+      expiresAt: lockout.expiresAt,
+      lockout: structuredClone(lockout),
     });
   }
 

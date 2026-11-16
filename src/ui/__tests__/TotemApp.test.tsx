@@ -642,4 +642,123 @@ describe('TotemApp (Interface do Totem)', () => {
     expect(dispatchResult).toBe(false);
     expect(contextMenuEvent.defaultPrevented).toBe(true);
   });
+
+  it('exibe celebração Top 3, status de Brinde (Aguardando Retirada) e tela de Ranking Geral ordenada', async () => {
+    const user = userEvent.setup();
+    const { engine } = createUiTestRig({
+      numberOfQuestions: 1,
+      settingsOverrides: {
+        minScoreForPrize: 1,
+        requireManualPrizeConfirmation: true,
+        enablePrizeLock: false,
+      },
+    });
+
+    render(<TotemApp engine={engine} />);
+
+    // Ranking vazio a partir da tela inicial
+    await user.click(await screen.findByRole('button', { name: 'Ver Ranking' }));
+    expect(document.getElementById('ranking-screen')).toHaveClass('active');
+    expect(screen.getByText('Nenhum participante no ranking ainda.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Voltar ao Início' }));
+
+    // Joga e conquista 1º lugar (TOP 1) e Brinde Aguardando Retirada
+    await user.type(screen.getByLabelText('Nome'), 'helena');
+    await user.type(screen.getByLabelText('Telefone'), '61991110000');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+    await user.click(await screen.findByRole('button', { name: 'CAESB' }));
+    await user.click(screen.getByRole('button', { name: 'Finalizar Quiz' }));
+
+    // Modal Top 3 abre automaticamente
+    expect(await screen.findByText('TOP 1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'OK!' }));
+
+    expect(screen.getByText('Aguardando Retirada')).toBeInTheDocument();
+    expect(screen.getByText('1º lugar')).toBeInTheDocument();
+
+    // Abre Ranking a partir da tela de resultado
+    await user.click(screen.getByRole('button', { name: 'Ver Ranking' }));
+    expect(document.getElementById('ranking-screen')).toHaveClass('active');
+    expect(screen.getByText('HELENA')).toBeInTheDocument();
+    expect(screen.getByText('1 Acertos')).toBeInTheDocument();
+  });
+
+  it('exibe modal da Trava de Brinde com data/hora quando telefone já premiado tenta jogar novamente', async () => {
+    const user = userEvent.setup();
+    const { engine } = createUiTestRig({
+      nowIso: '2026-11-15T14:35:00-03:00',
+      numberOfQuestions: 1,
+      settingsOverrides: {
+        minScoreForPrize: 1,
+        enablePrizeLock: true,
+      },
+    });
+
+    render(<TotemApp engine={engine} />);
+
+    await user.type(await screen.findByLabelText('Nome'), 'tiago');
+    await user.type(screen.getByLabelText('Telefone'), '61995551234');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+    await user.click(await screen.findByRole('button', { name: 'CAESB' }));
+    await user.click(screen.getByRole('button', { name: 'Finalizar Quiz' }));
+
+    await user.click(await screen.findByRole('button', { name: 'OK!' }));
+    await user.click(screen.getByRole('button', { name: 'Jogar Novamente' }));
+
+    // Tenta iniciar novamente com o mesmo telefone
+    await user.type(screen.getByLabelText('Nome'), 'tiago');
+    await user.type(screen.getByLabelText('Telefone'), '61995551234');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+
+    expect(await screen.findByText(/Segura a emoção, campeão/i)).toBeInTheDocument();
+    expect(document.getElementById('winner-already-timestamp')?.textContent).toMatch(
+      /Participação em: \d{2}\/\d{2}\/\d{4} às \d{2}:\d{2}/,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Entendi!' }));
+    expect(document.getElementById('winner-already-modal')).toBeNull();
+    expect(screen.getByLabelText('Nome')).toHaveValue('');
+    expect(screen.getByLabelText('Telefone')).toHaveValue('');
+  });
+
+  it('permite desistir durante a Partida com confirmação e aplica Bloqueio por Desistência', async () => {
+    const user = userEvent.setup();
+    const { engine, localStore, event } = createUiTestRig({
+      numberOfQuestions: 1,
+      settingsOverrides: {
+        giveUpLockoutMinutes: 4,
+      },
+    });
+
+    render(<TotemApp engine={engine} />);
+
+    await user.type(await screen.findByLabelText('Nome'), 'diego');
+    await user.type(screen.getByLabelText('Telefone'), '61993334444');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+
+    await user.click(await screen.findByRole('button', { name: 'Desistir do Quiz' }));
+    expect(
+      screen.getByText('Tem certeza que deseja desistir do quiz? Seu progresso atual não será salvo.'),
+    ).toBeInTheDocument();
+
+    // Cancela primeiro e garante permanência no quiz
+    await user.click(screen.getByRole('button', { name: 'Cancelar' }));
+    expect(document.getElementById('quiz-screen')).toHaveClass('active');
+
+    // Agora confirma a desistência
+    await user.click(screen.getByRole('button', { name: 'Desistir do Quiz' }));
+    await user.click(screen.getByRole('button', { name: 'Sair' }));
+
+    expect(document.getElementById('initial-screen')).toHaveClass('active');
+    expect(await localStore.getMatches(event.id)).toHaveLength(0);
+
+    // Tentar iniciar novamente com o mesmo telefone mostra alerta de bloqueio
+    await user.type(screen.getByLabelText('Nome'), 'diego');
+    await user.type(screen.getByLabelText('Telefone'), '61993334444');
+    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+
+    expect(
+      await screen.findByText(/Você desistiu recentemente do quiz e está bloqueado por 4 minuto\(s\)/i),
+    ).toBeInTheDocument();
+  });
 });

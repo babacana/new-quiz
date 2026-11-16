@@ -40,6 +40,11 @@ class FakeClock implements Clock {
 class DeterministicRandomSource implements RandomSource {
   private state = 42;
   private uuidCounter = 0;
+  private readonly prefix: string;
+
+  constructor(prefix = '00000000') {
+    this.prefix = prefix;
+  }
 
   next(): number {
     this.state = (this.state * 1664525 + 1013904223) % 4294967296;
@@ -59,7 +64,7 @@ class DeterministicRandomSource implements RandomSource {
 
   uuid(): string {
     this.uuidCounter += 1;
-    return `00000000-0000-4000-8000-0000000000${String(this.uuidCounter).padStart(2, '0')}`;
+    return `${this.prefix}-0000-4000-8000-0000000000${String(this.uuidCounter).padStart(2, '0')}`;
   }
 }
 
@@ -1005,6 +1010,510 @@ describe('TotemSessionEngine', () => {
       expect(idleFromResult.lastResult).toBeNull();
       expect(idleFromResult.activeMatch).toBeNull();
       expect(engine.wakeFromIdleScreen().screen).toBe('initial-screen');
+    });
+  });
+
+  describe('Fatia 10: Elegibilidade ao Brinde (Entregue vs. Aguardando Retirada) e Estoque', () => {
+    it('registra Brinde como delivered quando confirmação manual está desabilitada e decrementa estoque', async () => {
+      const eventImmediate: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        prizeStockRemaining: 2,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          requireManualPrizeConfirmation: false,
+          prizeStockLimit: 2,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const { engine, localStore, cloudGateway } = createHarness({
+        event: eventImmediate,
+        questions,
+      });
+
+      await engine.initialize();
+      await engine.startMatch('MARCOS', '(61) 99999-1000');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const snap = await engine.advanceAfterAnswer();
+
+      expect(snap.lastResult?.wonPrize).toBe(true);
+      expect(snap.lastResult?.prizeStatus).toBe('delivered');
+      expect(snap.event.prizeStockRemaining).toBe(1);
+
+      const localClaims = await localStore.getPrizeClaims(DEFAULT_EVENT_ID);
+      expect(localClaims).toHaveLength(1);
+      expect(localClaims[0].status).toBe('delivered');
+      expect(localClaims[0].deliveredAt).not.toBeNull();
+      expect(cloudGateway.getActivePrizeClaims(DEFAULT_EVENT_ID)).toHaveLength(1);
+    });
+
+    it('registra Brinde como awaiting_pickup quando confirmação manual está habilitada e bloqueia ao zerar estoque', async () => {
+      const eventManual: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        prizeStockRemaining: 1,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          requireManualPrizeConfirmation: true,
+          prizeStockLimit: 1,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const { engine, localStore } = createHarness({
+        event: eventManual,
+        questions,
+      });
+
+      await engine.initialize();
+      await engine.startMatch('JULIA', '(61) 99999-2001');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const firstWinner = await engine.advanceAfterAnswer();
+
+      expect(firstWinner.lastResult?.wonPrize).toBe(true);
+      expect(firstWinner.lastResult?.prizeStatus).toBe('awaiting_pickup');
+      expect(firstWinner.event.prizeStockRemaining).toBe(0);
+      const localClaims = await localStore.getPrizeClaims(DEFAULT_EVENT_ID);
+      expect(localClaims[0].status).toBe('awaiting_pickup');
+      expect(localClaims[0].deliveredAt).toBeNull();
+
+      // Segundo visitante acerta com estoque esgotado -> não recebe Brinde
+      engine.resetToInitialScreen();
+      await engine.startMatch('BRUNO', '(61) 99999-2002');
+      const q2 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q2.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const outOfStockSnap = await engine.advanceAfterAnswer();
+
+      expect(outOfStockSnap.lastResult?.wonPrize).toBe(false);
+      expect(outOfStockSnap.lastResult?.prizeStatus).toBeNull();
+      expect(await localStore.getPrizeClaims(DEFAULT_EVENT_ID)).toHaveLength(1);
+    });
+  });
+
+  describe('Fatia 11: Trava de Brinde por telefone no Evento', () => {
+    it('bloqueia novo início quando telefone já conquistou Brinde no Evento e informa timestamp anterior', async () => {
+      const eventLocked: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          enablePrizeLock: true,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const { engine, clock } = createHarness({ event: eventLocked, questions });
+      await engine.initialize();
+
+      // 1ª Partida vencedora
+      await engine.startMatch('CARLA', '(61) 99777-8888');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const firstResult = await engine.advanceAfterAnswer();
+      expect(firstResult.lastResult?.wonPrize).toBe(true);
+      const firstAwardedAt = clock.toISOString();
+
+      // Tenta jogar novamente com o mesmo telefone
+      clock.advanceMs(10 * 60 * 1000);
+      engine.resetToInitialScreen();
+      const blockedResult = await engine.startMatch('CARLA OUTRO NOME', '(61) 99777-8888');
+
+      expect(blockedResult.started).toBe(false);
+      expect(blockedResult.alreadyWonPrizeAt).toBe(firstAwardedAt);
+      expect(blockedResult.snapshot.screen).toBe('initial-screen');
+      expect(blockedResult.snapshot.alreadyWonModal).toEqual({
+        participantPhone: '(61) 99777-8888',
+        awardedAt: firstAwardedAt,
+      });
+
+      const dismissed = engine.dismissAlreadyWonModal();
+      expect(dismissed.alreadyWonModal).toBeNull();
+    });
+
+    it('permite jogar novamente quando enablePrizeLock está desabilitada ou quando Brinde foi revogado', async () => {
+      const eventUnlocked: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          enablePrizeLock: false,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const { engine } = createHarness({ event: eventUnlocked, questions });
+      await engine.initialize();
+
+      await engine.startMatch('CARLA', '(61) 99777-8888');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await engine.advanceAfterAnswer();
+
+      engine.resetToInitialScreen();
+      const secondAttempt = await engine.startMatch('CARLA', '(61) 99777-8888');
+      expect(secondAttempt.started).toBe(true);
+
+      // Com trava habilitada mas Brinde revogado, também permite jogar novamente
+      const revokedHarness = createHarness({
+        event: {
+          ...eventUnlocked,
+          settings: { ...eventUnlocked.settings, enablePrizeLock: true },
+        },
+        questions,
+      });
+      await revokedHarness.localStore.savePrizeClaim({
+        id: 'revoked-claim-1',
+        eventId: DEFAULT_EVENT_ID,
+        matchId: 'old-match-1',
+        totemId: null,
+        participantName: 'CARLA',
+        participantPhone: '(61) 99777-8888',
+        status: 'revoked',
+        awardedAt: '2026-11-15T12:00:00.000Z',
+        deliveredAt: null,
+      });
+      await revokedHarness.engine.initialize();
+      const afterRevoke = await revokedHarness.engine.startMatch('CARLA', '(61) 99777-8888');
+      expect(afterRevoke.started).toBe(true);
+    });
+  });
+
+  describe('Fatia 12: Desistência (giveUpMatch) e Bloqueio por Desistência', () => {
+    it('descarta Partida na desistência, cria bloqueio temporário sincronizável e libera após expirar', async () => {
+      const eventWithLockout: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 2,
+          giveUpLockoutMinutes: 5,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 2, moderado: 0, dificil: 0 });
+      const { engine, localStore, cloudGateway, clock } = createHarness({
+        online: true,
+        event: eventWithLockout,
+        questions,
+      });
+
+      await engine.initialize();
+      cloudGateway.setOnline(false);
+      await engine.startMatch('GABRIEL', '(61) 99111-2222');
+      const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
+
+      const afterGiveUp = await engine.giveUpMatch();
+      expect(afterGiveUp.screen).toBe('initial-screen');
+      expect(afterGiveUp.activeMatch).toBeNull();
+      expect(await localStore.getMatches(DEFAULT_EVENT_ID)).toHaveLength(0);
+      expect(await localStore.getLockouts(DEFAULT_EVENT_ID)).toHaveLength(1);
+      expect(afterGiveUp.pendingSyncCount).toBe(1);
+
+      // Tenta iniciar após 2 minutos -> ainda bloqueado com 3 minuto(s) restantes
+      clock.advanceMs(2 * 60 * 1000);
+      const blocked = await engine.startMatch('GABRIEL', '(61) 99111-2222');
+      expect(blocked.started).toBe(false);
+      expect(blocked.lockoutRemainingMinutes).toBe(3);
+      expect(blocked.errorMessage).toContain('3 minuto(s)');
+
+      // Reconecta e sincroniza o bloqueio para a nuvem
+      cloudGateway.setOnline(true);
+      await engine.syncPendingQueue();
+      expect(cloudGateway.getLockouts(DEFAULT_EVENT_ID)).toHaveLength(1);
+
+      // Avança mais 3 minutos e 1 segundo -> bloqueio expirado, pode jogar
+      clock.advanceMs(3 * 60 * 1000 + 1000);
+      const allowed = await engine.startMatch('GABRIEL', '(61) 99111-2222');
+      expect(allowed.started).toBe(true);
+    });
+
+    it('descarta Partida sem criar bloqueio quando giveUpLockoutMinutes é zero', async () => {
+      const eventNoLockout: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: { ...DEFAULT_EVENT_CONFIG.settings, giveUpLockoutMinutes: 0 },
+      };
+      const { engine, localStore } = createHarness({ event: eventNoLockout });
+      await engine.initialize();
+      await engine.startMatch('LARISSA', '(61) 99222-3333');
+
+      const snap = await engine.giveUpMatch();
+      expect(snap.screen).toBe('initial-screen');
+      expect(await localStore.getLockouts(DEFAULT_EVENT_ID)).toHaveLength(0);
+      expect((await engine.startMatch('LARISSA', '(61) 99222-3333')).started).toBe(true);
+    });
+  });
+
+  describe('Fatia 13: Ranking Geral do Evento e celebração Top 3', () => {
+    it('ordena Ranking por maior pontuação, menor tempo e playedAt respeitando rankingDisplayCount e identificando Top 3', async () => {
+      const eventRanking: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 2,
+          minScoreForPrize: 2,
+          rankingDisplayCount: 3,
+          enablePrizeLock: false,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 2, moderado: 0, dificil: 0 });
+      const { engine, clock, localStore } = createHarness({
+        event: eventRanking,
+        questions,
+      });
+
+      // Semeia 3 Partidas anteriores no armazenamento local antes de inicializar
+      await localStore.saveMatch({
+        id: 'm-1',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: null,
+        participantName: 'ANA',
+        participantPhone: '(61) 91111-1111',
+        score: 2,
+        totalQuestions: 2,
+        timeSeconds: 20,
+        answers: [],
+        playedAt: '2026-11-15T10:00:00.000Z',
+      });
+      await localStore.saveMatch({
+        id: 'm-2',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: null,
+        participantName: 'BRUNO',
+        participantPhone: '(61) 92222-2222',
+        score: 1,
+        totalQuestions: 2,
+        timeSeconds: 10,
+        answers: [],
+        playedAt: '2026-11-15T10:05:00.000Z',
+      });
+      await localStore.saveMatch({
+        id: 'm-3',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: null,
+        participantName: 'CAIO',
+        participantPhone: '(61) 93333-3333',
+        score: 2,
+        totalQuestions: 2,
+        timeSeconds: 15,
+        answers: [],
+        playedAt: '2026-11-15T10:10:00.000Z',
+      });
+
+      await engine.initialize();
+
+      // Novo participante joga e acerta 2 em 12s -> deve assumir 1º lugar (Top 1)
+      await engine.startMatch('DANIELA', '(61) 94444-4444');
+      clock.advanceMs(6_000);
+      let q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await engine.advanceAfterAnswer();
+
+      clock.advanceMs(6_000);
+      q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const resultSnap = await engine.advanceAfterAnswer();
+
+      expect(resultSnap.lastResult?.rankingPosition).toBe(1);
+      expect(resultSnap.lastResult?.isTop3).toBe(true);
+
+      // Abre tela de Ranking e valida limite rankingDisplayCount = 3 e ordem (DANIELA 12s, CAIO 15s, ANA 20s)
+      const rankingSnap = await engine.openRankingScreen();
+      expect(rankingSnap.screen).toBe('ranking-screen');
+      expect(rankingSnap.ranking).toHaveLength(3);
+      expect(rankingSnap.ranking.map((r) => `${r.position}:${r.participantName}:${r.score}:${r.timeSeconds}`)).toEqual([
+        '1:DANIELA:2:12',
+        '2:CAIO:2:15',
+        '3:ANA:2:20',
+      ]);
+
+      // Novo participante acerta apenas 1 em 30s -> fica fora do Top 3 (5º lugar)
+      engine.resetToInitialScreen();
+      await engine.startMatch('EDUARDO', '(61) 95555-5555');
+      clock.advanceMs(30_000);
+      q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await engine.advanceAfterAnswer();
+      q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => !o.isCorrect));
+      const fifthResult = await engine.advanceAfterAnswer();
+
+      expect(fifthResult.lastResult?.rankingPosition).toBe(5);
+      expect(fifthResult.lastResult?.isTop3).toBe(false);
+    });
+  });
+
+  describe('Fatia 14: Conflito de Premiação Offline entre dois Totens', () => {
+    it('preserva ambas as Partidas, mantém 1 Brinde ativo, não consome estoque dobrado e marca excedente como offline_duplicate_conflict', async () => {
+      const eventMultiTotem: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        prizeStockRemaining: 5,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          enablePrizeLock: true,
+          requireManualPrizeConfirmation: false,
+          prizeStockLimit: 5,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const clock = new FakeClock('2026-11-15T14:00:00.000Z');
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      cloudGateway.seedEvent(eventMultiTotem, questions);
+
+      const storeA = new InMemoryLocalStore();
+      await storeA.saveTotemConfig({
+        totemId: 'totem-a',
+        deviceToken: 'tok-a',
+        pinCode: '1111',
+        event: eventMultiTotem,
+      });
+      const storeB = new InMemoryLocalStore();
+      await storeB.saveTotemConfig({
+        totemId: 'totem-b',
+        deviceToken: 'tok-b',
+        pinCode: '2222',
+        event: eventMultiTotem,
+      });
+
+      const totemA = new TotemSessionEngine({
+        localStore: storeA,
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource('aaaaaaaa'),
+      });
+      const totemB = new TotemSessionEngine({
+        localStore: storeB,
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource('bbbbbbbb'),
+      });
+
+      await totemA.initialize();
+      await totemB.initialize();
+
+      // Ambos os Totens perdem conexão com a nuvem no pavilhão
+      cloudGateway.setOnline(false);
+
+      // Mesmo telefone joga e vence no Totem A
+      await totemA.startMatch('FERNANDO', '(61) 99666-7777');
+      clock.advanceMs(8_000);
+      const qA = totemA.getSnapshot().activeMatch!.currentQuestion!;
+      totemA.submitAnswer(qA.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemA.advanceAfterAnswer();
+
+      // Mesmo telefone joga e vence no Totem B enquanto offline
+      await totemB.startMatch('FERNANDO', '(61) 99666-7777');
+      clock.advanceMs(5_000);
+      const qB = totemB.getSnapshot().activeMatch!.currentQuestion!;
+      totemB.submitAnswer(qB.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const resultB = await totemB.advanceAfterAnswer();
+      expect(resultB.pendingSyncCount).toBe(1);
+
+      // Conexão volta e ambos sincronizam
+      cloudGateway.setOnline(true);
+      await totemA.syncPendingQueue();
+      await totemB.syncPendingQueue();
+
+      expect(cloudGateway.getSyncedMatches(DEFAULT_EVENT_ID)).toHaveLength(2);
+      expect(cloudGateway.getActivePrizeClaims(DEFAULT_EVENT_ID)).toHaveLength(1);
+      expect(cloudGateway.getOfflineConflictClaims(DEFAULT_EVENT_ID)).toHaveLength(1);
+      expect(cloudGateway.getOfflineConflictClaims(DEFAULT_EVENT_ID)[0].participantPhone).toBe(
+        '(61) 99666-7777',
+      );
+      // Estoque foi decrementado apenas uma vez (5 -> 4)
+      expect(totemB.getSnapshot().event.prizeStockRemaining).toBe(4);
+
+      // Ranking unificado após consulta à nuvem preserva ambas as Partidas
+      const rankingSnap = await totemB.openRankingScreen();
+      expect(rankingSnap.ranking).toHaveLength(2);
+
+      // Trava de Brinde continua bloqueando o mesmo telefone no Totem B após o conflito offline
+      totemB.resetToInitialScreen();
+      const blockedAfterConflict = await totemB.startMatch('FERNANDO', '(61) 99666-7777');
+      expect(blockedAfterConflict.started).toBe(false);
+      expect(blockedAfterConflict.alreadyWonPrizeAt).toBeDefined();
+    });
+
+    it('mantém estoque local decrementado ao abrir Ranking com fila offline pendente e sincroniza Ranking no Totem online', async () => {
+      const eventShared: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        prizeStockRemaining: 5,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          enablePrizeLock: false,
+          prizeStockLimit: 5,
+        },
+      };
+      const questions = buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 });
+      const clock = new FakeClock('2026-11-15T15:00:00.000Z');
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      cloudGateway.seedEvent(eventShared, questions);
+
+      const totemA = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource('11111111'),
+      });
+      const totemB = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource('22222222'),
+      });
+
+      await totemA.initialize();
+      await totemB.initialize();
+
+      // Totem A conclui Partida online rapidamente (5s) -> 1º lugar na nuvem, estoque 5 -> 4
+      await totemA.startMatch('PRIMEIRA', '(61) 91111-0001');
+      clock.advanceMs(5_000);
+      totemA.submitAnswer(
+        totemA.getSnapshot().activeMatch!.currentQuestion!.question.shuffledOptions.findIndex(
+          (o) => o.isCorrect,
+        ),
+      );
+      const snapA = await totemA.advanceAfterAnswer();
+      expect(snapA.lastResult?.rankingPosition).toBe(1);
+
+      // Totem B conclui Partida online mais lenta (12s) -> deve ver 2º lugar na nuvem (não 1º local!)
+      await totemB.startMatch('SEGUNDA', '(61) 92222-0002');
+      clock.advanceMs(12_000);
+      totemB.submitAnswer(
+        totemB.getSnapshot().activeMatch!.currentQuestion!.question.shuffledOptions.findIndex(
+          (o) => o.isCorrect,
+        ),
+      );
+      const snapB = await totemB.advanceAfterAnswer();
+      expect(snapB.lastResult?.rankingPosition).toBe(2);
+      expect(snapB.event.prizeStockRemaining).toBe(3);
+
+      // Totem B perde rede, premia offline (estoque local 3 -> 2) e abre Ranking sem perder o débito
+      cloudGateway.setOnline(false);
+      totemB.resetToInitialScreen();
+      await totemB.startMatch('TERCEIRA OFFLINE', '(61) 93333-0003');
+      clock.advanceMs(20_000);
+      totemB.submitAnswer(
+        totemB.getSnapshot().activeMatch!.currentQuestion!.question.shuffledOptions.findIndex(
+          (o) => o.isCorrect,
+        ),
+      );
+      await totemB.advanceAfterAnswer();
+      const rankingOfflineSnap = await totemB.openRankingScreen();
+      expect(rankingOfflineSnap.event.prizeStockRemaining).toBe(2);
     });
   });
 });

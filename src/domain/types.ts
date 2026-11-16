@@ -152,15 +152,66 @@ export interface MatchRecord {
   syncedAt?: string | null;
 }
 
-export interface SyncQueueItem {
+export type PrizeClaimStatus =
+  | 'awaiting_pickup'
+  | 'delivered'
+  | 'revoked'
+  | 'offline_duplicate_conflict';
+
+export interface PrizeClaimRecord {
+  id: string;
+  eventId: string;
+  matchId: string;
+  totemId: string | null;
+  participantName: string;
+  participantPhone: string;
+  status: PrizeClaimStatus;
+  awardedAt: string;
+  deliveredAt: string | null;
+}
+
+export interface GiveUpLockoutRecord {
+  id: string;
+  eventId: string;
+  totemId: string | null;
+  participantPhone: string;
+  lockedAt: string;
+  expiresAt: string;
+}
+
+export interface RankingEntry {
+  position: number;
+  matchId: string;
+  participantName: string;
+  participantPhone: string;
+  score: number;
+  totalQuestions: number;
+  timeSeconds: number;
+  playedAt: string;
+}
+
+export interface SyncQueueMatchItem {
   idempotencyKey: string;
   type: 'match_completed';
   eventId: string;
   payload: MatchRecord;
+  prizeClaim?: PrizeClaimRecord | null;
   createdAt: string;
   retryCount: number;
   lastError?: string;
 }
+
+export interface SyncQueueLockoutItem {
+  idempotencyKey: string;
+  type: 'give_up_lockout_added';
+  eventId: string;
+  payload: GiveUpLockoutRecord;
+  createdAt: string;
+  retryCount: number;
+  lastError?: string;
+}
+
+export type SyncQueueItem = SyncQueueMatchItem | SyncQueueLockoutItem;
 
 export interface TotemConfigSnapshot {
   totemId: string | null;
@@ -189,7 +240,12 @@ export interface QuestionTimeVisualState {
   isFlashing: boolean;
 }
 
-export type TotemScreenId = 'idle-screen' | 'initial-screen' | 'quiz-screen' | 'result-screen';
+export type TotemScreenId =
+  | 'idle-screen'
+  | 'initial-screen'
+  | 'quiz-screen'
+  | 'result-screen'
+  | 'ranking-screen';
 
 export type EventWindowStatus = 'before' | 'during' | 'after' | 'no_event';
 
@@ -226,6 +282,9 @@ export interface MatchResultSummary {
   totalQuestions: number;
   timeSeconds: number;
   wonPrize: boolean;
+  prizeStatus: PrizeClaimStatus | null;
+  rankingPosition: number;
+  isTop3: boolean;
   isPerfectScore: boolean;
   canShowIncorrectAnswers: boolean;
   incorrectAnswers: IncorrectAnswerReviewItem[];
@@ -245,6 +304,11 @@ export interface TotemSessionSnapshot {
     currentQuestion: ActiveQuestionState | null;
   } | null;
   lastResult: MatchResultSummary | null;
+  ranking: RankingEntry[];
+  alreadyWonModal: {
+    participantPhone: string;
+    awardedAt: string;
+  } | null;
   pendingSyncCount: number;
   isOnline: boolean;
   lastValidationError: string | null;
@@ -253,6 +317,8 @@ export interface TotemSessionSnapshot {
 export interface StartMatchResult {
   started: boolean;
   errorMessage?: string;
+  alreadyWonPrizeAt?: string;
+  lockoutRemainingMinutes?: number;
   snapshot: TotemSessionSnapshot;
 }
 
