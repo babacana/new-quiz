@@ -330,3 +330,115 @@ export interface AnswerOutcome {
   advanceButtonLabel: string;
   snapshot: TotemSessionSnapshot;
 }
+
+// Tipos de autenticação, controle de acesso (RBAC), Multi-Evento e Banco de Questões Central (T4).
+export type UserRole = 'admin' | 'operator';
+
+export interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+}
+
+export interface AuthSession {
+  user: UserProfile;
+  accessToken: string;
+  authenticatedAt: string;
+}
+
+export interface CreateStaffAccountInput {
+  name: string;
+  email: string;
+  password: string;
+  role: UserRole;
+}
+
+export interface EventCustomizationsPatch {
+  texts?: Partial<EventCustomizationTexts>;
+  colors?: Partial<EventCustomizationColors>;
+  fontSizes?: Partial<EventCustomizationFontSizes>;
+  visualIdentity?: Partial<EventVisualIdentity>;
+}
+
+export interface EventUpsertInput {
+  id?: string;
+  name: string;
+  slug?: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  enableOutOfPeriodMessage?: boolean;
+  isActive?: boolean;
+  settings?: Partial<EventSettings>;
+  prizeStockRemaining?: number | null;
+  customizations?: EventCustomizationsPatch;
+  linkedQuestionIds?: number[];
+}
+
+export interface CloneEventOverrides {
+  id?: string;
+  name: string;
+  slug?: string;
+  startTime?: string | null;
+  endTime?: string | null;
+  isActive?: boolean;
+}
+
+export interface QuestionUpsertInput {
+  id?: number;
+  text: string;
+  options: [string, string, string, string];
+  correctIndex: number;
+  difficulty: DifficultyLevel;
+  tags?: string[];
+  isDisabled?: boolean;
+}
+
+export type QuestionStatusFilter = 'all' | 'active' | 'disabled';
+export type QuestionSortField = 'id' | 'text' | 'difficulty' | 'status';
+export type SortDirection = 'asc' | 'desc';
+
+export interface QuestionFilterOptions {
+  search?: string;
+  difficulties?: DifficultyLevel[];
+  status?: QuestionStatusFilter;
+  tags?: string[];
+  eventId?: string;
+  sortBy?: QuestionSortField;
+  sortDirection?: SortDirection;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PaginatedQuestionsResult {
+  items: Question[];
+  totalItems: number;
+  totalPages: number;
+  currentPage: number;
+  pageSize: number;
+  counts: {
+    total: number;
+    active: number;
+    disabled: number;
+    byDifficulty: Record<DifficultyLevel, number>;
+  };
+}
+
+export type QuestionsImportMode = 'merge' | 'replace';
+
+export interface QuestionsImportResult {
+  importedCount: number;
+  totalAfterImport: number;
+  mode: QuestionsImportMode;
+}
+
+export type DirtySection = 'event' | 'settings' | 'question';
+export type UnsavedChangesResolution = 'save_and_leave' | 'discard_and_leave' | 'cancel';
+
+export interface UnsavedNavigationPrompt {
+  canProceedImmediately: boolean;
+  dirtySections: DirtySection[];
+  message: string;
+  options: readonly ['save_and_leave', 'discard_and_leave', 'cancel'];
+}

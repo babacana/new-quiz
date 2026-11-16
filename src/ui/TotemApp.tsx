@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
-import { InMemoryCloudGateway } from '../adapters/inMemoryCloudGateway';
-import { SupabaseCloudGateway } from '../adapters/supabaseCloudGateway';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
 import {
   TotemSessionEngine,
@@ -15,6 +13,7 @@ import {
   VirtualKeyboard,
   type VirtualKeyboardField,
 } from './VirtualKeyboard';
+import { createDefaultCloudGateway } from './cloudFactory';
 import {
   DIFFICULTY_LABELS,
   PRIZE_STATUS_LABELS,
@@ -44,16 +43,9 @@ export interface TotemAppProps {
 }
 
 function createDefaultEngine(): TotemSessionEngine {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-  const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-  const cloudGateway =
-    supabaseUrl && supabaseKey
-      ? new SupabaseCloudGateway(supabaseUrl, supabaseKey)
-      : new InMemoryCloudGateway({ online: typeof navigator === 'undefined' ? true : navigator.onLine });
-
   return new TotemSessionEngine({
     localStore: new DexieLocalStore(),
-    cloudGateway,
+    cloudGateway: createDefaultCloudGateway(),
     clock: new SystemClock(),
     random: new CryptoRandomSource(),
   });
