@@ -444,6 +444,7 @@ export function AdminApp({
                 controller={controller}
                 events={events}
                 onWorkspaceRestored={() => loadWorkspaceData()}
+                onOpenDevSimulator={isAdmin ? () => setIsDevSimulatorOpen(true) : undefined}
                 onStatusMessage={handleStatusMessage}
               />
             )}
