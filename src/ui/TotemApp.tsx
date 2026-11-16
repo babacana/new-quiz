@@ -179,6 +179,15 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   }, []);
 
   useEffect(() => {
+    document.documentElement.classList.add('totem-fullscreen-mode');
+    document.body.classList.add('totem-fullscreen-mode');
+    return () => {
+      document.documentElement.classList.remove('totem-fullscreen-mode');
+      document.body.classList.remove('totem-fullscreen-mode');
+    };
+  }, []);
+
+  useEffect(() => {
     let cancelled = false;
     let lastObservedScreen = engine.getSnapshot().screen;
     let lastObservedEventId = engine.getSnapshot().event.id;

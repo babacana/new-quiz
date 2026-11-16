@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 /**
  * Injeta os bundles compilados (JS/CSS) no Service Worker gerado em dist/sw.js
@@ -38,7 +39,7 @@ function pwaPrecachePlugin(): Plugin {
 
 // Configuração unificada do Vite e do runner Vitest para testes unitários e de UI.
 export default defineConfig({
-  plugins: [react(), pwaPrecachePlugin()],
+  plugins: [react(), tailwindcss(), pwaPrecachePlugin()],
   test: {
     globals: true,
     environment: 'jsdom',

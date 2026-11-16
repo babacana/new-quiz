@@ -2,9 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
 import { EventAdminController } from '../domain/eventAdminController';
+import type { CloudGateway } from '../domain/ports';
 import { TotemSessionEngine } from '../domain/totemSessionEngine';
 import { AdminApp } from './AdminApp';
 import { TotemApp } from './TotemApp';
+import {
+  getHashForAdminTab,
+  resolveAdminTabFromHash,
+  type AdminTabId,
+} from './adminRoutes';
 import { createDefaultCloudGateway } from './cloudFactory';
 
 export type AppRouteMode = 'totem' | 'admin' | 'operator';
@@ -12,6 +18,7 @@ export type AppRouteMode = 'totem' | 'admin' | 'operator';
 export interface ExternalRouteNavigationRequest {
   targetRoute: AppRouteMode;
   targetHash: string;
+  targetAdminTab?: AdminTabId;
   nonce: number;
 }
 
@@ -37,9 +44,9 @@ function resolveRouteFromLocation(): AppRouteMode {
   return 'totem';
 }
 
-function getHashForRoute(mode: AppRouteMode): string {
+function getHashForRoute(mode: AppRouteMode, adminTab?: AdminTabId): string {
   if (mode === 'admin') {
-    return '#admin';
+    return getHashForAdminTab(adminTab ?? 'events');
   }
   if (mode === 'operator') {
     return '#operador';
@@ -47,16 +54,24 @@ function getHashForRoute(mode: AppRouteMode): string {
   return '';
 }
 
-// Roteador raiz que separa Totem público, Painel do Administrador (#admin) e Painel do Operador (#operador).
-export function AppRouter() {
+export interface AppRouterProps {
+  cloudGateway?: CloudGateway;
+}
+
+// Roteador raiz que separa Totem público, Painel do Administrador (#admin/*) e Painel do Operador (#operador).
+export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps = {}) {
   const [routeMode, setRouteMode] = useState<AppRouteMode>(() => resolveRouteFromLocation());
+  const [adminTab, setAdminTab] = useState<AdminTabId>(() =>
+    typeof window === 'undefined' ? 'events' : resolveAdminTabFromHash(window.location.hash),
+  );
   const routeModeRef = useRef<AppRouteMode>(routeMode);
+  const adminTabRef = useRef<AdminTabId>(adminTab);
   const [externalNavRequest, setExternalNavRequest] =
     useState<ExternalRouteNavigationRequest | null>(null);
   const ignoringHashChangeRef = useRef(false);
 
   const sharedServices = useMemo(() => {
-    const cloudGateway = createDefaultCloudGateway();
+    const cloudGateway = injectedCloudGateway ?? createDefaultCloudGateway();
     const clock = new SystemClock();
     const random = new CryptoRandomSource();
     const localStore = new DexieLocalStore();
@@ -71,11 +86,15 @@ export function AppRouter() {
       }),
       adminController: new EventAdminController({ cloudGateway, clock, random }),
     };
-  }, []);
+  }, [injectedCloudGateway]);
 
   useEffect(() => {
     routeModeRef.current = routeMode;
   }, [routeMode]);
+
+  useEffect(() => {
+    adminTabRef.current = adminTab;
+  }, [adminTab]);
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -85,8 +104,15 @@ export function AppRouter() {
       }
 
       const nextRoute = resolveRouteFromLocation();
+      const nextAdminTab = resolveAdminTabFromHash(window.location.hash);
       const currentRoute = routeModeRef.current;
-      if (nextRoute === currentRoute) {
+      const currentAdminTab = adminTabRef.current;
+
+      const isSameRouteAndTab =
+        nextRoute === currentRoute &&
+        (nextRoute !== 'admin' || nextAdminTab === currentAdminTab);
+
+      if (isSameRouteAndTab) {
         return;
       }
 
@@ -97,15 +123,19 @@ export function AppRouter() {
         // Mantém a rota atual no navegador até o usuário resolver o alerta de alterações não salvas.
         const targetHash = window.location.hash;
         ignoringHashChangeRef.current = true;
-        window.location.hash = getHashForRoute(currentRoute);
+        window.location.hash = getHashForRoute(currentRoute, currentAdminTab);
         setExternalNavRequest({
           targetRoute: nextRoute,
           targetHash,
+          targetAdminTab: nextRoute === 'admin' ? nextAdminTab : undefined,
           nonce: Date.now(),
         });
         return;
       }
 
+      if (nextRoute === 'admin') {
+        setAdminTab(nextAdminTab);
+      }
       setRouteMode(nextRoute);
     };
 
@@ -113,14 +143,30 @@ export function AppRouter() {
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, [sharedServices]);
 
-  const navigateToRoute = useCallback((nextRoute: AppRouteMode, explicitHash?: string) => {
-    const desiredHash = explicitHash ?? getHashForRoute(nextRoute);
+  const navigateToRoute = useCallback(
+    (nextRoute: AppRouteMode, explicitHash?: string, explicitAdminTab?: AdminTabId) => {
+      const nextTab = explicitAdminTab ?? (nextRoute === 'admin' ? adminTabRef.current : undefined);
+      const desiredHash = explicitHash ?? getHashForRoute(nextRoute, nextTab);
+      if (window.location.hash !== desiredHash) {
+        ignoringHashChangeRef.current = true;
+        window.location.hash = desiredHash;
+      }
+      setExternalNavRequest(null);
+      if (nextTab) {
+        setAdminTab(nextTab);
+      }
+      setRouteMode(nextRoute);
+    },
+    [],
+  );
+
+  const handleAdminTabChange = useCallback((nextTab: AdminTabId) => {
+    const desiredHash = getHashForAdminTab(nextTab);
     if (window.location.hash !== desiredHash) {
       ignoringHashChangeRef.current = true;
       window.location.hash = desiredHash;
     }
-    setExternalNavRequest(null);
-    setRouteMode(nextRoute);
+    setAdminTab(nextTab);
   }, []);
 
   if (routeMode === 'admin' || routeMode === 'operator') {
@@ -128,13 +174,15 @@ export function AppRouter() {
       <AdminApp
         controller={sharedServices.adminController}
         routeMode={routeMode}
+        activeTab={adminTab}
+        onAdminTabChange={handleAdminTabChange}
         onOpenTotem={() => navigateToRoute('totem', '')}
         onSwitchPanelRoute={(nextPanel) => navigateToRoute(nextPanel)}
         externalRouteRequest={externalNavRequest}
         onResolveExternalRoute={(confirm, req) => {
           setExternalNavRequest(null);
           if (confirm) {
-            navigateToRoute(req.targetRoute, req.targetHash);
+            navigateToRoute(req.targetRoute, req.targetHash, req.targetAdminTab);
           }
         }}
       />
