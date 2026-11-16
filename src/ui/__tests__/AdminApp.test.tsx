@@ -82,9 +82,12 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     rerender(<AdminApp controller={controller} />);
     await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
 
-    expect(await screen.findByRole('button', { name: 'Eventos e Configurações' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Banco de Questões' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Equipe do Estande' })).toBeInTheDocument();
+    const desktopNav = await screen.findByRole('navigation', { name: 'Navegação administrativa' });
+    expect(within(desktopNav).getByRole('button', { name: 'Visão Geral' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Regras & Configurações' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Eventos' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Banco de Questões' })).toBeInTheDocument();
+    expect(within(desktopNav).getByRole('button', { name: 'Equipe do Estande' })).toBeInTheDocument();
 
     // Cadastra novo membro na aba Equipe do Estande, promove e revoga acesso
     await user.click(screen.getByRole('button', { name: 'Equipe do Estande' }));
@@ -107,6 +110,8 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     render(<AdminApp controller={controller} />);
 
     const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+    const desktopNav = await screen.findByRole('navigation', { name: 'Navegação administrativa' });
+    await user.click(within(desktopNav).getByRole('button', { name: 'Regras & Configurações' }));
     expect(await screen.findByDisplayValue('Quiz Interativo CAESB')).toBeInTheDocument();
 
     // Altera percentual Fácil para gerar soma inválida (90%) e valida mensagem de erro
@@ -114,7 +119,7 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     fireEvent.change(facilInput, { target: { value: '30' } });
     expect(screen.getByText(/Soma atual: 90%/i)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'Salvar Evento e Configurações' }));
+    await user.click(screen.getByRole('button', { name: 'Salvar Configurações' }));
     expect(
       await screen.findByText(/soma dos percentuais de dificuldade deve ser exatamente 100%/i),
     ).toBeInTheDocument();
@@ -127,7 +132,7 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(await screen.findByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Alterações Não Salvas' })).toBeInTheDocument();
 
-    // Clicar em "Cancelar" mantém na aba Eventos
+    // Clicar em "Cancelar" mantém na aba Regras & Configurações
     await user.click(screen.getByRole('button', { name: 'Cancelar' }));
     expect(screen.getByDisplayValue('Quiz Interativo CAESB')).toBeInTheDocument();
 
@@ -136,15 +141,16 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.click(await screen.findByRole('button', { name: 'Salvar e Sair' }));
     expect(await screen.findByText('Banco de Questões Central')).toBeInTheDocument();
 
-    // Volta para Eventos e clona o Evento existente
-    await user.click(screen.getByRole('button', { name: 'Eventos e Configurações' }));
-    await user.click(await screen.findByRole('button', { name: 'Clonar Evento' }));
+    // Vai para Eventos e clona o Evento existente
+    await user.click(screen.getByRole('button', { name: 'Eventos' }));
+    const cloneButtons = await screen.findAllByRole('button', { name: 'Clonar Evento' });
+    await user.click(cloneButtons[0]);
     const cloneInput = await screen.findByLabelText('Nome do Novo Evento');
     await user.clear(cloneInput);
     await user.type(cloneInput, 'Feira Sustentável 2026');
     await user.click(screen.getByRole('button', { name: 'Confirmar Clonagem' }));
 
-    expect(await screen.findByText('Feira Sustentável 2026')).toBeInTheDocument();
+    expect((await screen.findAllByText('Feira Sustentável 2026')).length).toBeGreaterThan(0);
   });
 
   it('filtra, pré-visualiza, opera em lote e importa questões no Banco de Questões', async () => {
@@ -249,11 +255,12 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
 
     // Cria um segundo Evento para validar comando SWITCH_EVENT
-    await screen.findByDisplayValue('Quiz Interativo CAESB');
-    await user.click(screen.getByRole('button', { name: '+ Novo Evento' }));
-    await user.type(screen.getByLabelText('Nome do Evento'), 'Expo Água Secundária');
-    await user.click(screen.getByRole('button', { name: 'Salvar Evento e Configurações' }));
-    expect(await screen.findByText('Expo Água Secundária')).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Eventos' }));
+    await user.click(await screen.findByRole('button', { name: 'Novo Evento' }));
+    const newEventDialog = await screen.findByRole('dialog', { name: 'Novo Evento' });
+    await user.type(within(newEventDialog).getByLabelText('Nome do Evento'), 'Expo Água Secundária');
+    await user.click(within(newEventDialog).getByRole('button', { name: 'Criar Evento' }));
+    expect((await screen.findAllByText('Expo Água Secundária')).length).toBeGreaterThan(0);
 
     // Navega para aba Totens e Pareamento
     await user.click(screen.getByRole('button', { name: 'Totens e Pareamento' }));
