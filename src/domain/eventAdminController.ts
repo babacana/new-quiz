@@ -1,3 +1,9 @@
+import { computeAnalyticsDashboard, computeQuestionStatsReport } from './analyticsCalculator';
+import {
+  convertLegacyBackupToDomain,
+  isLegacyQuizOfflineBackup,
+  isPlatformBackupPayload,
+} from './backupMigration';
 import { mergeEventCustomizations } from './customizationThemes';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from './defaults';
 import {
@@ -13,8 +19,11 @@ import {
 import type { Clock, CloudGateway, RandomSource } from './ports';
 import type {
   ActiveGiveUpLockoutItem,
+  AnalyticsDashboardResult,
+  AnalyticsQueryOptions,
   AuthSession,
   AuthorizeTotemPairingInput,
+  BackupRestoreResult,
   CloneEventOverrides,
   CreateStaffAccountInput,
   DifficultyLevel,
@@ -37,11 +46,14 @@ import type {
   ParticipantReportFilterOptions,
   ParticipantReportItem,
   ParticipantSortField,
+  PlatformBackupPayload,
   PreparedOption,
   PreparedQuestion,
   PrizeClaimRecord,
   Question,
   QuestionFilterOptions,
+  QuestionStatsQueryOptions,
+  QuestionStatsResult,
   QuestionUpsertInput,
   QuestionsImportMode,
   QuestionsImportResult,
@@ -1988,5 +2000,205 @@ export class EventAdminController {
     const updated = await this.updateEvent(eventId, { customizations: normalizedPatch });
     this.clearDirty('customization');
     return updated;
+  }
+
+  async queryAnalyticsDashboard(
+    options: AnalyticsQueryOptions = {},
+  ): Promise<AnalyticsDashboardResult> {
+    this.requireAdmin();
+    const scopedEventId =
+      options.eventId && options.eventId !== 'all' ? options.eventId : undefined;
+    const [events, questions, matches] = await Promise.all([
+      this.cloudGateway.listEvents(),
+      this.cloudGateway.listAllQuestions(),
+      this.cloudGateway.listMatches(scopedEventId),
+    ]);
+    const nowMs = this.clock ? this.clock.now() : Date.now();
+    return computeAnalyticsDashboard({ events, questions, matches, options, nowMs });
+  }
+
+  async queryQuestionStats(
+    options: QuestionStatsQueryOptions = {},
+  ): Promise<QuestionStatsResult> {
+    this.requireAdmin();
+    const scopedEventId =
+      options.eventId && options.eventId !== 'all' ? options.eventId : undefined;
+    const [questions, matches] = await Promise.all([
+      this.cloudGateway.listAllQuestions(),
+      this.cloudGateway.listMatches(scopedEventId),
+    ]);
+    return computeQuestionStatsReport({ questions, matches, options });
+  }
+
+  async exportFullBackup(): Promise<string> {
+    this.requireAdmin();
+    const [events, questions, matches, prizeClaims, lockouts] = await Promise.all([
+      this.cloudGateway.listEvents(),
+      this.cloudGateway.listAllQuestions(),
+      this.cloudGateway.listMatches(),
+      this.cloudGateway.listPrizeClaims(),
+      this.cloudGateway.listGiveUpLockouts(),
+    ]);
+
+    const eventQuestionLinks: Record<string, number[]> = {};
+    for (const event of events) {
+      eventQuestionLinks[event.id] = await this.cloudGateway.getEventQuestionIds(event.id);
+    }
+
+    const payload: PlatformBackupPayload = {
+      formatVersion: 1,
+      exportedAt: this.nowIso(),
+      events,
+      eventQuestionLinks,
+      questions,
+      matches,
+      prizeClaims,
+      lockouts,
+    };
+
+    return JSON.stringify(payload, null, 2);
+  }
+
+  async restoreBackup(
+    rawJson: string,
+    options: { targetEventId?: string } = {},
+  ): Promise<BackupRestoreResult> {
+    this.requireAdmin();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      throw new Error('Arquivo JSON de backup inválido ou malformado.');
+    }
+
+    if (isPlatformBackupPayload(parsed)) {
+      const savedQuestions = await this.cloudGateway.replaceAllQuestions(parsed.questions);
+      const savedEventIds: string[] = [];
+      for (const ev of parsed.events) {
+        const bumped: EventConfig = {
+          ...structuredClone(ev),
+          configVersion: ev.configVersion + 1,
+        };
+        const saved = await this.cloudGateway.saveEvent(bumped);
+        savedEventIds.push(saved.id);
+        const linkedIds = parsed.eventQuestionLinks?.[ev.id];
+        if (Array.isArray(linkedIds) && linkedIds.length > 0) {
+          await this.cloudGateway.setEventQuestions(saved.id, linkedIds);
+        }
+      }
+
+      await this.cloudGateway.importOperationalRecords({
+        matches: parsed.matches ?? [],
+        prizeClaims: parsed.prizeClaims ?? [],
+        lockouts: parsed.lockouts ?? [],
+        replaceEventIds: savedEventIds,
+      });
+
+      for (const eventId of savedEventIds) {
+        await this.notifyOperationalEventUpdate(eventId);
+      }
+
+      return {
+        sourceFormat: 'platform',
+        targetEventId: savedEventIds[0] ?? '',
+        importedQuestionsCount: savedQuestions.length,
+        remappedAnswersCount: 0,
+        importedEventsCount: savedEventIds.length,
+        importedMatchesCount: parsed.matches?.length ?? 0,
+        importedPrizeClaimsCount: parsed.prizeClaims?.length ?? 0,
+        importedLockoutsCount: parsed.lockouts?.length ?? 0,
+      };
+    }
+
+    if (isLegacyQuizOfflineBackup(parsed)) {
+      const existingEvents = await this.cloudGateway.listEvents();
+      let targetEvent = options.targetEventId
+        ? existingEvents.find((ev) => ev.id === options.targetEventId)
+        : (existingEvents.find((ev) => ev.isActive) ?? existingEvents[0]);
+
+      if (!targetEvent) {
+        targetEvent = await this.createEvent({
+          name: parsed.quizCurrentEvent?.eventName?.trim() || 'Evento Migrado (quiz-offline)',
+          isActive: true,
+        });
+      }
+
+      const migrated = convertLegacyBackupToDomain({
+        legacy: parsed,
+        targetEvent,
+        random: this.random,
+        nowIso: this.nowIso(),
+      });
+
+      const existingQuestions = await this.cloudGateway.listAllQuestions();
+      const existingByText = new Map(
+        existingQuestions.map((question) => [question.text.trim().toLowerCase(), question]),
+      );
+      let nextCentralId = existingQuestions.reduce(
+        (maxId, question) => Math.max(maxId, question.id),
+        0,
+      );
+
+      const legacyToCentralId = new Map<number, number>();
+      const linkedQuestionIds: number[] = [];
+
+      for (const question of migrated.questions) {
+        const existingMatch = existingByText.get(question.text.trim().toLowerCase());
+        if (existingMatch) {
+          legacyToCentralId.set(question.id, existingMatch.id);
+          linkedQuestionIds.push(existingMatch.id);
+        } else {
+          nextCentralId += 1;
+          const savedQuestion = await this.cloudGateway.saveQuestion({
+            ...question,
+            id: nextCentralId,
+          });
+          existingByText.set(savedQuestion.text.trim().toLowerCase(), savedQuestion);
+          legacyToCentralId.set(question.id, savedQuestion.id);
+          linkedQuestionIds.push(savedQuestion.id);
+        }
+      }
+
+      const remappedMatches = migrated.matches.map((match) => ({
+        ...match,
+        answers: match.answers.map((answer) => ({
+          ...answer,
+          questionId: legacyToCentralId.get(answer.questionId) ?? answer.questionId,
+        })),
+      }));
+
+      await this.cloudGateway.saveEvent(migrated.updatedEvent);
+      await this.cloudGateway.setEventQuestions(
+        migrated.updatedEvent.id,
+        Array.from(new Set(linkedQuestionIds)),
+      );
+
+      await this.cloudGateway.importOperationalRecords({
+        matches: remappedMatches,
+        prizeClaims: migrated.prizeClaims,
+        lockouts: migrated.lockouts,
+        replaceEventIds: [migrated.updatedEvent.id],
+      });
+
+      await this.dispatchConfigUpdatedForEvent(
+        migrated.updatedEvent.id,
+        migrated.updatedEvent.configVersion,
+      );
+
+      return {
+        sourceFormat: 'legacy_quiz_offline',
+        targetEventId: migrated.updatedEvent.id,
+        importedQuestionsCount: migrated.questions.length,
+        remappedAnswersCount: migrated.remappedAnswersCount,
+        importedEventsCount: 1,
+        importedMatchesCount: migrated.matches.length,
+        importedPrizeClaimsCount: migrated.prizeClaims.length,
+        importedLockoutsCount: migrated.lockouts.length,
+      };
+    }
+
+    throw new Error(
+      'Formato de backup não reconhecido. Envie um JSON exportado por esta plataforma ou pelo quiz-offline.',
+    );
   }
 }

@@ -692,3 +692,123 @@ export interface OperatorEventSnapshot {
   activeLockouts: GiveUpLockoutRecord[];
   offlineConflicts: OfflinePrizeConflictAlert[];
 }
+
+// Tipos de Dashboard Analítico, Estatísticas de Questões e Backup/Migração Legada (T8)
+export type AnalyticsPeriodPreset =
+  | 'today'
+  | 'last_3_days'
+  | 'last_7_days'
+  | 'last_30_days'
+  | 'custom'
+  | 'all';
+
+export type QuestionAnalysisMetric =
+  | 'difficulty'
+  | 'easiness'
+  | 'most_answered'
+  | 'least_answered';
+
+export interface AnalyticsQueryOptions {
+  eventId?: string;
+  period?: AnalyticsPeriodPreset;
+  startDate?: string;
+  endDate?: string;
+  questionMetric?: QuestionAnalysisMetric;
+  questionPage?: number;
+  questionPageSize?: number;
+}
+
+export interface AnalyticsKpis {
+  totalParticipations: number;
+  averageScore: number;
+  averageTimeSeconds: number;
+  successRatePercent: number;
+}
+
+export interface AnalyticsDailySeriesItem {
+  date: string;
+  count: number;
+}
+
+export interface AnalyticsScoreBucket {
+  score: number;
+  count: number;
+}
+
+export interface AnalyticsHourlyBucket {
+  hour: number;
+  count: number;
+}
+
+export interface AnalyticsQuestionStatItem {
+  questionId: number;
+  text: string;
+  difficulty: DifficultyLevel;
+  isDisabled: boolean;
+  totalAnswers: number;
+  correctAnswers: number;
+  incorrectAnswers: number;
+  accuracyPercent: number;
+}
+
+export interface AnalyticsDashboardResult {
+  kpis: AnalyticsKpis;
+  participationsOverTime: AnalyticsDailySeriesItem[];
+  scoreDistribution: AnalyticsScoreBucket[];
+  hourlyEngagement: AnalyticsHourlyBucket[];
+  questionAnalysis: {
+    items: AnalyticsQuestionStatItem[];
+    totalItems: number;
+    page: number;
+    pageSize: number;
+    totalPages: number;
+  };
+}
+
+export type QuestionStatsSortField =
+  | 'id'
+  | 'text'
+  | 'totalAnswers'
+  | 'correctAnswers'
+  | 'incorrectAnswers'
+  | 'accuracyPercent';
+
+export interface QuestionStatsQueryOptions {
+  eventId?: string;
+  sortBy?: QuestionStatsSortField;
+  sortDirection?: SortDirection;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface QuestionStatsResult {
+  overallAverageScore: number;
+  totalParticipations: number;
+  items: AnalyticsQuestionStatItem[];
+  totalItems: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export interface PlatformBackupPayload {
+  formatVersion: 1;
+  exportedAt: string;
+  events: EventConfig[];
+  eventQuestionLinks: Record<string, number[]>;
+  questions: Question[];
+  matches: MatchRecord[];
+  prizeClaims: PrizeClaimRecord[];
+  lockouts: GiveUpLockoutRecord[];
+}
+
+export interface BackupRestoreResult {
+  sourceFormat: 'platform' | 'legacy_quiz_offline';
+  targetEventId: string;
+  importedQuestionsCount: number;
+  remappedAnswersCount: number;
+  importedEventsCount: number;
+  importedMatchesCount: number;
+  importedPrizeClaimsCount: number;
+  importedLockoutsCount: number;
+}

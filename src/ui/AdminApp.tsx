@@ -8,8 +8,11 @@ import type {
   UnsavedChangesResolution,
   UnsavedNavigationPrompt,
 } from '../domain/types';
+import { AdminAnalyticsTab } from './AdminAnalyticsTab';
+import { AdminBackupTab } from './AdminBackupTab';
 import { AdminCustomizationTab } from './AdminCustomizationTab';
 import { AdminEventsTab } from './AdminEventsTab';
+import { AdminQuestionStatsTab } from './AdminQuestionStatsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
 import { AdminReportsTab } from './AdminReportsTab';
 import { AdminStaffTab } from './AdminStaffTab';
@@ -20,7 +23,16 @@ import { OperatorPanel } from './OperatorPanel';
 import { createDefaultCloudGateway } from './cloudFactory';
 import './styles.css';
 
-type AdminTabId = 'events' | 'customization' | 'reports' | 'questions' | 'totems' | 'staff';
+type AdminTabId =
+  | 'events'
+  | 'customization'
+  | 'reports'
+  | 'analytics'
+  | 'question-stats'
+  | 'questions'
+  | 'totems'
+  | 'backup'
+  | 'staff';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -441,6 +453,20 @@ export function AdminApp({
             </button>
             <button
               type="button"
+              className={`admin-tab-btn ${activeTab === 'analytics' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'analytics' })}
+            >
+              Dashboard Analítico
+            </button>
+            <button
+              type="button"
+              className={`admin-tab-btn ${activeTab === 'question-stats' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'question-stats' })}
+            >
+              Estatísticas de Questões
+            </button>
+            <button
+              type="button"
               className={`admin-tab-btn ${activeTab === 'questions' ? 'active' : ''}`}
               onClick={() => requestGuardedAction({ type: 'tab', tab: 'questions' })}
             >
@@ -452,6 +478,13 @@ export function AdminApp({
               onClick={() => requestGuardedAction({ type: 'tab', tab: 'totems' })}
             >
               Totens e Pareamento
+            </button>
+            <button
+              type="button"
+              className={`admin-tab-btn ${activeTab === 'backup' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'backup' })}
+            >
+              Backup e Migração
             </button>
             <button
               type="button"
@@ -493,6 +526,34 @@ export function AdminApp({
               controller={controller}
               events={events}
               onEventsChanged={() => loadWorkspaceData()}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'analytics' && (
+            <AdminAnalyticsTab
+              controller={controller}
+              events={events}
+              allQuestions={allQuestions}
+              onQuestionsChanged={() => loadWorkspaceData()}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'question-stats' && (
+            <AdminQuestionStatsTab
+              controller={controller}
+              events={events}
+              onQuestionsChanged={() => loadWorkspaceData()}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'backup' && (
+            <AdminBackupTab
+              controller={controller}
+              events={events}
+              onWorkspaceRestored={() => loadWorkspaceData()}
               onStatusMessage={handleStatusMessage}
             />
           )}

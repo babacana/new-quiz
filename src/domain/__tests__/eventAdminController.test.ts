@@ -1439,4 +1439,341 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       ).rejects.toThrow(/Administrador/i);
     });
   });
+
+  describe('T8 - Slice 1: Dashboard Analítico e Estatísticas por Questão', () => {
+    it('calcula KPIs, agregações por dia/pontuação/hora, filtros de período e estatísticas por questão', async () => {
+      const clock = new FakeClock('2026-11-16T15:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const event = await adminController.createEvent({
+        name: 'Evento Analítico T8',
+        isActive: true,
+        settings: { numberOfQuestions: 3, minScoreForPrize: 2 },
+      });
+
+      const makeAnswer = (questionId: number, isCorrect: boolean) => ({
+        questionId,
+        questionText: `Questão ${questionId}`,
+        options: ['A', 'B', 'C', 'D'] as [string, string, string, string],
+        selectedOptionText: isCorrect ? 'A' : 'B',
+        correctOptionIndex: 0,
+        correctOptionText: 'A',
+        isCorrect,
+      });
+
+      // Hoje (2026-11-16): 2 Partidas -> 1 atingiu minScoreForPrize (3 pts, 20s) e 1 não atingiu (1 pt, 40s)
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'an-1',
+        match: {
+          id: 'an-match-1',
+          eventId: event.id,
+          totemId: 'totem-1',
+          participantName: 'ANA ANALITICA',
+          participantPhone: '(61) 99001-0001',
+          score: 3,
+          totalQuestions: 3,
+          timeSeconds: 20,
+          answers: [makeAnswer(1, true), makeAnswer(2, true), makeAnswer(3, true)],
+          playedAt: '2026-11-16T10:00:00.000Z',
+        },
+        prizeClaim: null,
+      });
+
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'an-2',
+        match: {
+          id: 'an-match-2',
+          eventId: event.id,
+          totemId: 'totem-1',
+          participantName: 'BRUNO ANALITICO',
+          participantPhone: '(61) 99001-0002',
+          score: 1,
+          totalQuestions: 3,
+          timeSeconds: 40,
+          answers: [makeAnswer(1, true), makeAnswer(2, false), makeAnswer(3, false)],
+          playedAt: '2026-11-16T10:30:00.000Z',
+        },
+        prizeClaim: null,
+      });
+
+      // 5 dias atrás (2026-11-11): 1 Partida com 2 pts, 30s
+      await cloudGateway.pushMatch({
+        idempotencyKey: 'an-3',
+        match: {
+          id: 'an-match-3',
+          eventId: event.id,
+          totemId: 'totem-1',
+          participantName: 'CARLA ANTIGA',
+          participantPhone: '(61) 99001-0003',
+          score: 2,
+          totalQuestions: 3,
+          timeSeconds: 30,
+          answers: [makeAnswer(1, false), makeAnswer(2, true)],
+          playedAt: '2026-11-11T14:00:00.000Z',
+        },
+        prizeClaim: null,
+      });
+
+      // Filtro 'today' considera apenas as 2 Partidas de 2026-11-16
+      const todayDashboard = await adminController.queryAnalyticsDashboard({
+        eventId: event.id,
+        period: 'today',
+        questionMetric: 'difficulty',
+      });
+      expect(todayDashboard.kpis.totalParticipations).toBe(2);
+      expect(todayDashboard.kpis.averageScore).toBe(2);
+      expect(todayDashboard.kpis.averageTimeSeconds).toBe(30);
+      expect(todayDashboard.kpis.successRatePercent).toBe(50);
+
+      // Filtro 'last_7_days' inclui todas as 3 Partidas
+      const weekDashboard = await adminController.queryAnalyticsDashboard({
+        eventId: event.id,
+        period: 'last_7_days',
+        questionMetric: 'difficulty',
+      });
+      expect(weekDashboard.kpis.totalParticipations).toBe(3);
+      expect(weekDashboard.kpis.averageScore).toBe(2);
+      expect(weekDashboard.kpis.averageTimeSeconds).toBe(30);
+      expect(weekDashboard.kpis.successRatePercent).toBeCloseTo(66.67, 1);
+
+      expect(weekDashboard.participationsOverTime).toEqual([
+        { date: '2026-11-11', count: 1 },
+        { date: '2026-11-16', count: 2 },
+      ]);
+      expect(weekDashboard.scoreDistribution.find((b) => b.score === 3)?.count).toBe(1);
+      expect(weekDashboard.scoreDistribution.find((b) => b.score === 2)?.count).toBe(1);
+      expect(weekDashboard.scoreDistribution.find((b) => b.score === 1)?.count).toBe(1);
+      expect(weekDashboard.hourlyEngagement).toHaveLength(24);
+      expect(
+        weekDashboard.hourlyEngagement.reduce((sum, bucket) => sum + bucket.count, 0),
+      ).toBe(3);
+
+      // Questão 3 teve 1 acerto de 2 respostas (50%) -> mais difícil entre respondidas
+      expect(weekDashboard.questionAnalysis.items[0]?.questionId).toBe(3);
+      expect(weekDashboard.questionAnalysis.items[0]?.accuracyPercent).toBe(50);
+
+      // Estatísticas de Questões
+      const stats = await adminController.queryQuestionStats({
+        eventId: event.id,
+        sortBy: 'totalAnswers',
+        sortDirection: 'desc',
+        page: 1,
+        pageSize: 5,
+      });
+      expect(stats.totalParticipations).toBe(3);
+      expect(stats.overallAverageScore).toBe(2);
+      expect(stats.items[0]?.totalAnswers).toBe(3);
+      expect(stats.items[0]?.correctAnswers).toBe(2);
+      expect(stats.items[0]?.incorrectAnswers).toBe(1);
+    });
+  });
+
+  describe('T8 - Slice 2: Backup Completo e Migração de Backups Legados (quiz-offline)', () => {
+    it('exporta backup completo da plataforma e restaura integralmente em outro ambiente', async () => {
+      const clock = new FakeClock('2026-11-16T16:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const sourceGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+      const sourceController = new EventAdminController({
+        cloudGateway: sourceGateway,
+        clock,
+        random,
+      });
+      await sourceController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const customEvent = await sourceController.createEvent({
+        name: 'Evento Backup Origem',
+        isActive: true,
+        settings: { numberOfQuestions: 2, minScoreForPrize: 1 },
+      });
+      await sourceGateway.pushMatch({
+        idempotencyKey: 'bk-1',
+        match: {
+          id: 'bk-match-1',
+          eventId: customEvent.id,
+          totemId: 'totem-1',
+          participantName: 'MARIANA BACKUP',
+          participantPhone: '(61) 99123-0001',
+          score: 2,
+          totalQuestions: 2,
+          timeSeconds: 14,
+          answers: [],
+          playedAt: '2026-11-16T15:30:00.000Z',
+        },
+        prizeClaim: {
+          id: 'bk-claim-1',
+          eventId: customEvent.id,
+          matchId: 'bk-match-1',
+          totemId: 'totem-1',
+          participantName: 'MARIANA BACKUP',
+          participantPhone: '(61) 99123-0001',
+          status: 'delivered',
+          awardedAt: '2026-11-16T15:30:00.000Z',
+          deliveredAt: '2026-11-16T15:31:00.000Z',
+        },
+      });
+
+      const backupJson = await sourceController.exportFullBackup();
+
+      // Restaura em um gateway limpo
+      const targetGateway = new InMemoryCloudGateway({
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      const targetController = new EventAdminController({
+        cloudGateway: targetGateway,
+        clock,
+        random,
+      });
+      await targetController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const restoreResult = await targetController.restoreBackup(backupJson);
+      expect(restoreResult.sourceFormat).toBe('platform');
+      expect(restoreResult.importedMatchesCount).toBe(1);
+      expect(restoreResult.importedPrizeClaimsCount).toBe(1);
+
+      const restoredReports = await targetController.queryParticipantReports({
+        eventId: customEvent.id,
+      });
+      expect(restoredReports.items.map((item) => item.participantName)).toEqual(['MARIANA BACKUP']);
+    });
+
+    it('importa backup legado do quiz-offline (FITABES 2025), remapeando IDs de questões e Respostas e vinculando ao Evento destino', async () => {
+      const clock = new FakeClock('2026-11-16T16:30:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+      const initialQuestionsCount = (await adminController.listAllQuestions()).length;
+
+      const targetEvent = await adminController.createEvent({
+        name: 'FITABES 2025 Migrado',
+        isActive: true,
+      });
+
+      const legacyFitabesPayload = {
+        quizQuestions: [
+          {
+            id: 'q1',
+            text: 'O que significa a sigla Caesb?',
+            options: [
+              'Companhia de Águas e Esgotos de Brasília',
+              'Companhia de Saneamento Ambiental do Distrito Federal',
+              'Companhia de Abastecimento e Saneamento de Brasília',
+              'Centro de Águas e Saneamento Básico',
+            ],
+            correct: 1,
+            isDisabled: false,
+            difficulty: 'facil',
+          },
+          {
+            id: 'q_imported_1748196578081_4',
+            text: 'Como é carinhosamente apelidado o Lago Paranoá?',
+            options: [
+              'Mar de Brasília',
+              'Piscinão do Cerrado',
+              'Lagoa dos Candangos',
+              'Praia do Planalto',
+            ],
+            correct: 0,
+            isDisabled: false,
+            difficulty: 'moderado',
+          },
+        ],
+        quizParticipants: [
+          {
+            name: 'ANDRE LEGADO',
+            phone: '(61) 98339-1090',
+            score: 2,
+            time: 42,
+            timestamp: '2025-05-25T22:07:29.009Z',
+            playerAttempts: [
+              {
+                questionId: 'q1',
+                questionText: 'O que significa a sigla Caesb?',
+                options: [
+                  'Companhia de Águas e Esgotos de Brasília',
+                  'Companhia de Saneamento Ambiental do Distrito Federal',
+                  'Companhia de Abastecimento e Saneamento de Brasília',
+                  'Centro de Águas e Saneamento Básico',
+                ],
+                selectedOptionText: 'Companhia de Saneamento Ambiental do Distrito Federal',
+                correctOptionIndex: 1,
+                correctOptionText: 'Companhia de Saneamento Ambiental do Distrito Federal',
+                isCorrect: true,
+              },
+              {
+                questionId: 'q_imported_1748196578081_4',
+                questionText: 'Como é carinhosamente apelidado o Lago Paranoá?',
+                options: [
+                  'Mar de Brasília',
+                  'Piscinão do Cerrado',
+                  'Lagoa dos Candangos',
+                  'Praia do Planalto',
+                ],
+                selectedOptionText: 'Mar de Brasília',
+                correctOptionIndex: 0,
+                correctOptionText: 'Mar de Brasília',
+                isCorrect: true,
+              },
+            ],
+          },
+        ],
+        quizSettings: {
+          numberOfQuestions: 2,
+          minScoreForPrize: 2,
+          enablePrizeLock: true,
+        },
+        quizCurrentEvent: {
+          eventName: 'FITABES 2025 - Dia 3 (Tarde)',
+          startTime: '2025-05-29T14:30',
+          endTime: '2025-05-29T18:00',
+          enableOutOfPeriodMessage: false,
+        },
+        quizPrizeWinnersData: [
+          { phone: '(61) 98339-1090', timestamp: '2025-05-25T22:07:29.009Z' },
+        ],
+        quizGiveUpLockoutData: [
+          {
+            phone: '(61) 98111-2222',
+            lockedAt: '2025-05-25T22:10:00.000Z',
+            expiresAt: '2025-05-25T22:20:00.000Z',
+          },
+        ],
+        quizThemeCustomizations: {
+          colors: { quizMainBackground: '#001122' },
+        },
+      };
+
+      const result = await adminController.restoreBackup(JSON.stringify(legacyFitabesPayload), {
+        targetEventId: targetEvent.id,
+      });
+
+      expect(result.sourceFormat).toBe('legacy_quiz_offline');
+      expect(result.targetEventId).toBe(targetEvent.id);
+      expect(result.importedQuestionsCount).toBe(2);
+      expect(result.remappedAnswersCount).toBe(2);
+      expect(result.importedMatchesCount).toBe(1);
+      expect(result.importedPrizeClaimsCount).toBe(1);
+      expect(result.importedLockoutsCount).toBe(1);
+
+      const questions = await adminController.listAllQuestions();
+      // Preserva as questões originais do Banco Central e adiciona apenas a questão nova.
+      const expectedNewId = initialQuestionsCount + 1;
+      expect(questions).toHaveLength(expectedNewId);
+      const linkedIds = await cloudGateway.getEventQuestionIds(targetEvent.id);
+      expect(linkedIds).toEqual([1, expectedNewId]);
+
+      const matches = await cloudGateway.listMatches(targetEvent.id);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.answers.map((a) => a.questionId)).toEqual([1, expectedNewId]);
+
+      const analytics = await adminController.queryAnalyticsDashboard({ eventId: targetEvent.id });
+      expect(analytics.kpis.totalParticipations).toBe(1);
+      expect(analytics.kpis.successRatePercent).toBe(100);
+    });
+  });
 });

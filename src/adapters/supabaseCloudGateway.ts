@@ -1382,4 +1382,90 @@ export class SupabaseCloudGateway implements CloudGateway {
       mimeType,
     };
   }
+
+  async importOperationalRecords(payload: {
+    matches: MatchRecord[];
+    prizeClaims: PrizeClaimRecord[];
+    lockouts: GiveUpLockoutRecord[];
+    replaceEventIds?: string[];
+  }): Promise<void> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para importar registros de backup.');
+    }
+
+    const replaceIds = Array.from(new Set(payload.replaceEventIds ?? []));
+    if (replaceIds.length > 0) {
+      const { error: delClaimsErr } = await this.client
+        .from('prize_claims')
+        .delete()
+        .in('event_id', replaceIds);
+      if (delClaimsErr) {
+        throw new Error(`Erro ao limpar Brindes antes da restauração: ${delClaimsErr.message}`);
+      }
+      const { error: delMatchesErr } = await this.client
+        .from('matches')
+        .delete()
+        .in('event_id', replaceIds);
+      if (delMatchesErr) {
+        throw new Error(`Erro ao limpar Partidas antes da restauração: ${delMatchesErr.message}`);
+      }
+      const { error: delLockoutsErr } = await this.client
+        .from('give_up_lockouts')
+        .delete()
+        .in('event_id', replaceIds);
+      if (delLockoutsErr) {
+        throw new Error(
+          `Erro ao limpar bloqueios antes da restauração: ${delLockoutsErr.message}`,
+        );
+      }
+    }
+
+    if (payload.matches.length > 0) {
+      const syncedAt = new Date().toISOString();
+      const matchRows = payload.matches.map((match) => ({
+        id: match.id,
+        event_id: match.eventId,
+        totem_id: match.totemId,
+        participant_name: match.participantName,
+        participant_phone: match.participantPhone,
+        score: match.score,
+        total_questions: match.totalQuestions,
+        time_seconds: match.timeSeconds,
+        answers: match.answers,
+        played_at: match.playedAt,
+        synced_at: match.syncedAt ?? syncedAt,
+      }));
+      const { error } = await this.client.from('matches').upsert(matchRows, { onConflict: 'id' });
+      if (error) {
+        throw new Error(`Erro ao importar Partidas do backup: ${error.message}`);
+      }
+    }
+
+    if (payload.prizeClaims.length > 0) {
+      const claimRows = payload.prizeClaims.map((claim) => this.mapPrizeClaimToInsertRow(claim));
+      const { error } = await this.client
+        .from('prize_claims')
+        .upsert(claimRows, { onConflict: 'id' });
+      if (error) {
+        throw new Error(`Erro ao importar Brindes do backup: ${error.message}`);
+      }
+    }
+
+    if (payload.lockouts.length > 0) {
+      const lockoutRows = payload.lockouts.map((lockout) => ({
+        id: lockout.id,
+        event_id: lockout.eventId,
+        totem_id: lockout.totemId,
+        participant_phone: lockout.participantPhone,
+        locked_at: lockout.lockedAt,
+        expires_at: lockout.expiresAt,
+      }));
+      const { error } = await this.client
+        .from('give_up_lockouts')
+        .upsert(lockoutRows, { onConflict: 'id' });
+      if (error) {
+        throw new Error(`Erro ao importar bloqueios do backup: ${error.message}`);
+      }
+    }
+  }
 }

@@ -634,4 +634,116 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.click(within(simDialog).getByRole('button', { name: 'Fechar Simulador' }));
     expect(document.getElementById('dev-simulator-window')).not.toBeInTheDocument();
   });
+
+  it('exibe Dashboard Analítico, Estatísticas de Questões e importa backup legado quiz-offline (T8)', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+
+    await cloudGateway.pushMatch({
+      idempotencyKey: 't8-ui-1',
+      match: {
+        id: 't8-match-1',
+        eventId: DEFAULT_EVENT_ID,
+        totemId: 'totem-1',
+        participantName: 'VICTOR ANALITICO',
+        participantPhone: '(61) 99777-8888',
+        score: 8,
+        totalQuestions: 10,
+        timeSeconds: 40,
+        answers: [
+          {
+            questionId: 1,
+            questionText: 'O que significa a sigla Caesb?',
+            options: ['A', 'B', 'C', 'D'],
+            selectedOptionText: 'B',
+            correctOptionIndex: 1,
+            correctOptionText: 'B',
+            isCorrect: true,
+          },
+        ],
+        playedAt: '2026-11-16T10:00:00.000Z',
+      },
+      prizeClaim: null,
+    });
+
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    // Dashboard Analítico
+    await user.click(await screen.findByRole('button', { name: 'Dashboard Analítico' }));
+    expect(await screen.findByRole('heading', { name: 'Dashboard Analítico' })).toBeInTheDocument();
+    expect(await screen.findByText('Participações ao Longo do Tempo')).toBeInTheDocument();
+    expect(screen.getByText('Distribuição de Pontuações')).toBeInTheDocument();
+    expect(screen.getByText('Engajamento por Hora do Dia')).toBeInTheDocument();
+
+    // Clica na linha da questão para abrir detalhes, edita e fecha
+    const q1Row = await screen.findByText(/O que significa a sigla Caesb\?/i);
+    await user.click(q1Row);
+    const qModal = await screen.findByRole('dialog');
+    expect(within(qModal).getByText(/Detalhes da Questão #1/i)).toBeInTheDocument();
+    await user.click(within(qModal).getByRole('button', { name: 'Editar Questão' }));
+    await user.click(within(qModal).getByRole('button', { name: 'Salvar Edição' }));
+    expect(await screen.findByText(/Questão #1 atualizada com sucesso/i)).toBeInTheDocument();
+    await user.click(within(qModal).getByRole('button', { name: 'Fechar' }));
+
+    // Estatísticas de Questões + botão direto Desabilitar
+    await user.click(screen.getByRole('button', { name: 'Estatísticas de Questões' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Estatísticas de Questões' }),
+    ).toBeInTheDocument();
+    const disableBtns = await screen.findAllByRole('button', { name: 'Desabilitar' });
+    await user.click(disableBtns[0]!);
+    expect(await screen.findByText(/desabilitada com sucesso/i)).toBeInTheDocument();
+
+    // Backup e Migração Legada
+    const exportSpy = vi.spyOn(controller, 'exportFullBackup');
+    await user.click(screen.getByRole('button', { name: 'Backup e Migração' }));
+    expect(
+      await screen.findByRole('heading', {
+        name: /Backup, Restauração e Migração Legada/i,
+      }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Exportar Backup Completo (JSON)' }));
+    expect(exportSpy).toHaveBeenCalled();
+    expect(await screen.findByText(/Backup completo exportado em JSON/i)).toBeInTheDocument();
+
+    const legacyJson = JSON.stringify({
+      quizQuestions: [
+        {
+          id: 'q1',
+          text: 'Questão Legada UI',
+          options: ['A', 'B', 'C', 'D'],
+          correct: 0,
+          difficulty: 'facil',
+        },
+      ],
+      quizParticipants: [
+        {
+          name: 'PAULO LEGADO UI',
+          phone: '(61) 99666-0001',
+          score: 1,
+          time: 12,
+          timestamp: '2025-05-25T15:00:00.000Z',
+          playerAttempts: [
+            {
+              questionId: 'q1',
+              selectedOptionText: 'A',
+              isCorrect: true,
+            },
+          ],
+        },
+      ],
+      quizSettings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+    });
+
+    const backupFile = new File([legacyJson], 'fitabes-2025.json', {
+      type: 'application/json',
+    });
+    await user.upload(screen.getByLabelText('Arquivo de Backup (JSON)'), backupFile);
+    await user.click(screen.getByRole('button', { name: 'Restaurar Backup' }));
+
+    const confirmModal = await screen.findByRole('dialog');
+    await user.click(within(confirmModal).getByRole('button', { name: 'Confirmar Restauração' }));
+    expect(await screen.findByText(/Backup legado migrado: 1 questão\(ões\)/i)).toBeInTheDocument();
+  });
 });

@@ -860,4 +860,62 @@ export class InMemoryCloudGateway implements CloudGateway {
     }
     return structuredClone(stored);
   }
+
+  async importOperationalRecords(payload: {
+    matches: MatchRecord[];
+    prizeClaims: PrizeClaimRecord[];
+    lockouts: GiveUpLockoutRecord[];
+    replaceEventIds?: string[];
+  }): Promise<void> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para importar registros de backup.');
+    }
+
+    const replaceSet = new Set(payload.replaceEventIds ?? []);
+    if (replaceSet.size > 0) {
+      for (const [key, entry] of this.syncedMatchesByIdempotencyKey.entries()) {
+        if (replaceSet.has(entry.match.eventId)) {
+          this.syncedMatchesByIdempotencyKey.delete(key);
+        }
+      }
+      for (const eventId of replaceSet) {
+        this.prizeClaimsByEvent.delete(eventId);
+      }
+      for (const [key, lockout] of this.lockoutsByIdempotencyKey.entries()) {
+        if (replaceSet.has(lockout.eventId)) {
+          this.lockoutsByIdempotencyKey.delete(key);
+        }
+      }
+    }
+
+    const syncedAt = this.nowIso();
+    for (const match of payload.matches) {
+      const persisted: MatchRecord = {
+        ...structuredClone(match),
+        syncedAt: match.syncedAt ?? syncedAt,
+      };
+      this.syncedMatchesByIdempotencyKey.set(persisted.id, {
+        match: persisted,
+        resolvedPrizeClaim: null,
+        prizeStockRemaining: null,
+      });
+    }
+
+    for (const claim of payload.prizeClaims) {
+      const list = this.prizeClaimsByEvent.get(claim.eventId) ?? [];
+      const idx = list.findIndex((item) => item.id === claim.id);
+      if (idx >= 0) {
+        list[idx] = structuredClone(claim);
+      } else {
+        list.push(structuredClone(claim));
+      }
+      this.prizeClaimsByEvent.set(claim.eventId, list);
+    }
+
+    for (const lockout of payload.lockouts) {
+      this.lockoutsByIdempotencyKey.set(lockout.id, structuredClone(lockout));
+    }
+
+    await this.emitChannelEvent({ type: 'OPERATIONAL_DATA_UPDATED' });
+  }
 }
