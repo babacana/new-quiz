@@ -1,4 +1,6 @@
 import type {
+  AuthSession,
+  CreateStaffAccountInput,
   EventConfig,
   GiveUpLockoutRecord,
   MatchRecord,
@@ -6,6 +8,7 @@ import type {
   Question,
   SyncQueueItem,
   TotemConfigSnapshot,
+  UserProfile,
 } from './types';
 
 // Fonte determinística de tempo para permitir testes sem dependência de timers reais.
@@ -68,4 +71,26 @@ export interface CloudGateway {
     idempotencyKey: string;
     lockout: GiveUpLockoutRecord;
   }): Promise<{ syncedAt: string }>;
+
+  // Autenticação e gestão da Equipe do Estande (Administrador e Operador)
+  authenticate(email: string, password: string): Promise<AuthSession>;
+  signOut(): Promise<void>;
+  getCurrentSession(): Promise<AuthSession | null>;
+  listStaffProfiles(): Promise<UserProfile[]>;
+  createStaffProfile(input: CreateStaffAccountInput): Promise<UserProfile>;
+  updateStaffProfileRole(profileId: string, role: UserProfile['role']): Promise<UserProfile>;
+  deleteStaffProfile(profileId: string): Promise<void>;
+
+  // Gestão Multi-Evento e vínculos com o Banco de Questões Central
+  listEvents(): Promise<EventConfig[]>;
+  saveEvent(event: EventConfig): Promise<EventConfig>;
+  getEventQuestionIds(eventId: string): Promise<number[]>;
+  setEventQuestions(eventId: string, questionIds: number[]): Promise<void>;
+
+  // Operações no Banco de Questões Central
+  listAllQuestions(): Promise<Question[]>;
+  saveQuestion(question: Question): Promise<Question>;
+  deleteQuestions(ids: number[]): Promise<number>;
+  setQuestionsDisabled(ids: number[], isDisabled: boolean): Promise<number>;
+  replaceAllQuestions(questions: Question[]): Promise<Question[]>;
 }

@@ -2,6 +2,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from '../domain/defaults';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
+  AuthSession,
+  CreateStaffAccountInput,
   DifficultyLevel,
   EventConfig,
   EventCustomizations,
@@ -12,7 +14,17 @@ import type {
   PrizeClaimRecord,
   PrizeClaimStatus,
   Question,
+  UserProfile,
+  UserRole,
 } from '../domain/types';
+
+interface SupabaseProfileRow {
+  id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  created_at: string;
+}
 
 interface SupabaseEventRow {
   id: string;
@@ -76,8 +88,12 @@ interface SupabaseLockoutRow {
 // Adaptador de nuvem apoiado no Supabase Postgres para sincronização do Totem.
 export class SupabaseCloudGateway implements CloudGateway {
   private readonly client: SupabaseClient;
+  private readonly supabaseUrl: string;
+  private readonly supabaseAnonKey: string;
 
   constructor(supabaseUrl: string, supabaseAnonKey: string) {
+    this.supabaseUrl = supabaseUrl;
+    this.supabaseAnonKey = supabaseAnonKey;
     this.client = createClient(supabaseUrl, supabaseAnonKey);
   }
 
@@ -250,10 +266,9 @@ export class SupabaseCloudGateway implements CloudGateway {
               status: 'revoked',
               deliveredAt: null,
             };
-            await this.client
-              .from('prize_claims')
-              .update({ status: 'revoked', delivered_at: null })
-              .eq('id', revokedClaim.id);
+            await this.client.rpc('revoke_exhausted_prize_claim', {
+              p_claim_id: revokedClaim.id,
+            });
             resolvedPrizeClaim = revokedClaim;
             prizeStockRemaining = 0;
           } else {
@@ -389,5 +404,334 @@ export class SupabaseCloudGateway implements CloudGateway {
       tags: row.tags ?? [],
       isDisabled: row.is_disabled,
     };
+  }
+
+  private mapProfileRow(row: SupabaseProfileRow): UserProfile {
+    return {
+      id: row.id,
+      name: row.name,
+      email: row.email,
+      role: row.role,
+      createdAt: row.created_at,
+    };
+  }
+
+  async authenticate(email: string, password: string): Promise<AuthSession> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para autenticar.');
+    }
+
+    const { data, error } = await this.client.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+
+    if (error || !data.user || !data.session) {
+      throw new Error(`Falha na autenticação: ${error?.message ?? 'credenciais inválidas.'}`);
+    }
+
+    const { data: profileRow, error: profileError } = await this.client
+      .from('profiles')
+      .select('*')
+      .eq('id', data.user.id)
+      .maybeSingle<SupabaseProfileRow>();
+
+    if (profileError || !profileRow) {
+      throw new Error(
+        `Perfil da Equipe do Estande não encontrado: ${profileError?.message ?? 'sem registro em profiles.'}`,
+      );
+    }
+
+    return {
+      user: this.mapProfileRow(profileRow),
+      accessToken: data.session.access_token,
+      authenticatedAt: new Date().toISOString(),
+    };
+  }
+
+  async signOut(): Promise<void> {
+    const { error } = await this.client.auth.signOut();
+    if (error) {
+      throw new Error(`Erro ao encerrar sessão no Supabase: ${error.message}`);
+    }
+  }
+
+  async getCurrentSession(): Promise<AuthSession | null> {
+    const { data, error } = await this.client.auth.getSession();
+    if (error || !data.session?.user) {
+      return null;
+    }
+
+    const { data: profileRow } = await this.client
+      .from('profiles')
+      .select('*')
+      .eq('id', data.session.user.id)
+      .maybeSingle<SupabaseProfileRow>();
+
+    if (!profileRow) {
+      return null;
+    }
+
+    return {
+      user: this.mapProfileRow(profileRow),
+      accessToken: data.session.access_token,
+      authenticatedAt: new Date().toISOString(),
+    };
+  }
+
+  async listStaffProfiles(): Promise<UserProfile[]> {
+    const { data, error } = await this.client
+      .from('profiles')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      throw new Error(`Erro ao listar Equipe do Estande no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseProfileRow[]).map((row) => this.mapProfileRow(row));
+  }
+
+  async createStaffProfile(input: CreateStaffAccountInput): Promise<UserProfile> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para cadastrar membro da Equipe do Estande.');
+    }
+
+    // Usa cliente isolado sem persistência de sessão para não substituir a sessão do Administrador logado.
+    const isolatedAuthClient = createClient(this.supabaseUrl, this.supabaseAnonKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false,
+        detectSessionInUrl: false,
+      },
+    });
+
+    const { data, error } = await isolatedAuthClient.auth.signUp({
+      email: input.email.trim().toLowerCase(),
+      password: input.password,
+      options: {
+        data: { name: input.name.trim(), role: input.role },
+      },
+    });
+
+    if (error || !data.user) {
+      throw new Error(
+        `Erro ao registrar credenciais no Supabase: ${error?.message ?? 'falha desconhecida.'}`,
+      );
+    }
+
+    const { data: insertedRow, error: profileError } = await this.client
+      .from('profiles')
+      .upsert(
+        {
+          id: data.user.id,
+          name: input.name.trim(),
+          email: input.email.trim().toLowerCase(),
+          role: input.role,
+        },
+        { onConflict: 'id' },
+      )
+      .select('*')
+      .single<SupabaseProfileRow>();
+
+    if (profileError || !insertedRow) {
+      throw new Error(`Erro ao gravar perfil na tabela profiles: ${profileError?.message ?? ''}`);
+    }
+
+    return this.mapProfileRow(insertedRow);
+  }
+
+  async updateStaffProfileRole(profileId: string, role: UserRole): Promise<UserProfile> {
+    const { data, error } = await this.client
+      .from('profiles')
+      .update({ role })
+      .eq('id', profileId)
+      .select('*')
+      .single<SupabaseProfileRow>();
+
+    if (error || !data) {
+      throw new Error(`Erro ao atualizar perfil no Supabase: ${error?.message ?? 'sem retorno.'}`);
+    }
+
+    return this.mapProfileRow(data);
+  }
+
+  async deleteStaffProfile(profileId: string): Promise<void> {
+    const { error } = await this.client.from('profiles').delete().eq('id', profileId);
+    if (error) {
+      throw new Error(`Erro ao revogar acesso no Supabase: ${error.message}`);
+    }
+  }
+
+  async listEvents(): Promise<EventConfig[]> {
+    const { data, error } = await this.client
+      .from('events')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      throw new Error(`Erro ao listar Eventos no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseEventRow[]).map((row) => this.mapEventRow(row));
+  }
+
+  async saveEvent(event: EventConfig): Promise<EventConfig> {
+    const payload = {
+      id: event.id,
+      name: event.name,
+      slug: event.slug,
+      start_time: event.startTime,
+      end_time: event.endTime,
+      enable_out_of_period_message: event.enableOutOfPeriodMessage,
+      is_active: event.isActive,
+      settings: event.settings,
+      prize_stock_remaining: event.prizeStockRemaining,
+      customizations: event.customizations,
+      config_version: event.configVersion,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data, error } = await this.client
+      .from('events')
+      .upsert(payload, { onConflict: 'id' })
+      .select('*')
+      .single<SupabaseEventRow>();
+
+    if (error || !data) {
+      throw new Error(`Erro ao salvar Evento no Supabase: ${error?.message ?? 'sem retorno.'}`);
+    }
+
+    return this.mapEventRow(data);
+  }
+
+  async getEventQuestionIds(eventId: string): Promise<number[]> {
+    const { data, error } = await this.client
+      .from('event_questions')
+      .select('question_id')
+      .eq('event_id', eventId);
+
+    if (error) {
+      throw new Error(`Erro ao consultar questões vinculadas ao Evento: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<{ question_id: number }>).map((row) => row.question_id);
+  }
+
+  async setEventQuestions(eventId: string, questionIds: number[]): Promise<void> {
+    const { error: deleteError } = await this.client
+      .from('event_questions')
+      .delete()
+      .eq('event_id', eventId);
+
+    if (deleteError) {
+      throw new Error(`Erro ao limpar vínculos antigos do Evento: ${deleteError.message}`);
+    }
+
+    const uniqueIds = Array.from(new Set(questionIds));
+    if (uniqueIds.length === 0) {
+      return;
+    }
+
+    const { error: insertError } = await this.client
+      .from('event_questions')
+      .insert(uniqueIds.map((questionId) => ({ event_id: eventId, question_id: questionId })));
+
+    if (insertError) {
+      throw new Error(`Erro ao vincular questões ao Evento: ${insertError.message}`);
+    }
+  }
+
+  async listAllQuestions(): Promise<Question[]> {
+    const { data, error } = await this.client
+      .from('questions')
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (error) {
+      throw new Error(`Erro ao listar Banco de Questões no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as SupabaseQuestionRow[]).map((row) => this.mapQuestionRow(row));
+  }
+
+  private mapQuestionToRow(question: Question) {
+    return {
+      id: question.id,
+      text: question.text,
+      options: question.options,
+      correct_index: question.correctIndex,
+      difficulty: question.difficulty,
+      tags: question.tags,
+      is_disabled: question.isDisabled,
+    };
+  }
+
+  async saveQuestion(question: Question): Promise<Question> {
+    const { data, error } = await this.client
+      .from('questions')
+      .upsert(
+        {
+          ...this.mapQuestionToRow(question),
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' },
+      )
+      .select('*')
+      .single<SupabaseQuestionRow>();
+
+    if (error || !data) {
+      throw new Error(`Erro ao salvar questão no Supabase: ${error?.message ?? 'sem retorno.'}`);
+    }
+
+    return this.mapQuestionRow(data);
+  }
+
+  async deleteQuestions(ids: number[]): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const { error } = await this.client.from('questions').delete().in('id', ids);
+    if (error) {
+      throw new Error(`Erro ao excluir questões no Supabase: ${error.message}`);
+    }
+    return ids.length;
+  }
+
+  async setQuestionsDisabled(ids: number[], isDisabled: boolean): Promise<number> {
+    if (ids.length === 0) {
+      return 0;
+    }
+    const { error } = await this.client
+      .from('questions')
+      .update({ is_disabled: isDisabled, updated_at: new Date().toISOString() })
+      .in('id', ids);
+    if (error) {
+      throw new Error(`Erro ao atualizar status das questões no Supabase: ${error.message}`);
+    }
+    return ids.length;
+  }
+
+  async replaceAllQuestions(questions: Question[]): Promise<Question[]> {
+    const { error: deleteError } = await this.client.from('questions').delete().gte('id', 0);
+    if (deleteError) {
+      throw new Error(`Erro ao limpar Banco de Questões no Supabase: ${deleteError.message}`);
+    }
+
+    if (questions.length === 0) {
+      return [];
+    }
+
+    const { data, error: insertError } = await this.client
+      .from('questions')
+      .insert(questions.map((question) => this.mapQuestionToRow(question)))
+      .select('*')
+      .order('id', { ascending: true });
+
+    if (insertError) {
+      throw new Error(`Erro ao inserir questões substituídas no Supabase: ${insertError.message}`);
+    }
+
+    return ((data ?? []) as SupabaseQuestionRow[]).map((row) => this.mapQuestionRow(row));
   }
 }
