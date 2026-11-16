@@ -1,4 +1,5 @@
 import { DEFAULT_EVENT_CONFIG, DEFAULT_QUIZ_QUESTIONS } from '../domain/defaults';
+import { normalizePairingCode } from '../domain/pairingUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
   AuthSession,
@@ -8,6 +9,12 @@ import type {
   MatchRecord,
   PrizeClaimRecord,
   Question,
+  RemoteCommandPayload,
+  TotemChannelEvent,
+  TotemHeartbeatPayload,
+  TotemPairingAuthorizationPayload,
+  TotemPairingRequestInput,
+  TotemRecord,
   UserProfile,
 } from '../domain/types';
 
@@ -43,6 +50,10 @@ export class InMemoryCloudGateway implements CloudGateway {
   private readonly prizeClaimsByEvent = new Map<string, PrizeClaimRecord[]>();
   private readonly lockoutsByIdempotencyKey = new Map<string, GiveUpLockoutRecord>();
   private readonly staffCredentials = new Map<string, StoredStaffCredential>();
+  private readonly totemsById = new Map<string, TotemRecord>();
+  private readonly totemIdByPairingCode = new Map<string, string>();
+  private readonly remoteCommands: RemoteCommandPayload[] = [];
+  private readonly channelListeners = new Set<(event: TotemChannelEvent) => void | Promise<void>>();
   private currentSession: AuthSession | null = null;
   private staffSequence = 0;
 
@@ -458,5 +469,186 @@ export class InMemoryCloudGateway implements CloudGateway {
     const all = Array.from(this.lockoutsByIdempotencyKey.values());
     const filtered = eventId ? all.filter((lockout) => lockout.eventId === eventId) : all;
     return filtered.map((lockout) => structuredClone(lockout));
+  }
+
+  private async emitChannelEvent(event: TotemChannelEvent): Promise<void> {
+    await Promise.all(
+      Array.from(this.channelListeners).map((listener) => listener(structuredClone(event))),
+    );
+  }
+
+  async requestTotemPairing(input: TotemPairingRequestInput): Promise<TotemRecord> {
+    const normalizedCode = normalizePairingCode(input.pairingCode);
+    const existing = this.totemsById.get(input.id);
+    if (existing && !existing.isPaired && existing.pairingCode === normalizedCode) {
+      return structuredClone(existing);
+    }
+
+    if (existing && existing.pairingCode !== normalizedCode) {
+      this.totemIdByPairingCode.delete(existing.pairingCode);
+    }
+
+    const now = this.nowIso();
+    const record: TotemRecord = {
+      id: input.id,
+      name: existing?.name && existing.isPaired ? existing.name : 'Totem Aguardando Pareamento',
+      pairingCode: normalizedCode,
+      deviceToken: '',
+      eventId: null,
+      pinCode: existing?.pinCode ?? '0000',
+      isPaired: false,
+      onlineStatus: this.online ? 'online' : 'offline',
+      lastSeenAt: this.online ? now : (existing?.lastSeenAt ?? null),
+      currentScreen: input.currentScreen,
+      configVersion: input.configVersion,
+      pendingSyncCount: input.pendingSyncCount,
+      createdAt: existing?.createdAt ?? now,
+    };
+
+    this.totemsById.set(record.id, record);
+    this.totemIdByPairingCode.set(normalizedCode, record.id);
+    await this.emitChannelEvent({ type: 'TELEMETRY_UPDATED', totem: record });
+    return structuredClone(record);
+  }
+
+  async authorizeTotemPairing(input: TotemPairingAuthorizationPayload): Promise<TotemRecord> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para autorizar Pareamento.');
+    }
+
+    const normalizedCode = normalizePairingCode(input.pairingCode);
+    const existingId = this.totemIdByPairingCode.get(normalizedCode);
+    const existing = existingId ? this.totemsById.get(existingId) : undefined;
+    const now = this.nowIso();
+    const wasOnline = existing?.onlineStatus === 'online';
+    const eventConfigVersion = this.events.get(input.eventId)?.configVersion ?? 1;
+
+    const record: TotemRecord = {
+      id: existing?.id ?? input.id,
+      name: input.name.trim(),
+      pairingCode: normalizedCode,
+      deviceToken: input.deviceToken,
+      eventId: input.eventId,
+      pinCode: input.pinCode.trim(),
+      isPaired: true,
+      onlineStatus: wasOnline ? 'online' : 'offline',
+      lastSeenAt: wasOnline ? now : (existing?.lastSeenAt ?? null),
+      currentScreen: existing?.currentScreen ?? 'initial-screen',
+      configVersion: existing?.configVersion ?? eventConfigVersion,
+      pendingSyncCount: existing?.pendingSyncCount ?? 0,
+      createdAt: existing?.createdAt ?? now,
+    };
+
+    this.totemsById.set(record.id, record);
+    this.totemIdByPairingCode.set(normalizedCode, record.id);
+
+    await this.emitChannelEvent({ type: 'PAIRING_AUTHORIZED', totem: record });
+    await this.emitChannelEvent({ type: 'TELEMETRY_UPDATED', totem: record });
+    return structuredClone(record);
+  }
+
+  async claimTotemPairing(pairingCode: string): Promise<TotemRecord | null> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para ativar Pareamento.');
+    }
+
+    const normalizedCode = normalizePairingCode(pairingCode);
+    const totemId = this.totemIdByPairingCode.get(normalizedCode);
+    const existing = totemId ? this.totemsById.get(totemId) : undefined;
+    if (!existing || !existing.isPaired || !existing.eventId) {
+      return null;
+    }
+
+    const updated: TotemRecord = {
+      ...structuredClone(existing),
+      onlineStatus: 'online',
+      lastSeenAt: this.nowIso(),
+    };
+    this.totemsById.set(updated.id, updated);
+    await this.emitChannelEvent({ type: 'TELEMETRY_UPDATED', totem: updated });
+    return structuredClone(updated);
+  }
+
+  async listTotems(): Promise<TotemRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para listar Totens.');
+    }
+    return Array.from(this.totemsById.values())
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((totem) => structuredClone(totem));
+  }
+
+  async publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null> {
+    if (payload.onlineStatus === 'online' && !this.online) {
+      throw new Error('Sem conectividade com a nuvem para publicar telemetria.');
+    }
+
+    const existing = this.totemsById.get(payload.totemId);
+    const now = payload.seenAt ?? this.nowIso();
+
+    const updated: TotemRecord = existing
+      ? {
+          ...structuredClone(existing),
+          onlineStatus: payload.onlineStatus,
+          currentScreen: payload.currentScreen,
+          configVersion: payload.configVersion,
+          pendingSyncCount: payload.pendingSyncCount,
+          lastSeenAt: payload.onlineStatus === 'online' ? now : existing.lastSeenAt,
+        }
+      : {
+          id: payload.totemId,
+          name: payload.totemId,
+          pairingCode: payload.totemId.slice(0, 6).toUpperCase(),
+          deviceToken: payload.deviceToken ?? '',
+          eventId: payload.eventId ?? Array.from(this.events.keys())[0] ?? null,
+          pinCode: '0000',
+          isPaired: true,
+          onlineStatus: payload.onlineStatus,
+          lastSeenAt: payload.onlineStatus === 'online' ? now : null,
+          currentScreen: payload.currentScreen,
+          configVersion: payload.configVersion,
+          pendingSyncCount: payload.pendingSyncCount,
+          createdAt: now,
+        };
+
+    this.totemsById.set(updated.id, updated);
+    if (!this.totemIdByPairingCode.has(updated.pairingCode)) {
+      this.totemIdByPairingCode.set(updated.pairingCode, updated.id);
+    }
+
+    await this.emitChannelEvent({ type: 'TELEMETRY_UPDATED', totem: updated });
+    return structuredClone(updated);
+  }
+
+  async dispatchRemoteCommand(command: RemoteCommandPayload): Promise<RemoteCommandPayload> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para enviar comando remoto.');
+    }
+
+    const cloned = structuredClone(command);
+    if (cloned.type === 'SWITCH_EVENT' && cloned.eventId) {
+      for (const [id, totem] of this.totemsById.entries()) {
+        const matches = cloned.targetTotemId
+          ? totem.id === cloned.targetTotemId
+          : Boolean(cloned.targetEventId && totem.eventId === cloned.targetEventId);
+        if (matches) {
+          this.totemsById.set(id, {
+            ...totem,
+            eventId: cloned.eventId,
+          });
+        }
+      }
+    }
+
+    this.remoteCommands.push(cloned);
+    await this.emitChannelEvent({ type: 'REMOTE_COMMAND', command: cloned });
+    return structuredClone(cloned);
+  }
+
+  subscribeTotemChannel(listener: (event: TotemChannelEvent) => void | Promise<void>): () => void {
+    this.channelListeners.add(listener);
+    return () => {
+      this.channelListeners.delete(listener);
+    };
   }
 }

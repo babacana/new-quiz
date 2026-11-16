@@ -1516,4 +1516,236 @@ describe('TotemSessionEngine', () => {
       expect(rankingOfflineSnap.event.prizeStockRemaining).toBe(2);
     });
   });
+
+  describe('Fatia 15: Pareamento de Totem por código curto e link de ativação', () => {
+    it('gera código curto quando requirePairing está ativo e conclui Pareamento ao receber autorização da nuvem', async () => {
+      const customEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000222',
+        name: 'Congresso Pareado 2026',
+        slug: 'congresso-pareado-2026',
+        configVersion: 4,
+      };
+      const questions = buildQuestionPool({ facil: 2, moderado: 1, dificil: 0 });
+      const { engine, cloudGateway, localStore } = createHarness({ online: true });
+      cloudGateway.seedEvent(customEvent, questions);
+
+      const pairingEngine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock: new FakeClock(),
+        random: new DeterministicRandomSource('77777777'),
+        requirePairing: true,
+      });
+
+      const observedStates: string[] = [];
+      pairingEngine.subscribe((snap) => {
+        observedStates.push(`${snap.pairing.status}:${snap.event.id}`);
+      });
+
+      const pendingSnap = await pairingEngine.initialize();
+      expect(pendingSnap.pairing.isPaired).toBe(false);
+      expect(pendingSnap.pairing.status).toBe('awaiting_authorization');
+      expect(pendingSnap.pairing.pairingCode).toMatch(/^[A-Z0-9]{6}$/);
+
+      // A nuvem recebe o pedido pendente de Pareamento com o código curto
+      const registeredTotems = await cloudGateway.listTotems();
+      expect(registeredTotems).toHaveLength(1);
+      expect(registeredTotems[0].pairingCode).toBe(pendingSnap.pairing.pairingCode);
+      expect(registeredTotems[0].isPaired).toBe(false);
+
+      // Administrador autoriza o código sem que o Totem digite senha administrativa
+      await cloudGateway.authorizeTotemPairing({
+        id: registeredTotems[0].id,
+        pairingCode: pendingSnap.pairing.pairingCode!,
+        deviceToken: 'tok-pareado-1',
+        name: 'Totem Hall Principal',
+        pinCode: '2580',
+        eventId: customEvent.id,
+      });
+
+      const pairedSnap = pairingEngine.getSnapshot();
+      expect(pairedSnap.pairing.isPaired).toBe(true);
+      expect(pairedSnap.pairing.status).toBe('paired');
+      expect(pairedSnap.pairing.totemName).toBe('Totem Hall Principal');
+      expect(pairedSnap.event.id).toBe(customEvent.id);
+      expect(pairedSnap.event.name).toBe('Congresso Pareado 2026');
+      expect(pairedSnap.availableQuestionsCount).toBe(3);
+      expect(observedStates).toContain(`paired:${customEvent.id}`);
+
+      const persistedConfig = await localStore.getTotemConfig();
+      expect(persistedConfig?.pinCode).toBe('2580');
+      expect(persistedConfig?.deviceToken).toBe('tok-pareado-1');
+      expect(engine.getSnapshot().initialized).toBe(false);
+    });
+
+    it('ativa Pareamento por link de ativação ou código pré-autorizado e rejeita código inválido', async () => {
+      const targetEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000333',
+        name: 'Evento Ativado por Link',
+        slug: 'evento-link',
+      };
+      const { cloudGateway, clock, random } = createHarness({ online: true });
+      cloudGateway.seedEvent(targetEvent, buildQuestionPool({ facil: 3, moderado: 0, dificil: 0 }));
+
+      await cloudGateway.authorizeTotemPairing({
+        id: '00000000-0000-4000-8000-000000000888',
+        pairingCode: 'LINK99',
+        deviceToken: 'tok-link-99',
+        name: 'Totem Entrada Sul',
+        pinCode: '9090',
+        eventId: targetEvent.id,
+      });
+
+      const localStore = new InMemoryLocalStore();
+      const engine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      await engine.initialize();
+      const invalidAttempt = await engine.activateWithCode('CODIGO_INEXISTENTE');
+      expect(invalidAttempt.pairing.isPaired).toBe(false);
+      expect(invalidAttempt.lastValidationError).toMatch(/inválido|não autorizado/i);
+
+      const activated = await engine.activateWithCode('https://quiz.caesb.df.gov.br/?pairingCode=link99');
+      expect(activated.pairing.isPaired).toBe(true);
+      expect(activated.pairing.totemName).toBe('Totem Entrada Sul');
+      expect(activated.event.id).toBe(targetEvent.id);
+      expect(activated.screen).toBe('initial-screen');
+      expect(activated.lastValidationError).toBeNull();
+    });
+  });
+
+  describe('Fatia 16: Diagnóstico local protegido por PIN rápido e sincronização manual', () => {
+    it('valida PIN configurado no Pareamento, expõe diagnóstico local e executa forceSync manual', async () => {
+      const event: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000444',
+        name: 'Evento Diagnóstico',
+        slug: 'evento-diagnostico',
+        configVersion: 5,
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+        },
+      };
+      const { cloudGateway, clock, random } = createHarness({ online: true });
+      cloudGateway.seedEvent(event, buildQuestionPool({ facil: 2, moderado: 0, dificil: 0 }));
+
+      await cloudGateway.authorizeTotemPairing({
+        id: '00000000-0000-4000-8000-000000000777',
+        pairingCode: 'DIAG77',
+        deviceToken: 'tok-diag-77',
+        name: 'Totem Balcão B',
+        pinCode: '7410',
+        eventId: event.id,
+      });
+
+      const engine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      // Antes do pareamento usa PIN padrão 0000; após pareamento passa a exigir PIN 7410
+      await engine.initialize();
+      expect(engine.verifyDiagnosticPin('0000')).toBe(true);
+
+      await engine.activateWithCode('DIAG77');
+      expect(engine.verifyDiagnosticPin('0000')).toBe(false);
+      expect(engine.verifyDiagnosticPin('7410')).toBe(true);
+
+      // Fica offline e registra Partida pendente na syncQueue
+      await engine.setDeviceOnline(false);
+      await engine.startMatch('BRUNO', '(61) 99444-3322');
+      const q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await engine.advanceAfterAnswer();
+
+      const offlineDiag = engine.getLocalDiagnostics();
+      expect(offlineDiag.isOnline).toBe(false);
+      expect(offlineDiag.isPaired).toBe(true);
+      expect(offlineDiag.totemName).toBe('Totem Balcão B');
+      expect(offlineDiag.pairingCode).toBe('DIAG77');
+      expect(offlineDiag.eventId).toBe(event.id);
+      expect(offlineDiag.eventName).toBe('Evento Diagnóstico');
+      expect(offlineDiag.configVersion).toBe(5);
+      expect(offlineDiag.pendingSyncCount).toBe(1);
+      expect(offlineDiag.currentScreen).toBe('result-screen');
+
+      // Reconecta e força sincronização manual a partir do diagnóstico
+      await engine.setDeviceOnline(true);
+      const syncResult = await engine.forceSync();
+      expect(syncResult.synced).toBe(1);
+      expect(syncResult.failed).toBe(0);
+      expect(syncResult.pending).toBe(0);
+
+      const onlineDiag = engine.getLocalDiagnostics();
+      expect(onlineDiag.isOnline).toBe(true);
+      expect(onlineDiag.pendingSyncCount).toBe(0);
+    });
+
+    it('reconcilia SWITCH_EVENT perdido enquanto offline ao reconectar e publicar heartbeat', async () => {
+      const eventA: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000511',
+        name: 'Evento Origem Offline',
+        slug: 'evento-origem-offline',
+      };
+      const eventB: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000512',
+        name: 'Evento Destino Pós-Reconexão',
+        slug: 'evento-destino-reconexao',
+      };
+      const { cloudGateway, clock, random } = createHarness({ online: true });
+      cloudGateway.seedEvent(eventA, buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 }));
+      cloudGateway.seedEvent(eventB, buildQuestionPool({ facil: 2, moderado: 0, dificil: 0 }));
+
+      const totem = await cloudGateway.authorizeTotemPairing({
+        id: '00000000-0000-4000-8000-000000000599',
+        pairingCode: 'REC599',
+        deviceToken: 'tok-rec-599',
+        name: 'Totem Offline Catchup',
+        pinCode: '1234',
+        eventId: eventA.id,
+      });
+
+      const engine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+      await engine.initialize({ activationCode: 'REC599' });
+      expect(engine.getSnapshot().event.id).toBe(eventA.id);
+
+      // Totem desconecta e perde o broadcast do comando SWITCH_EVENT
+      await engine.setDeviceOnline(false);
+      await cloudGateway.dispatchRemoteCommand({
+        id: '00000000-0000-4000-8000-000000000598',
+        type: 'SWITCH_EVENT',
+        targetTotemId: totem.id,
+        targetEventId: eventA.id,
+        eventId: eventB.id,
+        targetScreen: 'initial-screen',
+        issuedAt: clock.toISOString(),
+      });
+      expect(engine.getSnapshot().event.id).toBe(eventA.id);
+
+      // Ao reconectar e enviar heartbeat, reconcilia automaticamente para o Evento B
+      const reconnectedSnap = await engine.setDeviceOnline(true);
+      expect(reconnectedSnap.event.id).toBe(eventB.id);
+      expect(reconnectedSnap.event.name).toBe('Evento Destino Pós-Reconexão');
+    });
+  });
 });

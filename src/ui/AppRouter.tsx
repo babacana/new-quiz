@@ -62,7 +62,13 @@ export function AppRouter() {
     const localStore = new DexieLocalStore();
 
     return {
-      totemEngine: new TotemSessionEngine({ localStore, cloudGateway, clock, random }),
+      totemEngine: new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      }),
       adminController: new EventAdminController({ cloudGateway, clock, random }),
     };
   }, []);

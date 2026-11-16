@@ -496,4 +496,285 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       expect(controller.isDirty()).toBe(false);
     });
   });
+
+  describe('T5 - Pareamento de Totens pelo Administrador', () => {
+    it('autoriza Pareamento por código curto ou link de ativação, valida PIN e restringe a Administradores', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+
+      // Operador não tem permissão para autorizar pareamento ou listar totens para comando remoto.
+      await controller.login('operador@caesb.df.gov.br', 'OPERADOR2025!');
+      await expect(
+        controller.authorizeTotemPairing({
+          name: 'Totem Bloqueado',
+          pinCode: '1234',
+          eventId: DEFAULT_EVENT_ID,
+        }),
+      ).rejects.toThrow(/Administrador/i);
+      await expect(controller.listTotems()).rejects.toThrow(/Administrador/i);
+      await controller.logout();
+
+      // Administrador faz login e autoriza dois Totens (um pendente por código e outro por link pré-gerado).
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      await expect(
+        controller.authorizeTotemPairing({
+          name: 'Totem PIN Inválido',
+          pinCode: 'ab12',
+          eventId: DEFAULT_EVENT_ID,
+        }),
+      ).rejects.toThrow(/PIN/i);
+
+      const totemEngine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      const pendingSnap = await totemEngine.initialize();
+      const shortCode = pendingSnap.pairing.pairingCode!;
+
+      const authorized = await controller.authorizeTotemPairing({
+        pairingCode: shortCode,
+        name: 'Totem Estande Central',
+        pinCode: '4321',
+        eventId: DEFAULT_EVENT_ID,
+      });
+
+      expect(authorized.isPaired).toBe(true);
+      expect(authorized.name).toBe('Totem Estande Central');
+      expect(totemEngine.getSnapshot().pairing.isPaired).toBe(true);
+      expect(totemEngine.getSnapshot().pairing.totemName).toBe('Totem Estande Central');
+
+      // Gera link de ativação pré-autorizado
+      const preAuthorized = await controller.authorizeTotemPairing({
+        name: 'Totem Auditório',
+        pinCode: '5678',
+        eventId: DEFAULT_EVENT_ID,
+      });
+      const link = controller.buildTotemActivationLink(
+        preAuthorized.pairingCode,
+        'https://quiz.caesb.df.gov.br',
+      );
+      expect(link).toBe(`https://quiz.caesb.df.gov.br/?pairingCode=${preAuthorized.pairingCode}`);
+
+      const totems = await controller.listTotems();
+      expect(totems).toHaveLength(2);
+    });
+
+    it('monitora telemetria ao vivo do Totem (Online/Offline, último ping, tela atual, versão e fila syncQueue)', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const updatedEvent = await controller.updateEvent(DEFAULT_EVENT_ID, {
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+      });
+
+      const localStore = new InMemoryLocalStore();
+      const totemEngine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      const pendingSnap = await totemEngine.initialize();
+      await controller.authorizeTotemPairing({
+        pairingCode: pendingSnap.pairing.pairingCode!,
+        name: 'Totem Telemetria 01',
+        pinCode: '1122',
+        eventId: updatedEvent.id,
+      });
+
+      let [telemetry] = await controller.listTotems();
+      expect(telemetry.onlineStatus).toBe('online');
+      expect(telemetry.currentScreen).toBe('initial-screen');
+      expect(telemetry.configVersion).toBe(updatedEvent.configVersion);
+      expect(telemetry.pendingSyncCount).toBe(0);
+      expect(telemetry.lastSeenAt).toBe(clock.toISOString());
+
+      // Avança para tela de descanso e volta para tela inicial
+      totemEngine.enterIdleScreen();
+      await totemEngine.sendHeartbeat();
+      [telemetry] = await controller.listTotems();
+      expect(telemetry.currentScreen).toBe('idle-screen');
+
+      totemEngine.wakeFromIdleScreen();
+      await totemEngine.startMatch('LUCIANA', '(61) 99123-4567');
+      [telemetry] = await controller.listTotems();
+      expect(telemetry.currentScreen).toBe('quiz-screen');
+
+      // Totem fica offline no estande e finaliza Partida localmente -> fila syncQueue = 1
+      const lastOnlinePing = telemetry.lastSeenAt;
+      await totemEngine.setDeviceOnline(false);
+
+      const q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemEngine.advanceAfterAnswer();
+
+      [telemetry] = await controller.listTotems();
+      expect(telemetry.onlineStatus).toBe('offline');
+      expect(telemetry.currentScreen).toBe('result-screen');
+      expect(telemetry.pendingSyncCount).toBe(1);
+      expect(telemetry.lastSeenAt).toBe(lastOnlinePing);
+
+      // Totem abre Ranking e depois volta a ficar online e sincroniza
+      await totemEngine.openRankingScreen();
+      [telemetry] = await controller.listTotems();
+      expect(telemetry.currentScreen).toBe('ranking-screen');
+
+      await totemEngine.setDeviceOnline(true);
+      await totemEngine.syncPendingQueue();
+      await totemEngine.sendHeartbeat();
+
+      [telemetry] = await controller.listTotems();
+      expect(telemetry.onlineStatus).toBe('online');
+      expect(telemetry.pendingSyncCount).toBe(0);
+    });
+
+    it('executa comandos remotos imediatamente quando o Totem está ocioso (FORCE_SYNC, RELOAD_SCREEN, SWITCH_EVENT, CONFIG_UPDATED)', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const eventB = await controller.createEvent({
+        name: 'Evento B Remoto',
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1, timePerQuestion: 45 },
+      });
+
+      const totemEngine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      const pending = await totemEngine.initialize();
+      const totem = await controller.authorizeTotemPairing({
+        pairingCode: pending.pairing.pairingCode!,
+        name: 'Totem Comando Imediato',
+        pinCode: '3344',
+        eventId: DEFAULT_EVENT_ID,
+      });
+
+      // Abre ranking e recebe RELOAD_SCREEN -> volta imediatamente para idle-screen
+      await totemEngine.openRankingScreen();
+      expect(totemEngine.getSnapshot().screen).toBe('ranking-screen');
+      await controller.reloadTotemScreen({ totemId: totem.id }, 'idle-screen');
+      expect(totemEngine.getSnapshot().screen).toBe('idle-screen');
+
+      // Troca para Evento B via SWITCH_EVENT
+      await controller.switchTotemEvent({ totemId: totem.id }, eventB.id);
+      expect(totemEngine.getSnapshot().event.id).toBe(eventB.id);
+      expect(totemEngine.getSnapshot().event.name).toBe('Evento B Remoto');
+      expect(totemEngine.getSnapshot().screen).toBe('initial-screen');
+
+      // Atualiza configuração do Evento B -> CONFIG_UPDATED aplicado imediatamente
+      await controller.updateEvent(eventB.id, {
+        customizations: { texts: { initialScreenTitle: 'Título Atualizado Remotamente!' } },
+      });
+      expect(totemEngine.getSnapshot().event.customizations.texts.initialScreenTitle).toBe(
+        'Título Atualizado Remotamente!',
+      );
+      expect(totemEngine.getSnapshot().event.configVersion).toBe(2);
+
+      // Joga offline, reconecta e recebe FORCE_SYNC
+      await totemEngine.setDeviceOnline(false);
+      await totemEngine.startMatch('GUSTAVO', '(61) 98888-1122');
+      const q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemEngine.advanceAfterAnswer();
+      expect(totemEngine.getSnapshot().pendingSyncCount).toBe(1);
+
+      await totemEngine.setDeviceOnline(true);
+      await controller.forceSyncTotems({ totemId: totem.id });
+      expect(totemEngine.getSnapshot().pendingSyncCount).toBe(0);
+      expect(cloudGateway.getSyncedMatches(eventB.id)).toHaveLength(1);
+    });
+
+    it('difere CONFIG_UPDATED e SWITCH_EVENT durante Partida em andamento e aplica ao finalizar sem interromper o Participante', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const eventA = await controller.updateEvent(DEFAULT_EVENT_ID, {
+        settings: { numberOfQuestions: 2, minScoreForPrize: 1, timePerQuestion: 30 },
+      });
+      const eventB = await controller.createEvent({
+        name: 'Evento Destino Pós-Partida',
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+      });
+
+      const totemEngine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+
+      const pending = await totemEngine.initialize();
+      const totem = await controller.authorizeTotemPairing({
+        pairingCode: pending.pairing.pairingCode!,
+        name: 'Totem Em Partida',
+        pinCode: '5566',
+        eventId: eventA.id,
+      });
+
+      // Participante inicia Partida de 2 questões
+      await totemEngine.startMatch('MARIANA', '(61) 97777-2233');
+      expect(totemEngine.getSnapshot().screen).toBe('quiz-screen');
+      const versionAtMatchStart = totemEngine.getSnapshot().event.configVersion;
+
+      // Administrador atualiza texto/configuração do Evento A enquanto a Partida está ativa
+      await controller.updateEvent(eventA.id, {
+        customizations: { texts: { initialScreenTitle: 'Nova Configuração v3' } },
+      });
+
+      // A Partida não é interrompida e a nova versão aguarda o fim da Partida
+      let midMatchSnap = totemEngine.getSnapshot();
+      expect(midMatchSnap.screen).toBe('quiz-screen');
+      expect(midMatchSnap.activeMatch).not.toBeNull();
+      expect(midMatchSnap.event.configVersion).toBe(versionAtMatchStart);
+      expect(midMatchSnap.deferredCommands.some((c) => c.type === 'CONFIG_UPDATED')).toBe(true);
+
+      // Responde Q1 e Q2 normalmente até concluir a Partida
+      let q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemEngine.advanceAfterAnswer();
+
+      q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const finishedSnap = await totemEngine.advanceAfterAnswer();
+
+      // Partida concluiu exibindo resultado e aplicou a configuração baixada
+      expect(finishedSnap.screen).toBe('result-screen');
+      expect(finishedSnap.lastResult?.score).toBe(2);
+      expect(finishedSnap.deferredCommands).toHaveLength(0);
+      expect(finishedSnap.event.customizations.texts.initialScreenTitle).toBe('Nova Configuração v3');
+      expect(finishedSnap.event.configVersion).toBe(versionAtMatchStart + 1);
+
+      // Também difere SWITCH_EVENT enviado no meio de uma nova Partida
+      totemEngine.resetToInitialScreen();
+      await totemEngine.startMatch('PAULO', '(61) 96666-4455');
+      await controller.switchTotemEvent({ totemId: totem.id }, eventB.id);
+
+      midMatchSnap = totemEngine.getSnapshot();
+      expect(midMatchSnap.screen).toBe('quiz-screen');
+      expect(midMatchSnap.event.id).toBe(eventA.id);
+      expect(midMatchSnap.deferredCommands.some((c) => c.type === 'SWITCH_EVENT')).toBe(true);
+
+      q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemEngine.advanceAfterAnswer();
+      q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      const switchedAfterFinish = await totemEngine.advanceAfterAnswer();
+
+      expect(switchedAfterFinish.event.id).toBe(eventB.id);
+      expect(switchedAfterFinish.screen).toBe('initial-screen');
+      expect(switchedAfterFinish.deferredCommands).toHaveLength(0);
+    });
+  });
 });

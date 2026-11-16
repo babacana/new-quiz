@@ -6,12 +6,14 @@ export { DEFAULT_FONT_STEP_INDEX, FONT_SIZES_PX };
 export interface AccessibilityControlsProps {
   hiddenOnIdle: boolean;
   onInteraction?: () => void;
+  onOpenDiagnostics?: () => void;
 }
 
-// Controles flutuantes de acessibilidade para ajustar o tamanho base da fonte entre 10px e 30px.
+// Controles flutuantes de acessibilidade (A-/A+) e botão discreto ⚙️ de diagnóstico local.
 export function AccessibilityControls({
   hiddenOnIdle,
   onInteraction,
+  onOpenDiagnostics,
 }: AccessibilityControlsProps) {
   const [fontStepIndex, setFontStepIndex] = useState<number>(DEFAULT_FONT_STEP_INDEX);
 
@@ -62,6 +64,20 @@ export function AccessibilityControls({
       >
         A+
       </button>
+      {onOpenDiagnostics && (
+        <button
+          id="diagnostics-access-btn"
+          type="button"
+          title="Diagnóstico Local do Totem"
+          aria-label="Diagnóstico local do Totem"
+          onClick={() => {
+            onOpenDiagnostics();
+            onInteraction?.();
+          }}
+        >
+          ⚙️
+        </button>
+      )}
     </div>
   );
 }

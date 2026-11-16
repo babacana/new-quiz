@@ -6,8 +6,14 @@ import type {
   MatchRecord,
   PrizeClaimRecord,
   Question,
+  RemoteCommandPayload,
   SyncQueueItem,
+  TotemChannelEvent,
   TotemConfigSnapshot,
+  TotemHeartbeatPayload,
+  TotemPairingAuthorizationPayload,
+  TotemPairingRequestInput,
+  TotemRecord,
   UserProfile,
 } from './types';
 
@@ -93,4 +99,15 @@ export interface CloudGateway {
   deleteQuestions(ids: number[]): Promise<number>;
   setQuestionsDisabled(ids: number[], isDisabled: boolean): Promise<number>;
   replaceAllQuestions(questions: Question[]): Promise<Question[]>;
+
+  // Pareamento de Totem, Monitoramento ao Vivo e Comandos Remotos (T5)
+  requestTotemPairing(input: TotemPairingRequestInput): Promise<TotemRecord>;
+  authorizeTotemPairing(input: TotemPairingAuthorizationPayload): Promise<TotemRecord>;
+  claimTotemPairing(pairingCode: string): Promise<TotemRecord | null>;
+  listTotems(): Promise<TotemRecord[]>;
+  publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null>;
+  dispatchRemoteCommand(command: RemoteCommandPayload): Promise<RemoteCommandPayload>;
+  subscribeTotemChannel(
+    listener: (event: TotemChannelEvent) => void | Promise<void>,
+  ): () => void;
 }
