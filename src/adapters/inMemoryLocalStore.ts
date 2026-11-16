@@ -1,5 +1,6 @@
 import type { LocalStore } from '../domain/ports';
 import type {
+  CachedVisualAsset,
   GiveUpLockoutRecord,
   MatchRecord,
   PrizeClaimRecord,
@@ -16,6 +17,7 @@ export class InMemoryLocalStore implements LocalStore {
   private prizeClaimsByEvent = new Map<string, PrizeClaimRecord[]>();
   private lockoutsByEvent = new Map<string, GiveUpLockoutRecord[]>();
   private syncQueue = new Map<string, SyncQueueItem>();
+  private visualAssetsByUrl = new Map<string, CachedVisualAsset>();
 
   async getTotemConfig(): Promise<TotemConfigSnapshot | null> {
     return this.totemConfig ? structuredClone(this.totemConfig) : null;
@@ -116,5 +118,14 @@ export class InMemoryLocalStore implements LocalStore {
       retryCount: existing.retryCount + 1,
       lastError: errorMessage,
     });
+  }
+
+  async getVisualAsset(url: string): Promise<CachedVisualAsset | null> {
+    const found = this.visualAssetsByUrl.get(url);
+    return found ? structuredClone(found) : null;
+  }
+
+  async saveVisualAsset(asset: CachedVisualAsset): Promise<void> {
+    this.visualAssetsByUrl.set(asset.url, structuredClone(asset));
   }
 }

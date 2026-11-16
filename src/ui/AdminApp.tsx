@@ -8,17 +8,19 @@ import type {
   UnsavedChangesResolution,
   UnsavedNavigationPrompt,
 } from '../domain/types';
+import { AdminCustomizationTab } from './AdminCustomizationTab';
 import { AdminEventsTab } from './AdminEventsTab';
 import { AdminQuestionsTab } from './AdminQuestionsTab';
 import { AdminReportsTab } from './AdminReportsTab';
 import { AdminStaffTab } from './AdminStaffTab';
 import { AdminTotemsTab } from './AdminTotemsTab';
 import type { ExternalRouteNavigationRequest } from './AppRouter';
+import { DevSimulatorModal } from './DevSimulatorModal';
 import { OperatorPanel } from './OperatorPanel';
 import { createDefaultCloudGateway } from './cloudFactory';
 import './styles.css';
 
-type AdminTabId = 'events' | 'reports' | 'questions' | 'totems' | 'staff';
+type AdminTabId = 'events' | 'customization' | 'reports' | 'questions' | 'totems' | 'staff';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -76,6 +78,7 @@ export function AdminApp({
   );
   const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedNavigationPrompt | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingNavigationAction | null>(null);
+  const [isDevSimulatorOpen, setIsDevSimulatorOpen] = useState(false);
 
   const activeSaveHandlerRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -362,6 +365,16 @@ export function AdminApp({
               Visão de Operador
             </button>
           )}
+          {isAdmin && (
+            <button
+              id="admin-dev-simulator-btn"
+              type="button"
+              className="admin-btn admin-btn-secondary"
+              onClick={() => setIsDevSimulatorOpen(true)}
+            >
+              Modo Desenvolvedor / Simulador
+            </button>
+          )}
           {onOpenTotem && (
             <button
               id="admin-open-totem-btn"
@@ -414,6 +427,13 @@ export function AdminApp({
             </button>
             <button
               type="button"
+              className={`admin-tab-btn ${activeTab === 'customization' ? 'active' : ''}`}
+              onClick={() => requestGuardedAction({ type: 'tab', tab: 'customization' })}
+            >
+              Personalização Visual
+            </button>
+            <button
+              type="button"
               className={`admin-tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
               onClick={() => requestGuardedAction({ type: 'tab', tab: 'reports' })}
             >
@@ -450,6 +470,18 @@ export function AdminApp({
               selectedEventId={selectedEventId}
               onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
               onRequestGuardedAction={requestGuardedCallback}
+              onEventsChanged={loadWorkspaceData}
+              onRegisterSaveHandler={registerSaveHandler}
+              onStatusMessage={handleStatusMessage}
+            />
+          )}
+
+          {activeTab === 'customization' && (
+            <AdminCustomizationTab
+              controller={controller}
+              events={events}
+              selectedEventId={selectedEventId}
+              onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
               onEventsChanged={loadWorkspaceData}
               onRegisterSaveHandler={registerSaveHandler}
               onStatusMessage={handleStatusMessage}
@@ -530,6 +562,13 @@ export function AdminApp({
             </div>
           </div>
         </div>
+      )}
+
+      {isDevSimulatorOpen && (
+        <DevSimulatorModal
+          event={events.find((ev) => ev.id === selectedEventId) ?? events[0] ?? null}
+          onClose={() => setIsDevSimulatorOpen(false)}
+        />
       )}
     </div>
   );

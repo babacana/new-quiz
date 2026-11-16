@@ -5,11 +5,13 @@ import {
   toEventPhoneKey,
 } from '../domain/operationalRules';
 import { normalizePairingCode } from '../domain/pairingUtils';
+import { bytesToDataUrl, sanitizeAssetFileName } from '../domain/visualAssetUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
   AuthSession,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
   PrizeClaimRecord,
@@ -59,6 +61,7 @@ export class InMemoryCloudGateway implements CloudGateway {
   private readonly totemIdByPairingCode = new Map<string, string>();
   private readonly remoteCommands: RemoteCommandPayload[] = [];
   private readonly channelListeners = new Set<(event: TotemChannelEvent) => void | Promise<void>>();
+  private readonly visualAssetsByUrl = new Map<string, { dataUrl: string; mimeType: string }>();
   private currentSession: AuthSession | null = null;
   private staffSequence = 0;
 
@@ -831,5 +834,30 @@ export class InMemoryCloudGateway implements CloudGateway {
     }
 
     return deletedIds;
+  }
+
+  async uploadEventVisualAsset(
+    input: EventVisualAssetUploadInput,
+  ): Promise<{ url: string; fileName: string }> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para enviar imagem do Evento.');
+    }
+
+    const safeFileName = sanitizeAssetFileName(input.fileName);
+    const url = `https://storage.local/event-assets/${input.eventId}/${input.kind}-${safeFileName}`;
+    const dataUrl = bytesToDataUrl(input.bytes, input.mimeType);
+    this.visualAssetsByUrl.set(url, { dataUrl, mimeType: input.mimeType });
+    return { url, fileName: safeFileName };
+  }
+
+  async downloadVisualAsset(url: string): Promise<{ dataUrl: string; mimeType: string }> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para baixar imagem do Evento.');
+    }
+    const stored = this.visualAssetsByUrl.get(url);
+    if (!stored) {
+      throw new Error(`Ativo visual não encontrado na nuvem (${url}).`);
+    }
+    return structuredClone(stored);
   }
 }

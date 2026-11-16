@@ -6,6 +6,7 @@ import {
   toEventPhoneKey,
 } from '../domain/operationalRules';
 import { normalizePairingCode } from '../domain/pairingUtils';
+import { bytesToDataUrl, sanitizeAssetFileName } from '../domain/visualAssetUtils';
 import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
 import type {
   AuthSession,
@@ -14,6 +15,7 @@ import type {
   EventConfig,
   EventCustomizations,
   EventSettings,
+  EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchAnswer,
   MatchRecord,
@@ -1333,5 +1335,51 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  }
+
+  async uploadEventVisualAsset(
+    input: EventVisualAssetUploadInput,
+  ): Promise<{ url: string; fileName: string }> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para enviar imagem do Evento.');
+    }
+
+    const safeFileName = sanitizeAssetFileName(input.fileName);
+    const storagePath = `${input.eventId}/${input.kind}-${Date.now()}-${safeFileName}`;
+
+    const { error: uploadError } = await this.client.storage
+      .from('event-assets')
+      .upload(storagePath, input.bytes, {
+        contentType: input.mimeType || 'image/png',
+        upsert: true,
+      });
+
+    if (uploadError) {
+      throw new Error(`Erro ao enviar imagem para o Supabase Storage: ${uploadError.message}`);
+    }
+
+    const { data } = this.client.storage.from('event-assets').getPublicUrl(storagePath);
+    return {
+      url: data.publicUrl,
+      fileName: safeFileName,
+    };
+  }
+
+  async downloadVisualAsset(url: string): Promise<{ dataUrl: string; mimeType: string }> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para baixar imagem do Evento.');
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Falha ao baixar ativo visual (${response.status}).`);
+    }
+
+    const mimeType = response.headers.get('content-type') || 'image/png';
+    const buffer = await response.arrayBuffer();
+    return {
+      dataUrl: bytesToDataUrl(new Uint8Array(buffer), mimeType),
+      mimeType,
+    };
   }
 }

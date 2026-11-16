@@ -1,7 +1,9 @@
 import type {
   AuthSession,
+  CachedVisualAsset,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
   PrizeClaimRecord,
@@ -48,6 +50,8 @@ export interface LocalStore {
   enqueueSyncItem(item: SyncQueueItem): Promise<void>;
   markSyncItemCompleted(idempotencyKey: string): Promise<void>;
   incrementSyncRetry(idempotencyKey: string, errorMessage?: string): Promise<void>;
+  getVisualAsset(url: string): Promise<CachedVisualAsset | null>;
+  saveVisualAsset(asset: CachedVisualAsset): Promise<void>;
 }
 
 // Resultado do download inicial ou atualização de pacote de Evento vindo da nuvem.
@@ -124,4 +128,10 @@ export interface CloudGateway {
   ): Promise<PrizeClaimRecord[]>;
   expireGiveUpLockouts(eventId: string, participantPhones: string[]): Promise<number>;
   deleteMatches(matchIds: string[]): Promise<string[]>;
+
+  // Armazenamento de ativos visuais (logotipo e plano de fundo por Evento - T7)
+  uploadEventVisualAsset(
+    input: EventVisualAssetUploadInput,
+  ): Promise<{ url: string; fileName: string }>;
+  downloadVisualAsset(url: string): Promise<{ dataUrl: string; mimeType: string }>;
 }

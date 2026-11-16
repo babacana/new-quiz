@@ -77,9 +77,44 @@ export interface EventCustomizationFontSizes {
 
 export interface EventVisualIdentity {
   logoFileName: string;
+  logoUrl?: string | null;
   customBackgroundFileName: string;
+  customBackgroundUrl?: string | null;
   enableCustomBackground: boolean;
   customBackgroundOpacity: number;
+}
+
+export type PredefinedThemeId = 'caesbDefault' | 'lightModern' | 'darkElegant';
+export type CustomizationSection = 'texts' | 'appearance' | 'visualIdentity';
+
+export interface PredefinedThemeDefinition {
+  id: PredefinedThemeId;
+  name: string;
+  customizations: EventCustomizations;
+}
+
+export type VisualAssetKind = 'logo' | 'background';
+
+export interface CachedVisualAsset {
+  url: string;
+  eventId: string;
+  kind: VisualAssetKind;
+  dataUrl: string;
+  mimeType: string;
+  cachedAt: string;
+}
+
+export interface ResolvedVisualAssets {
+  logoSrc: string;
+  backgroundSrc: string | null;
+}
+
+export interface EventVisualAssetUploadInput {
+  eventId: string;
+  kind: VisualAssetKind;
+  fileName: string;
+  mimeType: string;
+  bytes: Uint8Array;
 }
 
 export interface EventCustomizations {
@@ -317,6 +352,7 @@ export interface TotemSessionSnapshot {
   pairing: TotemPairingState;
   deferredCommands: RemoteCommandPayload[];
   lastHeartbeatAt: string | null;
+  resolvedAssets: ResolvedVisualAssets;
 }
 
 export interface StartMatchResult {
@@ -438,7 +474,7 @@ export interface QuestionsImportResult {
   mode: QuestionsImportMode;
 }
 
-export type DirtySection = 'event' | 'settings' | 'question';
+export type DirtySection = 'event' | 'settings' | 'question' | 'customization';
 export type UnsavedChangesResolution = 'save_and_leave' | 'discard_and_leave' | 'cancel';
 
 export interface UnsavedNavigationPrompt {

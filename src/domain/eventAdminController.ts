@@ -1,3 +1,4 @@
+import { mergeEventCustomizations } from './customizationThemes';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from './defaults';
 import {
   matchesParticipantSearch,
@@ -24,6 +25,7 @@ import type {
   EventCustomizationsPatch,
   EventSettings,
   EventUpsertInput,
+  EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
   OfflinePrizeConflictAlert,
@@ -66,6 +68,7 @@ const DIRTY_SECTION_LABELS: Record<DirtySection, string> = {
   event: 'Dados do Evento',
   settings: 'Configurações do Jogo',
   question: 'Questão',
+  customization: 'Personalização Visual',
 };
 
 // Normaliza um nome para gerar slug URL-safe e consistente para Eventos.
@@ -213,18 +216,6 @@ function mergeEventSettings(
       ...base.difficultyPercentages,
       ...(patch?.difficultyPercentages ?? {}),
     },
-  };
-}
-
-function mergeEventCustomizations(
-  base: EventCustomizations,
-  patch?: EventCustomizationsPatch,
-): EventCustomizations {
-  return {
-    texts: { ...base.texts, ...(patch?.texts ?? {}) },
-    colors: { ...base.colors, ...(patch?.colors ?? {}) },
-    fontSizes: { ...base.fontSizes, ...(patch?.fontSizes ?? {}) },
-    visualIdentity: { ...base.visualIdentity, ...(patch?.visualIdentity ?? {}) },
   };
 }
 
@@ -1965,5 +1956,37 @@ export class EventAdminController {
     this.requireStaff();
     const { items } = await this.buildFilteredParticipantItems(options);
     return JSON.stringify(items, null, 2);
+  }
+
+  async uploadEventVisualAsset(
+    input: EventVisualAssetUploadInput,
+  ): Promise<{ url: string; fileName: string }> {
+    this.requireAdmin();
+    if (!input.bytes || input.bytes.length === 0) {
+      throw new Error('Selecione um arquivo de imagem válido para upload.');
+    }
+    return this.cloudGateway.uploadEventVisualAsset(input);
+  }
+
+  async saveEventCustomizations(
+    eventId: string,
+    customizations: EventCustomizationsPatch | EventCustomizations,
+  ): Promise<EventConfig> {
+    this.requireAdmin();
+    const rawOpacity = customizations.visualIdentity?.customBackgroundOpacity;
+    const normalizedPatch: EventCustomizationsPatch =
+      rawOpacity !== undefined
+        ? {
+            ...customizations,
+            visualIdentity: {
+              ...customizations.visualIdentity,
+              customBackgroundOpacity: Math.min(1, Math.max(0, rawOpacity)),
+            },
+          }
+        : customizations;
+
+    const updated = await this.updateEvent(eventId, { customizations: normalizedPatch });
+    this.clearDirty('customization');
+    return updated;
   }
 }
