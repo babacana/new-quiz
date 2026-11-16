@@ -1,7 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import {
   Archive,
-  BarChart3,
   CalendarCog,
   Cpu,
   FileBarChart2,
@@ -33,7 +32,6 @@ const TAB_ICONS: Record<AdminTabId, typeof CalendarCog> = {
   customization: Palette,
   reports: FileBarChart2,
   analytics: LineChart,
-  'question-stats': BarChart3,
   events: CalendarCog,
   questions: HelpCircle,
   totems: Monitor,

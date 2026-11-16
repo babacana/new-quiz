@@ -4,7 +4,6 @@ export type AdminTabId =
   | 'customization'
   | 'reports'
   | 'analytics'
-  | 'question-stats'
   | 'events'
   | 'questions'
   | 'totems'
@@ -42,19 +41,13 @@ export const ADMIN_ROUTES: readonly AdminRouteMeta[] = [
   {
     id: 'reports',
     slug: 'relatorios',
-    label: 'Relatórios e Participantes',
+    label: 'Participantes & Ranking',
     group: 'event',
   },
   {
     id: 'analytics',
     slug: 'analises',
-    label: 'Dashboard Analítico',
-    group: 'event',
-  },
-  {
-    id: 'question-stats',
-    slug: 'estatisticas-questoes',
-    label: 'Estatísticas de Questões',
+    label: 'Análises & Questões',
     group: 'event',
   },
   {
@@ -102,6 +95,9 @@ export function resolveAdminTabFromHash(hash: string): AdminTabId {
     return DEFAULT_ADMIN_TAB;
   }
   const slug = normalized.slice('#admin/'.length).split(/[?#]/)[0]?.replace(/\/+$/, '') ?? '';
+  if (slug === 'estatisticas-questoes') {
+    return 'analytics';
+  }
   const match = ADMIN_ROUTES.find((route) => route.slug === slug);
   return match ? match.id : DEFAULT_ADMIN_TAB;
 }
