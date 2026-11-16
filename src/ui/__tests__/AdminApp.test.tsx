@@ -405,7 +405,8 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     const conflictAlert = await screen.findByRole('alert');
     expect(within(conflictAlert).getByText(/Conflito de Premiação Offline/i)).toBeInTheDocument();
     expect(screen.getByText(/Fila Aguardando Retirada \(1\)/i)).toBeInTheDocument();
-    expect(screen.getByText(/Ranking ao Vivo \(2\)/i)).toBeInTheDocument();
+
+    const operatorNav = screen.getByRole('navigation', { name: 'Navegação do operador' });
 
     // Confirma entrega única via botão Entregue no alerta de conflito
     await user.click(within(conflictAlert).getByRole('button', { name: 'Entregue' }));
@@ -434,11 +435,13 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
         prizeClaim: null,
       });
     });
+    await user.click(within(operatorNav).getByRole('button', { name: /Ranking/i }));
     expect(await screen.findByText(/Ranking ao Vivo \(3\)/i)).toBeInTheDocument();
     expect(screen.getAllByText('LUCAS TEMPO REAL').length).toBeGreaterThanOrEqual(1);
 
-    // Destrava telefone bloqueado por desistência
-    await user.click(screen.getByRole('button', { name: 'Destravar' }));
+    // Alterna para aba Participantes, destrava telefone bloqueado por desistência e despremiar
+    await user.click(within(operatorNav).getByRole('button', { name: /Participantes/i }));
+    await user.click(await screen.findByRole('button', { name: 'Destravar' }));
     expect(
       await screen.findByText(/Telefone \(61\) 98333-4444 destravado no Evento/i),
     ).toBeInTheDocument();
