@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Cpu } from 'lucide-react';
 import { InMemoryCloudGateway } from '../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_CONFIG, DEFAULT_QUIZ_QUESTIONS } from '../domain/defaults';
@@ -6,6 +7,14 @@ import type { Clock, RandomSource } from '../domain/ports';
 import { TotemSessionEngine } from '../domain/totemSessionEngine';
 import type { EventConfig } from '../domain/types';
 import { TotemApp } from './TotemApp';
+import { Button } from './components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
 
 export interface DevSimulatorModalProps {
   event: EventConfig | null;
@@ -236,91 +245,101 @@ export function DevSimulatorModal({ event, onClose }: DevSimulatorModalProps) {
   };
 
   return (
-    <div
-      id="dev-simulator-window"
-      className="modal-overlay dev-simulator-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dev-simulator-title"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
     >
-      <div className="modal-content admin-modal dev-simulator-shell">
-        <div className="dev-simulator-header">
-          <div>
-            <h3 id="dev-simulator-title">Modo Desenvolvedor / Simulador Isolado</h3>
-            <p className="admin-subtitle">
+      <DialogContent
+        id="dev-simulator-window"
+        hideCloseButton
+        className="flex max-h-[92dvh] w-[calc(100%-1rem)] max-w-6xl flex-col gap-4 overflow-y-auto p-4 sm:p-6"
+      >
+        <div className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-start sm:justify-between">
+          <DialogHeader className="text-left">
+            <DialogTitle id="dev-simulator-title" className="flex items-center gap-2 text-lg">
+              <Cpu className="h-5 w-5 text-primary" />
+              Modo Desenvolvedor / Simulador Isolado
+            </DialogTitle>
+            <DialogDescription>
               Janela isolada em memória — nenhuma Partida ou Brinde simulado afeta métricas reais.
-            </p>
-          </div>
-          <button type="button" className="admin-btn admin-btn-danger" onClick={onClose}>
+            </DialogDescription>
+          </DialogHeader>
+          <Button type="button" variant="destructive" size="sm" onClick={onClose}>
             Fechar Simulador
-          </button>
+          </Button>
         </div>
 
-        <div className="dev-simulator-controls">
-          <div className="dev-sim-group">
-            <strong>Telas:</strong>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateScreen('initial')}>
+        <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs font-semibold text-foreground">Telas:</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateScreen('initial')}>
               Inicial
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateScreen('quiz')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateScreen('quiz')}>
               Quiz
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateScreen('result')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateScreen('result')}>
               Resultado
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateScreen('ranking')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateScreen('ranking')}>
               Ranking
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateScreen('idle')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateScreen('idle')}>
               Descanso
-            </button>
+            </Button>
           </div>
 
-          <div className="dev-sim-group">
-            <strong>Modais e Cenários:</strong>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateAlreadyWonModal()}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs font-semibold text-foreground">Modais e Cenários:</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateAlreadyWonModal()}>
               Já Ganhou Brinde
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateResultScenario('top3_modal')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateResultScenario('top3_modal')}>
               Top 3
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateResultScenario('incorrect_modal')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateResultScenario('incorrect_modal')}>
               Gabarito de Erros
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateResultScenario('winner_top1')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateResultScenario('winner_top1')}>
               Ganhador #1
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateResultScenario('winner_non_top3')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateResultScenario('winner_non_top3')}>
               Ganhador Fora do Top 3
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateResultScenario('loser')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateResultScenario('loser')}>
               Não Premiado
-            </button>
+            </Button>
           </div>
 
-          <div className="dev-sim-group">
-            <strong>Estados Temporais:</strong>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateTemporalState('before')}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="mr-1 text-xs font-semibold text-foreground">Estados Temporais:</span>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateTemporalState('before')}>
               Antes do Início
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateTemporalState('during')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateTemporalState('during')}>
               Durante
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateTemporalState('after')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateTemporalState('after')}>
               Após o Fim
-            </button>
-            <button type="button" className="admin-btn admin-btn-secondary" onClick={() => void simulateTemporalState('disabled')}>
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={() => void simulateTemporalState('disabled')}>
               Mensagens Desativadas
-            </button>
+            </Button>
           </div>
         </div>
 
-        <small className="operator-card-meta">{simStatus}</small>
+        <p role="status" className="text-xs font-medium text-muted-foreground">
+          {simStatus}
+        </p>
 
-        <div className="dev-simulator-viewport">
+        <div className="dev-simulator-viewport min-h-[420px] overflow-hidden rounded-lg border border-border bg-background">
           <TotemApp engine={simContext.engine} simulatorModalRequest={modalRequest} />
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

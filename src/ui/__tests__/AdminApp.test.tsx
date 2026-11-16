@@ -96,12 +96,18 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.type(screen.getByLabelText('Senha (mín. 6 caracteres)'), 'CAESB_OP_26');
     await user.click(screen.getByRole('button', { name: 'Cadastrar Membro' }));
 
-    expect(await screen.findByText('carlos@caesb.df.gov.br')).toBeInTheDocument();
-    await user.selectOptions(screen.getByLabelText('Perfil de carlos@caesb.df.gov.br'), 'admin');
+    const staffDesktop = await screen.findByTestId('staff-desktop-table');
+    expect(await within(staffDesktop).findByText('carlos@caesb.df.gov.br')).toBeInTheDocument();
+    await user.selectOptions(
+      within(staffDesktop).getByLabelText('Perfil de carlos@caesb.df.gov.br'),
+      'admin',
+    );
     expect(await screen.findByText(/Perfil de "Carlos Operador" atualizado/i)).toBeInTheDocument();
 
-    const revokeButtons = screen.getAllByRole('button', { name: 'Revogar Acesso' });
+    const revokeButtons = within(staffDesktop).getAllByRole('button', { name: 'Revogar Acesso' });
     await user.click(revokeButtons[revokeButtons.length - 1]);
+    const revokeDialog = await screen.findByRole('dialog');
+    await user.click(within(revokeDialog).getByRole('button', { name: 'Confirmar Revogação' }));
     expect(await screen.findByText(/Acesso de "Carlos Operador" revogado/i)).toBeInTheDocument();
   });
 
@@ -274,25 +280,26 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.selectOptions(screen.getByLabelText('Evento Vinculado'), DEFAULT_EVENT_ID);
     await user.click(screen.getByRole('button', { name: 'Autorizar Pareamento' }));
 
-    expect(await screen.findByText('Totem Hall A')).toBeInTheDocument();
+    const totemsDesktop = await screen.findByTestId('totems-desktop-table');
+    expect(await within(totemsDesktop).findByText('Totem Hall A')).toBeInTheDocument();
     expect(document.getElementById('generated-activation-link')?.textContent).toContain(
       `?pairingCode=${pendingSnap.pairing.pairingCode}`,
     );
-    expect(screen.getByText('Online')).toBeInTheDocument();
-    expect(screen.getByText('Tela: Inicial')).toBeInTheDocument();
-    expect(screen.getByText(/Fila local: 0 item\(ns\)/i)).toBeInTheDocument();
+    expect(within(totemsDesktop).getByText('Online')).toBeInTheDocument();
+    expect(within(totemsDesktop).getByText('Tela: Inicial')).toBeInTheDocument();
+    expect(within(totemsDesktop).getByText(/Fila local: 0 item\(ns\)/i)).toBeInTheDocument();
 
     // Totem inicia Partida -> monitoramento atualiza ao vivo para Em Partida
     await act(async () => {
       await totemEngine.startMatch('FELIPE', '(61) 98888-0001');
     });
-    expect(await screen.findByText('Tela: Em Partida')).toBeInTheDocument();
+    expect(await within(totemsDesktop).findByText('Tela: Em Partida')).toBeInTheDocument();
 
     // Encerra Partida via desistência e testa comandos remotos individuais
     await act(async () => {
       await totemEngine.giveUpMatch();
     });
-    expect(await screen.findByText('Tela: Inicial')).toBeInTheDocument();
+    expect(await within(totemsDesktop).findByText('Tela: Inicial')).toBeInTheDocument();
 
     const rowSelect = screen.getByLabelText('Trocar Evento de Totem Hall A');
     const secondaryEventOption = Array.from(rowSelect.querySelectorAll('option')).find(
