@@ -776,5 +776,83 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       expect(switchedAfterFinish.screen).toBe('initial-screen');
       expect(switchedAfterFinish.deferredCommands).toHaveLength(0);
     });
+
+    it('envia comandos remotos em lote para todos os Totens de um Evento e preserva bloqueio de desistência ao diferir troca', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const eventA = await controller.updateEvent(DEFAULT_EVENT_ID, {
+        settings: { numberOfQuestions: 2, minScoreForPrize: 1, giveUpLockoutMinutes: 5 },
+      });
+      const eventB = await controller.createEvent({
+        name: 'Evento Lote Destino',
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+      });
+      const eventOther = await controller.createEvent({
+        name: 'Evento Isolado',
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+      });
+
+      const makeTotem = () =>
+        new TotemSessionEngine({
+          localStore: new InMemoryLocalStore(),
+          cloudGateway,
+          clock,
+          random,
+          requirePairing: true,
+        });
+
+      const totem1 = makeTotem();
+      const totem2 = makeTotem();
+      const totemOther = makeTotem();
+
+      const p1 = await totem1.initialize();
+      const p2 = await totem2.initialize();
+      const pOther = await totemOther.initialize();
+
+      await controller.authorizeTotemPairing({
+        pairingCode: p1.pairing.pairingCode!,
+        name: 'Totem Lote 1',
+        pinCode: '1111',
+        eventId: eventA.id,
+      });
+      await controller.authorizeTotemPairing({
+        pairingCode: p2.pairing.pairingCode!,
+        name: 'Totem Lote 2',
+        pinCode: '2222',
+        eventId: eventA.id,
+      });
+      await controller.authorizeTotemPairing({
+        pairingCode: pOther.pairing.pairingCode!,
+        name: 'Totem Outro Evento',
+        pinCode: '3333',
+        eventId: eventOther.id,
+      });
+
+      // Comando RELOAD_SCREEN em lote para Evento A afeta apenas totem1 e totem2
+      await totem1.openRankingScreen();
+      await totem2.openRankingScreen();
+      await totemOther.openRankingScreen();
+      await controller.reloadTotemScreen({ eventId: eventA.id }, 'idle-screen');
+      expect(totem1.getSnapshot().screen).toBe('idle-screen');
+      expect(totem2.getSnapshot().screen).toBe('idle-screen');
+      expect(totemOther.getSnapshot().screen).toBe('ranking-screen');
+
+      // Comando SWITCH_EVENT em lote: totem1 está em Partida e desiste -> lockout deve ficar em eventA antes da troca para eventB
+      totem1.wakeFromIdleScreen();
+      await totem1.startMatch('CARLA', '(61) 95555-8899');
+      await controller.switchTotemEvent({ eventId: eventA.id }, eventB.id);
+
+      expect(totem2.getSnapshot().event.id).toBe(eventB.id);
+      expect(totem1.getSnapshot().event.id).toBe(eventA.id);
+      expect(totemOther.getSnapshot().event.id).toBe(eventOther.id);
+
+      await totem1.giveUpMatch();
+      expect(totem1.getSnapshot().event.id).toBe(eventB.id);
+      const lockoutsEventA = cloudGateway.getLockouts(eventA.id);
+      const lockoutsEventB = cloudGateway.getLockouts(eventB.id);
+      expect(lockoutsEventA.some((l) => l.participantPhone === '(61) 95555-8899')).toBe(true);
+      expect(lockoutsEventB).toHaveLength(0);
+    });
   });
 });

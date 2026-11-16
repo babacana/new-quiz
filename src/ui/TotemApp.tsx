@@ -170,10 +170,29 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
 
   useEffect(() => {
     let cancelled = false;
+    let lastObservedScreen = engine.getSnapshot().screen;
+    let lastObservedEventId = engine.getSnapshot().event.id;
+
     const unsubscribe = engine.subscribe((nextSnap) => {
       if (!cancelled) {
+        const screenOrEventReset =
+          (nextSnap.event.id !== lastObservedEventId ||
+            (nextSnap.screen !== lastObservedScreen &&
+              (nextSnap.screen === 'initial-screen' || nextSnap.screen === 'idle-screen'))) &&
+          nextSnap.activeMatch === null;
+
+        lastObservedScreen = nextSnap.screen;
+        lastObservedEventId = nextSnap.event.id;
         setSnapshot(nextSnap);
-        if (nextSnap.pairing.status === 'paired') {
+
+        if (screenOrEventReset) {
+          setNameInput('');
+          setPhoneInput('');
+          setActiveVirtualField(null);
+          setActiveModal((prev) =>
+            prev?.type === 'diagnostics' || prev?.type === 'pin-prompt' ? prev : null,
+          );
+        } else if (nextSnap.pairing.status === 'paired') {
           setActiveModal((prev) => (prev?.type === 'pairing' ? null : prev));
         }
       }
@@ -184,13 +203,21 @@ export function TotemApp({ engine: injectedEngine }: TotemAppProps) {
       .initialize(activationCode ? { activationCode } : undefined)
       .then((initialSnap) => {
         if (!cancelled) {
+          lastObservedScreen = initialSnap.screen;
+          lastObservedEventId = initialSnap.event.id;
           setSnapshot(initialSnap);
         }
       });
 
     const syncQueueAndRefresh = () => {
-      void engine
-        .syncPendingQueue()
+      const currentPairingStatus = engine.getSnapshot().pairing.status;
+      const pairingRefresh =
+        currentPairingStatus === 'awaiting_authorization'
+          ? engine.refreshPairingRegistration()
+          : Promise.resolve(engine.getSnapshot());
+
+      void pairingRefresh
+        .then(() => engine.syncPendingQueue())
         .then(() => engine.sendHeartbeat())
         .then((nextSnap) => {
           if (!cancelled) {
