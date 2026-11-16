@@ -540,7 +540,8 @@ export interface DispatchRemoteCommandInput {
 export type TotemChannelEvent =
   | { type: 'PAIRING_AUTHORIZED'; totem: TotemRecord }
   | { type: 'TELEMETRY_UPDATED'; totem: TotemRecord }
-  | { type: 'REMOTE_COMMAND'; command: RemoteCommandPayload };
+  | { type: 'REMOTE_COMMAND'; command: RemoteCommandPayload }
+  | { type: 'OPERATIONAL_DATA_UPDATED'; eventId?: string };
 
 export interface TotemLocalDiagnostics {
   isOnline: boolean;
@@ -555,4 +556,103 @@ export interface TotemLocalDiagnostics {
   pendingSyncCount: number;
   lastHeartbeatAt: string | null;
   deferredCommandsCount: number;
+}
+
+export type ParticipantPrizeFilter =
+  | 'all'
+  | 'winners'
+  | 'non_winners'
+  | 'awaiting_pickup'
+  | 'delivered'
+  | 'revoked'
+  | 'offline_conflict';
+
+export type ParticipantSortField =
+  | 'playedAt'
+  | 'eventName'
+  | 'participantName'
+  | 'participantPhone'
+  | 'score'
+  | 'timeSeconds'
+  | 'prizeStatus';
+
+export interface ParticipantReportFilterOptions {
+  eventId?: string;
+  search?: string;
+  startDate?: string;
+  endDate?: string;
+  prizeFilter?: ParticipantPrizeFilter;
+  onlyLockedOut?: boolean;
+  exactScore?: number | null;
+  sortBy?: ParticipantSortField;
+  sortDirection?: SortDirection;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface ParticipantReportItem {
+  matchId: string;
+  eventId: string;
+  eventName: string;
+  totemId: string | null;
+  participantName: string;
+  participantPhone: string;
+  score: number;
+  totalQuestions: number;
+  timeSeconds: number;
+  playedAt: string;
+  prizeClaimId: string | null;
+  prizeStatus: PrizeClaimStatus | null;
+  awardedAt: string | null;
+  deliveredAt: string | null;
+  hasOfflineConflict: boolean;
+  hasActiveGiveUpLockout: boolean;
+  activeLockoutExpiresAt: string | null;
+  rankingPosition: number;
+}
+
+export interface ParticipantMatchDetails extends ParticipantReportItem {
+  totalMatchesByPhoneInEvent: number;
+  answers: MatchAnswer[];
+}
+
+export interface OfflinePrizeConflictAlert {
+  eventId: string;
+  eventName: string;
+  participantPhone: string;
+  participantName: string;
+  activeClaimId: string | null;
+  activeMatchId: string | null;
+  activePrizeStatus: PrizeClaimStatus | null;
+  conflictClaims: Array<{
+    claimId: string;
+    matchId: string;
+    totemId: string | null;
+    awardedAt: string;
+    playedAt: string | null;
+    score: number | null;
+  }>;
+}
+
+export interface ActiveGiveUpLockoutItem extends GiveUpLockoutRecord {
+  eventName: string;
+}
+
+export interface PaginatedParticipantReportResult {
+  items: ParticipantReportItem[];
+  totalItems: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  offlineConflicts: OfflinePrizeConflictAlert[];
+  activeLockouts: ActiveGiveUpLockoutItem[];
+}
+
+export interface OperatorEventSnapshot {
+  event: EventConfig;
+  awaitingPickupQueue: ParticipantReportItem[];
+  recentParticipants: ParticipantReportItem[];
+  ranking: RankingEntry[];
+  activeLockouts: GiveUpLockoutRecord[];
+  offlineConflicts: OfflinePrizeConflictAlert[];
 }

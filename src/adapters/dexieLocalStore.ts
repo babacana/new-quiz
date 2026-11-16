@@ -118,6 +118,10 @@ export class DexieLocalStore implements LocalStore {
     });
   }
 
+  async deleteMatch(matchId: string): Promise<void> {
+    await this.db.localMatches.delete(matchId);
+  }
+
   async getPrizeClaims(eventId: string): Promise<PrizeClaimRecord[]> {
     const rows = await this.db.localPrizeWinners.where('eventId').equals(eventId).toArray();
     return rows.map((row) => structuredClone(row.claim));
@@ -131,6 +135,10 @@ export class DexieLocalStore implements LocalStore {
       awardedAt: claim.awardedAt,
       claim: structuredClone(claim),
     });
+  }
+
+  async deletePrizeClaim(claimId: string): Promise<void> {
+    await this.db.localPrizeWinners.delete(claimId);
   }
 
   async getLockouts(eventId: string): Promise<GiveUpLockoutRecord[]> {

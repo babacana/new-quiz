@@ -1,11 +1,17 @@
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from './defaults';
 import {
+  matchesParticipantSearch,
+  normalizePhoneDigits,
+  toEventPhoneKey,
+} from './operationalRules';
+import {
   buildTotemActivationLink,
   generateShortPairingCode,
   normalizePairingCode,
 } from './pairingUtils';
 import type { Clock, CloudGateway, RandomSource } from './ports';
 import type {
+  ActiveGiveUpLockoutItem,
   AuthSession,
   AuthorizeTotemPairingInput,
   CloneEventOverrides,
@@ -18,14 +24,26 @@ import type {
   EventCustomizationsPatch,
   EventSettings,
   EventUpsertInput,
+  GiveUpLockoutRecord,
+  MatchRecord,
+  OfflinePrizeConflictAlert,
+  OperatorEventSnapshot,
+  PaginatedParticipantReportResult,
   PaginatedQuestionsResult,
+  ParticipantMatchDetails,
+  ParticipantPrizeFilter,
+  ParticipantReportFilterOptions,
+  ParticipantReportItem,
+  ParticipantSortField,
   PreparedOption,
   PreparedQuestion,
+  PrizeClaimRecord,
   Question,
   QuestionFilterOptions,
   QuestionUpsertInput,
   QuestionsImportMode,
   QuestionsImportResult,
+  RankingEntry,
   RemoteCommandPayload,
   TotemChannelEvent,
   TotemRecord,
@@ -366,7 +384,262 @@ function normalizeImportedQuestion(raw: Record<string, unknown>): QuestionUpsert
   return parsed;
 }
 
-// Controlador administrativo de Autenticação, Multi-Evento e Banco de Questões Central (T4).
+function isLockoutActiveAt(lockout: GiveUpLockoutRecord, referenceNowMs: number): boolean {
+  const expiresMs = Date.parse(lockout.expiresAt);
+  const lockedMs = Date.parse(lockout.lockedAt);
+  if (!Number.isFinite(expiresMs)) {
+    return false;
+  }
+  if (Number.isFinite(lockedMs) && expiresMs <= lockedMs) {
+    return false;
+  }
+  return expiresMs > referenceNowMs;
+}
+
+function computeEventRankings(matches: MatchRecord[]): {
+  rankingByEvent: Map<string, RankingEntry[]>;
+  rankByMatchId: Map<string, number>;
+} {
+  const byEvent = new Map<string, MatchRecord[]>();
+  for (const match of matches) {
+    const list = byEvent.get(match.eventId) ?? [];
+    list.push(match);
+    byEvent.set(match.eventId, list);
+  }
+
+  const rankingByEvent = new Map<string, RankingEntry[]>();
+  const rankByMatchId = new Map<string, number>();
+
+  for (const [eventId, eventMatches] of byEvent.entries()) {
+    const sorted = [...eventMatches].sort(
+      (a, b) =>
+        b.score - a.score ||
+        a.timeSeconds - b.timeSeconds ||
+        a.playedAt.localeCompare(b.playedAt),
+    );
+    const entries: RankingEntry[] = sorted.map((match, index) => {
+      const position = index + 1;
+      rankByMatchId.set(match.id, position);
+      return {
+        position,
+        matchId: match.id,
+        participantName: match.participantName,
+        participantPhone: match.participantPhone,
+        score: match.score,
+        totalQuestions: match.totalQuestions,
+        timeSeconds: match.timeSeconds,
+        playedAt: match.playedAt,
+      };
+    });
+    rankingByEvent.set(eventId, entries);
+  }
+
+  return { rankingByEvent, rankByMatchId };
+}
+
+function buildOfflineConflicts(
+  eventsById: Map<string, EventConfig>,
+  matchesById: Map<string, MatchRecord>,
+  claims: PrizeClaimRecord[],
+): OfflinePrizeConflictAlert[] {
+  const activeClaimByEventPhone = new Map<string, PrizeClaimRecord>();
+  const conflictClaimsByEventPhone = new Map<string, PrizeClaimRecord[]>();
+
+  for (const claim of claims) {
+    const key = toEventPhoneKey(claim.eventId, claim.participantPhone);
+    if (claim.status === 'awaiting_pickup' || claim.status === 'delivered') {
+      activeClaimByEventPhone.set(key, claim);
+    } else if (claim.status === 'offline_duplicate_conflict') {
+      const list = conflictClaimsByEventPhone.get(key) ?? [];
+      list.push(claim);
+      conflictClaimsByEventPhone.set(key, list);
+    }
+  }
+
+  const alerts: OfflinePrizeConflictAlert[] = [];
+  for (const [key, conflicts] of conflictClaimsByEventPhone.entries()) {
+    const sample = conflicts[0]!;
+    const activeClaim = activeClaimByEventPhone.get(key) ?? null;
+    const event = eventsById.get(sample.eventId);
+
+    alerts.push({
+      eventId: sample.eventId,
+      eventName: event?.name ?? sample.eventId,
+      participantPhone: sample.participantPhone,
+      participantName: activeClaim?.participantName ?? sample.participantName,
+      activeClaimId: activeClaim?.id ?? null,
+      activeMatchId: activeClaim?.matchId ?? null,
+      activePrizeStatus: activeClaim?.status ?? null,
+      conflictClaims: [...conflicts]
+        .sort((a, b) => a.awardedAt.localeCompare(b.awardedAt))
+        .map((conflict) => {
+          const match = matchesById.get(conflict.matchId);
+          return {
+            claimId: conflict.id,
+            matchId: conflict.matchId,
+            totemId: conflict.totemId,
+            awardedAt: conflict.awardedAt,
+            playedAt: match?.playedAt ?? null,
+            score: match?.score ?? null,
+          };
+        }),
+    });
+  }
+
+  return alerts.sort((a, b) => {
+    const latestA = a.conflictClaims[a.conflictClaims.length - 1]?.awardedAt ?? '';
+    const latestB = b.conflictClaims[b.conflictClaims.length - 1]?.awardedAt ?? '';
+    return latestB.localeCompare(latestA);
+  });
+}
+
+function buildParticipantReportItems(params: {
+  eventsById: Map<string, EventConfig>;
+  matches: MatchRecord[];
+  claims: PrizeClaimRecord[];
+  lockouts: GiveUpLockoutRecord[];
+  nowMs: number;
+}): {
+  items: ParticipantReportItem[];
+  rankingByEvent: Map<string, RankingEntry[]>;
+  offlineConflicts: OfflinePrizeConflictAlert[];
+} {
+  const { eventsById, matches, claims, lockouts, nowMs } = params;
+  const matchesById = new Map(matches.map((match) => [match.id, match]));
+  const claimsByMatchId = new Map(claims.map((claim) => [claim.matchId, claim]));
+  const { rankingByEvent, rankByMatchId } = computeEventRankings(matches);
+  const offlineConflicts = buildOfflineConflicts(eventsById, matchesById, claims);
+
+  const conflictPhonesByEvent = new Set(
+    offlineConflicts.map((alert) => toEventPhoneKey(alert.eventId, alert.participantPhone)),
+  );
+
+  const activeLockoutByEventPhone = new Map<string, GiveUpLockoutRecord>();
+  for (const lockout of lockouts) {
+    if (!isLockoutActiveAt(lockout, nowMs)) {
+      continue;
+    }
+    const key = toEventPhoneKey(lockout.eventId, lockout.participantPhone);
+    const existing = activeLockoutByEventPhone.get(key);
+    if (!existing || lockout.expiresAt > existing.expiresAt) {
+      activeLockoutByEventPhone.set(key, lockout);
+    }
+  }
+
+  const items: ParticipantReportItem[] = matches.map((match) => {
+    const claim = claimsByMatchId.get(match.id) ?? null;
+    const event = eventsById.get(match.eventId);
+    const key = toEventPhoneKey(match.eventId, match.participantPhone);
+    const activeLockout = activeLockoutByEventPhone.get(key) ?? null;
+
+    return {
+      matchId: match.id,
+      eventId: match.eventId,
+      eventName: event?.name ?? match.eventId,
+      totemId: match.totemId,
+      participantName: match.participantName,
+      participantPhone: match.participantPhone,
+      score: match.score,
+      totalQuestions: match.totalQuestions,
+      timeSeconds: match.timeSeconds,
+      playedAt: match.playedAt,
+      prizeClaimId: claim?.id ?? null,
+      prizeStatus: claim?.status ?? null,
+      awardedAt: claim?.awardedAt ?? null,
+      deliveredAt: claim?.deliveredAt ?? null,
+      hasOfflineConflict:
+        claim?.status === 'offline_duplicate_conflict' || conflictPhonesByEvent.has(key),
+      hasActiveGiveUpLockout: activeLockout !== null,
+      activeLockoutExpiresAt: activeLockout?.expiresAt ?? null,
+      rankingPosition: rankByMatchId.get(match.id) ?? 0,
+    };
+  });
+
+  return { items, rankingByEvent, offlineConflicts };
+}
+
+function matchesPrizeFilter(
+  item: ParticipantReportItem,
+  prizeFilter: ParticipantPrizeFilter,
+): boolean {
+  switch (prizeFilter) {
+    case 'all':
+      return true;
+    case 'winners':
+      return item.prizeStatus === 'awaiting_pickup' || item.prizeStatus === 'delivered';
+    case 'non_winners':
+      return item.prizeStatus === null || item.prizeStatus === 'revoked';
+    case 'awaiting_pickup':
+      return item.prizeStatus === 'awaiting_pickup';
+    case 'delivered':
+      return item.prizeStatus === 'delivered';
+    case 'revoked':
+      return item.prizeStatus === 'revoked';
+    case 'offline_conflict':
+      return item.hasOfflineConflict;
+  }
+}
+
+function parseFilterDateBoundary(dateStr: string, bound: 'start' | 'end'): number | null {
+  if (dateStr.includes('T')) {
+    const parsed = Date.parse(dateStr);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!match) {
+    const fallback = Date.parse(dateStr);
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+  const [, year, month, day] = match;
+  return bound === 'start'
+    ? new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0).getTime()
+    : new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59, 999).getTime();
+}
+
+function compareParticipantReportItems(
+  a: ParticipantReportItem,
+  b: ParticipantReportItem,
+  sortBy: ParticipantSortField,
+  sortDirection: 'asc' | 'desc',
+): number {
+  const dir = sortDirection === 'asc' ? 1 : -1;
+
+  if (sortBy === 'score') {
+    if (a.score !== b.score) {
+      return (a.score - b.score) * dir;
+    }
+    return a.timeSeconds - b.timeSeconds || a.playedAt.localeCompare(b.playedAt);
+  }
+
+  let cmp = 0;
+  switch (sortBy) {
+    case 'eventName':
+      cmp = a.eventName.localeCompare(b.eventName, 'pt-BR');
+      break;
+    case 'participantName':
+      cmp = a.participantName.localeCompare(b.participantName, 'pt-BR');
+      break;
+    case 'participantPhone':
+      cmp = a.participantPhone.localeCompare(b.participantPhone);
+      break;
+    case 'timeSeconds':
+      cmp = a.timeSeconds - b.timeSeconds;
+      break;
+    case 'prizeStatus':
+      cmp = (a.prizeStatus ?? '').localeCompare(b.prizeStatus ?? '');
+      break;
+    case 'playedAt':
+    default:
+      cmp = a.playedAt.localeCompare(b.playedAt);
+      break;
+  }
+
+  if (cmp !== 0) {
+    return cmp * dir;
+  }
+  return b.playedAt.localeCompare(a.playedAt);
+}
+
 export class EventAdminController {
   private readonly cloudGateway: CloudGateway;
   private readonly clock?: Clock;
@@ -427,6 +700,14 @@ export class EventAdminController {
       throw new Error('Sessão não autenticada. Faça login para continuar.');
     }
     return this.session;
+  }
+
+  private requireStaff(): AuthSession {
+    const session = this.requireAuthenticated();
+    if (session.user.role !== 'admin' && session.user.role !== 'operator') {
+      throw new Error('Acesso negado: perfil sem permissão operacional.');
+    }
+    return session;
   }
 
   private requireAdmin(): AuthSession {
@@ -1250,5 +1531,439 @@ export class EventAdminController {
       targetEventId: target.eventId ?? null,
       targetScreen,
     });
+  }
+
+  private async notifyOperationalEventUpdate(eventId: string): Promise<void> {
+    const events = await this.cloudGateway.listEvents();
+    const targetEvent = events.find((ev) => ev.id === eventId);
+    if (!targetEvent) {
+      return;
+    }
+
+    if (this.session?.user.role === 'admin') {
+      await this.bumpAndNotifyEvent(targetEvent);
+      return;
+    }
+
+    await this.dispatchConfigUpdatedForEvent(targetEvent.id, targetEvent.configVersion);
+  }
+
+  private async fetchOperationalCloudData(eventId?: string): Promise<{
+    events: EventConfig[];
+    eventsById: Map<string, EventConfig>;
+    matches: MatchRecord[];
+    claims: PrizeClaimRecord[];
+    lockouts: GiveUpLockoutRecord[];
+  }> {
+    const [events, matches, claims, lockouts] = await Promise.all([
+      this.cloudGateway.listEvents(),
+      this.cloudGateway.listMatches(eventId),
+      this.cloudGateway.listPrizeClaims(eventId),
+      this.cloudGateway.listGiveUpLockouts(eventId),
+    ]);
+
+    return {
+      events,
+      eventsById: new Map(events.map((event) => [event.id, event])),
+      matches,
+      claims,
+      lockouts,
+    };
+  }
+
+  async getOperatorDashboard(eventId?: string): Promise<OperatorEventSnapshot> {
+    this.requireStaff();
+    const { events, eventsById, matches, claims, lockouts } =
+      await this.fetchOperationalCloudData(eventId);
+
+    const targetEvent = eventId
+      ? events.find((event) => event.id === eventId)
+      : (events.find((event) => event.isActive) ?? events[0]);
+
+    if (!targetEvent) {
+      throw new Error(
+        eventId
+          ? `Evento não encontrado (${eventId}).`
+          : 'Nenhum Evento cadastrado para operar no estande.',
+      );
+    }
+
+    const eventMatches = matches.filter((match) => match.eventId === targetEvent.id);
+    const eventClaims = claims.filter((claim) => claim.eventId === targetEvent.id);
+    const eventLockouts = lockouts.filter((lockout) => lockout.eventId === targetEvent.id);
+    const nowMs = this.clock ? this.clock.now() : Date.now();
+
+    const { items, rankingByEvent, offlineConflicts } = buildParticipantReportItems({
+      eventsById,
+      matches: eventMatches,
+      claims: eventClaims,
+      lockouts: eventLockouts,
+      nowMs,
+    });
+
+    const awaitingPickupQueue = items
+      .filter((item) => item.prizeStatus === 'awaiting_pickup')
+      .sort((a, b) => (a.awardedAt ?? a.playedAt).localeCompare(b.awardedAt ?? b.playedAt));
+
+    const recentParticipants = [...items].sort((a, b) => b.playedAt.localeCompare(a.playedAt));
+
+    return {
+      event: targetEvent,
+      awaitingPickupQueue,
+      recentParticipants,
+      ranking: rankingByEvent.get(targetEvent.id) ?? [],
+      activeLockouts: eventLockouts.filter((lockout) => isLockoutActiveAt(lockout, nowMs)),
+      offlineConflicts,
+    };
+  }
+
+  private async applyPrizeStatusAndNotify(
+    claimIds: string[],
+    status: 'delivered' | 'revoked',
+    deliveredAt: string | null,
+  ): Promise<PrizeClaimRecord[]> {
+    const updated = await this.cloudGateway.updatePrizeClaimsStatus(claimIds, status, deliveredAt);
+    const affectedEventIds = new Set(updated.map((claim) => claim.eventId));
+    for (const eventId of affectedEventIds) {
+      await this.notifyOperationalEventUpdate(eventId);
+    }
+    return updated;
+  }
+
+  async confirmPrizeDeliveries(claimIds: string[]): Promise<PrizeClaimRecord[]> {
+    this.requireStaff();
+    return this.applyPrizeStatusAndNotify(claimIds, 'delivered', this.nowIso());
+  }
+
+  async revokePrizeClaims(claimIds: string[]): Promise<PrizeClaimRecord[]> {
+    this.requireStaff();
+    const requestedSet = new Set(claimIds);
+    if (requestedSet.size === 0) {
+      return [];
+    }
+
+    const allClaims = await this.cloudGateway.listPrizeClaims();
+    const remainingActiveKeys = new Set(
+      allClaims
+        .filter(
+          (claim) =>
+            !requestedSet.has(claim.id) &&
+            (claim.status === 'awaiting_pickup' || claim.status === 'delivered'),
+        )
+        .map((claim) => toEventPhoneKey(claim.eventId, claim.participantPhone)),
+    );
+    const revokedKeys = new Set(
+      allClaims
+        .filter((claim) => requestedSet.has(claim.id))
+        .map((claim) => toEventPhoneKey(claim.eventId, claim.participantPhone)),
+    );
+
+    // Se nenhuma premiação ativa restar ao telefone no Evento, revoga também conflitos offline órfãos.
+    const expandedClaimIds = new Set(requestedSet);
+    for (const claim of allClaims) {
+      if (claim.status !== 'offline_duplicate_conflict') {
+        continue;
+      }
+      const key = toEventPhoneKey(claim.eventId, claim.participantPhone);
+      if (revokedKeys.has(key) && !remainingActiveKeys.has(key)) {
+        expandedClaimIds.add(claim.id);
+      }
+    }
+
+    return this.applyPrizeStatusAndNotify(Array.from(expandedClaimIds), 'revoked', null);
+  }
+
+  async revokePhonePrizeInEvent(
+    eventId: string,
+    participantPhone: string,
+  ): Promise<PrizeClaimRecord[]> {
+    this.requireStaff();
+    const normalizedTargetDigits = normalizePhoneDigits(participantPhone);
+    const targetTrimmed = participantPhone.trim();
+    const claims = await this.cloudGateway.listPrizeClaims(eventId);
+    const targetClaimIds = claims
+      .filter(
+        (claim) =>
+          claim.status !== 'revoked' &&
+          (claim.participantPhone === targetTrimmed ||
+            (normalizedTargetDigits.length > 0 &&
+              normalizePhoneDigits(claim.participantPhone) === normalizedTargetDigits)),
+      )
+      .map((claim) => claim.id);
+
+    if (targetClaimIds.length === 0) {
+      return [];
+    }
+
+    return this.revokePrizeClaims(targetClaimIds);
+  }
+
+  async unlockParticipantPhones(eventId: string, participantPhones: string[]): Promise<number> {
+    this.requireStaff();
+    const unlockedCount = await this.cloudGateway.expireGiveUpLockouts(eventId, participantPhones);
+    if (unlockedCount > 0) {
+      await this.notifyOperationalEventUpdate(eventId);
+    }
+    return unlockedCount;
+  }
+
+  async deleteParticipantMatches(matchIds: string[]): Promise<string[]> {
+    this.requireAdmin();
+    const uniqueIds = Array.from(new Set(matchIds));
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const matches = await this.cloudGateway.listMatches();
+    const uniqueSet = new Set(uniqueIds);
+    const targetMatches = matches.filter((match) => uniqueSet.has(match.id));
+    const affectedEventIds = new Set(targetMatches.map((match) => match.eventId));
+    const affectedEventPhones = new Set(
+      targetMatches.map((match) => toEventPhoneKey(match.eventId, match.participantPhone)),
+    );
+
+    const deletedIds = await this.cloudGateway.deleteMatches(uniqueIds);
+    if (deletedIds.length > 0) {
+      for (const eventId of affectedEventIds) {
+        const remainingClaims = await this.cloudGateway.listPrizeClaims(eventId);
+        const remainingActiveKeys = new Set(
+          remainingClaims
+            .filter((c) => c.status === 'awaiting_pickup' || c.status === 'delivered')
+            .map((c) => toEventPhoneKey(c.eventId, c.participantPhone)),
+        );
+        const orphanConflictIds = remainingClaims
+          .filter(
+            (c) =>
+              c.status === 'offline_duplicate_conflict' &&
+              affectedEventPhones.has(toEventPhoneKey(c.eventId, c.participantPhone)) &&
+              !remainingActiveKeys.has(toEventPhoneKey(c.eventId, c.participantPhone)),
+          )
+          .map((c) => c.id);
+
+        if (orphanConflictIds.length > 0) {
+          await this.cloudGateway.updatePrizeClaimsStatus(orphanConflictIds, 'revoked', null);
+        }
+
+        await this.bumpEventConfigVersion(eventId);
+      }
+    }
+
+    return deletedIds;
+  }
+
+  private async buildFilteredParticipantItems(
+    options: ParticipantReportFilterOptions = {},
+  ): Promise<{
+    items: ParticipantReportItem[];
+    offlineConflicts: OfflinePrizeConflictAlert[];
+    activeLockouts: ActiveGiveUpLockoutItem[];
+  }> {
+    const scopedEventId =
+      options.eventId && options.eventId !== 'all' ? options.eventId : undefined;
+    const { eventsById, matches, claims, lockouts } =
+      await this.fetchOperationalCloudData(scopedEventId);
+
+    const nowMs = this.clock ? this.clock.now() : Date.now();
+    const { items, offlineConflicts } = buildParticipantReportItems({
+      eventsById,
+      matches,
+      claims,
+      lockouts,
+      nowMs,
+    });
+
+    const searchRaw = options.search?.trim() ?? '';
+    const startMs = options.startDate ? parseFilterDateBoundary(options.startDate, 'start') : null;
+    const endMs = options.endDate ? parseFilterDateBoundary(options.endDate, 'end') : null;
+    const prizeFilter = options.prizeFilter ?? 'all';
+    const exactScore =
+      typeof options.exactScore === 'number' && Number.isFinite(options.exactScore)
+        ? options.exactScore
+        : null;
+
+    const filtered = items.filter((item) => {
+      if (
+        searchRaw &&
+        !matchesParticipantSearch(item.participantName, item.participantPhone, searchRaw)
+      ) {
+        return false;
+      }
+
+      const playedMs = Date.parse(item.playedAt);
+      if (startMs !== null && Number.isFinite(startMs) && playedMs < startMs) {
+        return false;
+      }
+      if (endMs !== null && Number.isFinite(endMs) && playedMs > endMs) {
+        return false;
+      }
+
+      if (!matchesPrizeFilter(item, prizeFilter)) {
+        return false;
+      }
+
+      if (options.onlyLockedOut && !item.hasActiveGiveUpLockout) {
+        return false;
+      }
+
+      if (exactScore !== null && item.score !== exactScore) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const sortBy = options.sortBy ?? 'playedAt';
+    const sortDirection = options.sortDirection ?? 'desc';
+    const sorted = [...filtered].sort((a, b) =>
+      compareParticipantReportItems(a, b, sortBy, sortDirection),
+    );
+
+    const activeLockouts: ActiveGiveUpLockoutItem[] = lockouts
+      .filter((lockout) => {
+        if (!isLockoutActiveAt(lockout, nowMs)) {
+          return false;
+        }
+        if (searchRaw && !matchesParticipantSearch('', lockout.participantPhone, searchRaw)) {
+          return false;
+        }
+        const lockedMs = Date.parse(lockout.lockedAt);
+        if (startMs !== null && Number.isFinite(startMs) && lockedMs < startMs) {
+          return false;
+        }
+        if (endMs !== null && Number.isFinite(endMs) && lockedMs > endMs) {
+          return false;
+        }
+        return true;
+      })
+      .map((lockout) => ({
+        ...lockout,
+        eventName: eventsById.get(lockout.eventId)?.name ?? lockout.eventId,
+      }));
+
+    return { items: sorted, offlineConflicts, activeLockouts };
+  }
+
+  async queryParticipantReports(
+    options: ParticipantReportFilterOptions = {},
+  ): Promise<PaginatedParticipantReportResult> {
+    this.requireStaff();
+    const { items, offlineConflicts, activeLockouts } =
+      await this.buildFilteredParticipantItems(options);
+
+    const pageSize = Math.max(1, Math.floor(options.pageSize ?? 20));
+    const totalItems = items.length;
+    const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+    const page = Math.min(Math.max(1, Math.floor(options.page ?? 1)), totalPages);
+    const startIndex = (page - 1) * pageSize;
+
+    return {
+      items: items.slice(startIndex, startIndex + pageSize),
+      totalItems,
+      page,
+      pageSize,
+      totalPages,
+      offlineConflicts,
+      activeLockouts,
+    };
+  }
+
+  async getParticipantMatchDetails(matchId: string): Promise<ParticipantMatchDetails> {
+    this.requireStaff();
+    const allMatches = await this.cloudGateway.listMatches();
+    const targetMatch = allMatches.find((match) => match.id === matchId);
+    if (!targetMatch) {
+      throw new Error(`Partida não encontrada (${matchId}).`);
+    }
+
+    const [events, eventClaims, eventLockouts] = await Promise.all([
+      this.cloudGateway.listEvents(),
+      this.cloudGateway.listPrizeClaims(targetMatch.eventId),
+      this.cloudGateway.listGiveUpLockouts(targetMatch.eventId),
+    ]);
+
+    const eventsById = new Map(events.map((event) => [event.id, event]));
+    const eventMatches = allMatches.filter((match) => match.eventId === targetMatch.eventId);
+    const nowMs = this.clock ? this.clock.now() : Date.now();
+
+    const { items } = buildParticipantReportItems({
+      eventsById,
+      matches: eventMatches,
+      claims: eventClaims,
+      lockouts: eventLockouts,
+      nowMs,
+    });
+
+    const targetItem = items.find((item) => item.matchId === matchId);
+    if (!targetItem) {
+      throw new Error(`Dados da Partida não encontrados (${matchId}).`);
+    }
+
+    const matchesAtOccasion = eventMatches.filter(
+      (match) => match.playedAt <= targetMatch.playedAt,
+    );
+    const { rankByMatchId: occasionRanks } = computeEventRankings(matchesAtOccasion);
+    const totalMatchesByPhoneInEvent = eventMatches.filter(
+      (match) => match.participantPhone === targetMatch.participantPhone,
+    ).length;
+
+    return {
+      ...targetItem,
+      rankingPosition: occasionRanks.get(matchId) ?? targetItem.rankingPosition,
+      totalMatchesByPhoneInEvent,
+      answers: structuredClone(targetMatch.answers),
+    };
+  }
+
+  async exportParticipantsCsv(options: ParticipantReportFilterOptions = {}): Promise<string> {
+    this.requireStaff();
+    const { items } = await this.buildFilteredParticipantItems(options);
+    const headers = [
+      'matchId',
+      'eventId',
+      'eventName',
+      'participantName',
+      'participantPhone',
+      'score',
+      'totalQuestions',
+      'timeSeconds',
+      'rankingPosition',
+      'playedAt',
+      'prizeStatus',
+      'deliveredAt',
+      'hasOfflineConflict',
+      'hasActiveGiveUpLockout',
+    ];
+
+    const lines = [
+      headers.join(','),
+      ...items.map((item) =>
+        [
+          item.matchId,
+          item.eventId,
+          item.eventName,
+          item.participantName,
+          item.participantPhone,
+          item.score,
+          item.totalQuestions,
+          item.timeSeconds,
+          item.rankingPosition,
+          item.playedAt,
+          item.prizeStatus ?? 'none',
+          item.deliveredAt ?? '',
+          item.hasOfflineConflict,
+          item.hasActiveGiveUpLockout,
+        ]
+          .map((value) => escapeCsvField(value))
+          .join(','),
+      ),
+    ];
+
+    return lines.join('\n');
+  }
+
+  async exportParticipantsJson(options: ParticipantReportFilterOptions = {}): Promise<string> {
+    this.requireStaff();
+    const { items } = await this.buildFilteredParticipantItems(options);
+    return JSON.stringify(items, null, 2);
   }
 }
