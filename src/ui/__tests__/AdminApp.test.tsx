@@ -175,18 +175,19 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     });
 
     // Pré-visualização no formato do Quiz
-    await user.click(screen.getByRole('button', { name: 'Pré-visualizar' }));
-    expect(await screen.findByRole('dialog', { name: 'Pré-visualização da Questão no Quiz' })).toBeInTheDocument();
+    const desktopQuestionsTable = screen.getByTestId('questions-desktop-table');
+    await user.click(within(desktopQuestionsTable).getByRole('button', { name: 'Pré-visualizar' }));
+    expect(await screen.findByRole('dialog', { name: 'Pré-visualização no Quiz' })).toBeInTheDocument();
     expect(screen.getByText('Correta')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Fechar Pré-visualização' }));
 
     // Seleciona a questão encontrada e executa ação em lote (Desabilitar Selecionadas)
-    await user.click(screen.getByLabelText('Selecionar questão #3'));
+    await user.click(within(desktopQuestionsTable).getByLabelText('Selecionar questão #3'));
     await user.click(screen.getByRole('button', { name: 'Desabilitar Selecionadas' }));
     expect(await screen.findByText(/1 questão\(ões\) desabilitada\(s\)/i)).toBeInTheDocument();
 
     // Testa proteção de Dirty Check ao editar questão e tentar fechar o editor sem salvar
-    await user.click(screen.getByRole('button', { name: 'Editar' }));
+    await user.click(within(desktopQuestionsTable).getByRole('button', { name: 'Editar' }));
     const textInput = await screen.findByLabelText('Enunciado da Questão');
     await user.type(textInput, ' (editada)');
     await user.click(screen.getByRole('button', { name: 'Fechar Editor' }));
@@ -195,7 +196,7 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(screen.queryByLabelText('Enunciado da Questão')).not.toBeInTheDocument();
 
     // Exclui individualmente a questão #3 na linha da listagem
-    await user.click(screen.getByRole('button', { name: 'Excluir questão #3' }));
+    await user.click(within(desktopQuestionsTable).getByRole('button', { name: 'Excluir questão #3' }));
     expect(await screen.findByText(/Questão #3 excluída\./i)).toBeInTheDocument();
 
     // Importa JSON no modo mesclar

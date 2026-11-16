@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Eye, Image, Palette, Pencil, RotateCcw, Save, Type } from 'lucide-react';
 import {
   PREDEFINED_THEMES,
   applyPredefinedTheme,
@@ -17,6 +18,11 @@ import type {
   VisualAssetKind,
 } from '../domain/types';
 import { CustomizationPreview } from './CustomizationPreview';
+import { Button } from './components/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
+import { Input } from './components/ui/input';
+import { Label } from './components/ui/label';
+import { cn } from './lib/utils';
 
 export interface AdminCustomizationTabProps {
   controller: EventAdminController;
@@ -96,12 +102,11 @@ async function readFileAsBytes(file: File): Promise<Uint8Array> {
   });
 }
 
-// Aba administrativa de Personalização Visual por Evento (temas, upload de imagens, edição e pré-visualização).
+// Aba administrativa de Aparência do Totem: sub-seções SaaS, split-view desktop, alternância Editar/Pré-visualizar mobile e sticky action bar.
 export function AdminCustomizationTab({
   controller,
   events,
   selectedEventId,
-  onSelectEvent,
   onEventsChanged,
   onRegisterSaveHandler,
   onStatusMessage,
@@ -114,19 +119,30 @@ export function AdminCustomizationTab({
   const [draft, setDraft] = useState<EventCustomizations>(() =>
     structuredClone(targetEvent?.customizations ?? DEFAULT_CUSTOMIZATIONS),
   );
+  const [isDirty, setIsDirty] = useState(false);
+  const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
   const [uploadingKind, setUploadingKind] = useState<VisualAssetKind | null>(null);
   const [saving, setSaving] = useState(false);
 
+  const resetFromEvent = useCallback(
+    (ev: EventConfig) => {
+      setDraft(structuredClone(ev.customizations));
+      setIsDirty(false);
+      controller.clearDirty('customization');
+    },
+    [controller],
+  );
+
   useEffect(() => {
     if (targetEvent) {
-      setDraft(structuredClone(targetEvent.customizations));
-      controller.clearDirty('customization');
+      resetFromEvent(targetEvent);
     }
-  }, [targetEvent, controller]);
+  }, [targetEvent, resetFromEvent]);
 
   const markDraftDirty = useCallback(
     (next: EventCustomizations) => {
       setDraft(next);
+      setIsDirty(true);
       controller.markDirty('customization', true);
     },
     [controller],
@@ -139,6 +155,7 @@ export function AdminCustomizationTab({
     setSaving(true);
     try {
       const saved = await controller.saveEventCustomizations(targetEvent.id, draft);
+      setIsDirty(false);
       onStatusMessage(
         'success',
         `Personalização visual salva para "${saved.name}" (versão ${saved.configVersion}).`,
@@ -218,278 +235,384 @@ export function AdminCustomizationTab({
 
   if (!targetEvent) {
     return (
-      <section className="admin-panel-card">
-        <p className="admin-empty-hint">Crie ou selecione um Evento para personalizar.</p>
-      </section>
+      <Card>
+        <CardHeader>
+          <CardTitle>Personalização Visual do Evento</CardTitle>
+          <CardDescription>Crie ou selecione um Evento para personalizar.</CardDescription>
+        </CardHeader>
+      </Card>
     );
   }
 
   const opacityPercent = Math.round(draft.visualIdentity.customBackgroundOpacity * 100);
 
   return (
-    <section id="admin-customization-tab" className="admin-panel-card">
-      <div className="admin-panel-header">
+    <div id="admin-customization-tab" className="space-y-6 pb-20">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3>Personalização Visual do Evento</h3>
-          <p className="admin-subtitle">
-            Aplique temas pré-definidos, envie logotipo e plano de fundo para a nuvem e visualize
-            em tempo real.
+          <h1 className="text-2xl font-bold tracking-tight">Personalização Visual do Evento</h1>
+          <p className="text-sm text-muted-foreground">
+            Editando <strong>{targetEvent.name}</strong> (v{targetEvent.configVersion}) — mudanças
+            refletem no preview isolado do Totem.
           </p>
         </div>
 
-        <div className="admin-panel-actions">
-          <label className="operator-event-select-label">
-            <span>Evento Selecionado</span>
-            <select
-              aria-label="Evento para Personalizar"
-              value={targetEvent.id}
-              onChange={(e) => onSelectEvent(e.target.value)}
-            >
-              {events.map((ev) => (
-                <option key={ev.id} value={ev.id}>
-                  {ev.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
             type="button"
-            className="admin-btn admin-btn-danger"
+            variant="destructive"
+            size="sm"
             onClick={() => handleRestoreSection('all')}
           >
+            <RotateCcw className="h-4 w-4" />
             Restaurar Padrões
-          </button>
-          <button
-            type="button"
-            className="admin-btn admin-btn-primary"
-            disabled={saving}
-            onClick={() => void handleSave()}
-          >
-            {saving ? 'Salvando...' : 'Salvar Personalização'}
-          </button>
+          </Button>
         </div>
       </div>
 
-      <div className="customization-layout-grid">
-        <div className="customization-editors-column">
-          <div className="customization-section-box">
-            <h4>Galeria de Temas Pré-Definidos</h4>
-            <div className="themes-gallery-grid">
-              {PREDEFINED_THEMES.map((theme) => (
-                <button
-                  key={theme.id}
-                  type="button"
-                  className="theme-preset-card"
-                  onClick={() => handleApplyTheme(theme.id)}
-                >
-                  <span
-                    className="theme-preset-swatch"
-                    style={{
-                      backgroundColor: theme.customizations.colors.quizMainBackground,
-                      borderColor: theme.customizations.colors.quizPrimaryButtonBg,
-                    }}
-                  />
-                  <strong>{theme.name}</strong>
-                </button>
-              ))}
-            </div>
-          </div>
+      {/* Alternância Editar / Pré-visualizar em telas menores */}
+      <div
+        data-testid="customization-mobile-toggle"
+        className="inline-flex w-full rounded-lg border border-border bg-muted/40 p-1 lg:hidden"
+      >
+        <Button
+          type="button"
+          variant={mobilePane === 'editor' ? 'default' : 'ghost'}
+          size="sm"
+          className="flex-1"
+          onClick={() => setMobilePane('editor')}
+        >
+          <Pencil className="h-4 w-4" />
+          Editar
+        </Button>
+        <Button
+          type="button"
+          variant={mobilePane === 'preview' ? 'default' : 'ghost'}
+          size="sm"
+          className="flex-1"
+          onClick={() => setMobilePane('preview')}
+        >
+          <Eye className="h-4 w-4" />
+          Pré-visualizar
+        </Button>
+      </div>
 
-          <div className="customization-section-box">
-            <div className="customization-section-header">
-              <h4>Identidade Visual (Logotipo e Fundo)</h4>
-              <button
+      {/* Split-view no desktop (lg+) */}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)] lg:items-start lg:gap-6">
+        <div
+          data-testid="customization-editor-pane"
+          data-mobile-visible={mobilePane === 'editor' ? 'true' : 'false'}
+          className={cn('space-y-6', mobilePane !== 'editor' && 'hidden lg:block')}
+        >
+          {/* Sub-seção 1: Galeria de Temas */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <Palette className="h-4 w-4 text-muted-foreground" />
+                Galeria de Temas Pré-Definidos
+              </CardTitle>
+              <CardDescription>
+                Aplique um tema base instantaneamente e ajuste os detalhes abaixo se desejar.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3">
+                {PREDEFINED_THEMES.map((theme) => (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => handleApplyTheme(theme.id)}
+                    className="flex cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-background p-2.5 text-left text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+                  >
+                    <span
+                      className="h-6 w-6 shrink-0 rounded-full border-2"
+                      style={{
+                        backgroundColor: theme.customizations.colors.quizMainBackground,
+                        borderColor: theme.customizations.colors.quizPrimaryButtonBg,
+                      }}
+                    />
+                    <span className="truncate">{theme.name}</span>
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Sub-seção 2: Identidade Visual (Logo & Plano de Fundo) */}
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Image className="h-4 w-4 text-muted-foreground" />
+                  Identidade Visual (Logotipo e Fundo)
+                </CardTitle>
+                <CardDescription>
+                  Envie logotipo e imagem de fundo armazenados na nuvem para uso offline nos Totens.
+                </CardDescription>
+              </div>
+              <Button
                 type="button"
-                className="admin-btn admin-btn-secondary"
+                variant="outline"
+                size="sm"
                 onClick={() => handleRestoreSection('visualIdentity')}
               >
                 Restaurar Identidade Visual
-              </button>
-            </div>
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-logo-input">Upload de Logotipo</Label>
+                  <Input
+                    id="upload-logo-input"
+                    type="file"
+                    accept="image/*"
+                    disabled={uploadingKind === 'logo'}
+                    onChange={(e) => void handleAssetUpload('logo', e.target.files?.[0] ?? null)}
+                  />
+                  <p className="truncate text-xs text-muted-foreground">
+                    Atual: {draft.visualIdentity.logoUrl || draft.visualIdentity.logoFileName}
+                  </p>
+                </div>
 
-            <div className="customization-fields-grid">
-              <div className="form-group">
-                <label htmlFor="upload-logo-input">Upload de Logotipo</label>
-                <input
-                  id="upload-logo-input"
-                  type="file"
-                  accept="image/*"
-                  disabled={uploadingKind === 'logo'}
-                  onChange={(e) => void handleAssetUpload('logo', e.target.files?.[0] ?? null)}
-                />
-                <small className="operator-card-meta">
-                  Atual: {draft.visualIdentity.logoUrl || draft.visualIdentity.logoFileName}
-                </small>
+                <div className="space-y-1.5">
+                  <Label htmlFor="upload-background-input">Upload de Plano de Fundo</Label>
+                  <Input
+                    id="upload-background-input"
+                    type="file"
+                    accept="image/*"
+                    disabled={uploadingKind === 'background'}
+                    onChange={(e) =>
+                      void handleAssetUpload('background', e.target.files?.[0] ?? null)
+                    }
+                  />
+                  <p className="truncate text-xs text-muted-foreground">
+                    Atual:{' '}
+                    {draft.visualIdentity.customBackgroundUrl ||
+                      draft.visualIdentity.customBackgroundFileName ||
+                      'Nenhum'}
+                  </p>
+                </div>
               </div>
 
-              <div className="form-group">
-                <label htmlFor="upload-background-input">Upload de Plano de Fundo</label>
-                <input
-                  id="upload-background-input"
-                  type="file"
-                  accept="image/*"
-                  disabled={uploadingKind === 'background'}
-                  onChange={(e) =>
-                    void handleAssetUpload('background', e.target.files?.[0] ?? null)
-                  }
-                />
-                <small className="operator-card-meta">
-                  Atual:{' '}
-                  {draft.visualIdentity.customBackgroundUrl ||
-                    draft.visualIdentity.customBackgroundFileName ||
-                    'Nenhum'}
-                </small>
-              </div>
-            </div>
-
-            <div className="customization-fields-grid">
-              <label className="admin-checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={draft.visualIdentity.enableCustomBackground}
-                  onChange={(e) =>
-                    markDraftDirty({
-                      ...draft,
-                      visualIdentity: {
-                        ...draft.visualIdentity,
-                        enableCustomBackground: e.target.checked,
-                      },
-                    })
-                  }
-                />
-                Ativar plano de fundo personalizado
-              </label>
-
-              <div className="form-group">
-                <label htmlFor="background-opacity-slider">
-                  Opacidade do Plano de Fundo ({opacityPercent}%)
+              <div className="grid gap-4 sm:grid-cols-2 sm:items-center">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={draft.visualIdentity.enableCustomBackground}
+                    onChange={(e) =>
+                      markDraftDirty({
+                        ...draft,
+                        visualIdentity: {
+                          ...draft.visualIdentity,
+                          enableCustomBackground: e.target.checked,
+                        },
+                      })
+                    }
+                    className="h-4 w-4 rounded border-input"
+                  />
+                  Ativar plano de fundo personalizado
                 </label>
-                <input
-                  id="background-opacity-slider"
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={opacityPercent}
-                  onChange={(e) =>
-                    markDraftDirty({
-                      ...draft,
-                      visualIdentity: {
-                        ...draft.visualIdentity,
-                        customBackgroundOpacity: Number(e.target.value) / 100,
-                      },
-                    })
-                  }
-                />
-              </div>
-            </div>
-          </div>
 
-          <div className="customization-section-box">
-            <div className="customization-section-header">
-              <h4>Cores e Tipografia</h4>
-              <button
+                <div className="space-y-1.5">
+                  <Label htmlFor="background-opacity-slider">
+                    Opacidade do Plano de Fundo ({opacityPercent}%)
+                  </Label>
+                  <input
+                    id="background-opacity-slider"
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={opacityPercent}
+                    className="w-full accent-primary"
+                    onChange={(e) =>
+                      markDraftDirty({
+                        ...draft,
+                        visualIdentity: {
+                          ...draft.visualIdentity,
+                          customBackgroundOpacity: Number(e.target.value) / 100,
+                        },
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Sub-seção 3: Cores e Tipografia */}
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Type className="h-4 w-4 text-muted-foreground" />
+                  Cores e Tipografia
+                </CardTitle>
+                <CardDescription>
+                  Paleta completa do Totem e tamanhos de fonte para leitura à distância.
+                </CardDescription>
+              </div>
+              <Button
                 type="button"
-                className="admin-btn admin-btn-secondary"
+                variant="outline"
+                size="sm"
                 onClick={() => handleRestoreSection('appearance')}
               >
                 Restaurar Aparência
-              </button>
-            </div>
+              </Button>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                {COLOR_FIELD_LABELS.map(({ key, label }) => (
+                  <div key={key} className="space-y-1.5">
+                    <Label htmlFor={`color-${key}`}>{label}</Label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        id={`color-${key}`}
+                        type="color"
+                        className="h-9 w-11 shrink-0 cursor-pointer rounded-md border border-input bg-background p-0.5"
+                        value={
+                          /^#[0-9a-fA-F]{6}$/.test(draft.colors[key])
+                            ? draft.colors[key]
+                            : '#002244'
+                        }
+                        onChange={(e) =>
+                          markDraftDirty({
+                            ...draft,
+                            colors: { ...draft.colors, [key]: e.target.value },
+                          })
+                        }
+                      />
+                      <Input
+                        type="text"
+                        aria-label={`${label} (Hex)`}
+                        value={draft.colors[key]}
+                        onChange={(e) =>
+                          markDraftDirty({
+                            ...draft,
+                            colors: { ...draft.colors, [key]: e.target.value },
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
 
-            <div className="customization-colors-grid">
-              {COLOR_FIELD_LABELS.map(({ key, label }) => (
-                <div key={key} className="form-group">
-                  <label htmlFor={`color-${key}`}>{label}</label>
-                  <div className="color-input-pair">
-                    <input
-                      id={`color-${key}`}
-                      type="color"
-                      value={
-                        /^#[0-9a-fA-F]{6}$/.test(draft.colors[key])
-                          ? draft.colors[key]
-                          : '#002244'
-                      }
-                      onChange={(e) =>
-                        markDraftDirty({
-                          ...draft,
-                          colors: { ...draft.colors, [key]: e.target.value },
-                        })
-                      }
-                    />
-                    <input
+              <div className="grid gap-3 sm:grid-cols-2">
+                {FONT_FIELD_LABELS.map(({ key, label }) => (
+                  <div key={key} className="space-y-1.5">
+                    <Label htmlFor={`font-${key}`}>{label}</Label>
+                    <Input
+                      id={`font-${key}`}
                       type="text"
-                      aria-label={`${label} (Hex)`}
-                      value={draft.colors[key]}
+                      value={draft.fontSizes[key]}
                       onChange={(e) =>
                         markDraftDirty({
                           ...draft,
-                          colors: { ...draft.colors, [key]: e.target.value },
+                          fontSizes: { ...draft.fontSizes, [key]: e.target.value },
                         })
                       }
                     />
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
 
-            <div className="customization-fields-grid">
-              {FONT_FIELD_LABELS.map(({ key, label }) => (
-                <div key={key} className="form-group">
-                  <label htmlFor={`font-${key}`}>{label}</label>
-                  <input
-                    id={`font-${key}`}
-                    type="text"
-                    value={draft.fontSizes[key]}
-                    onChange={(e) =>
-                      markDraftDirty({
-                        ...draft,
-                        fontSizes: { ...draft.fontSizes, [key]: e.target.value },
-                      })
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="customization-section-box">
-            <div className="customization-section-header">
-              <h4>Textos da Interface</h4>
-              <button
+          {/* Sub-seção 4: Textos da Interface */}
+          <Card>
+            <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+              <div>
+                <CardTitle className="text-lg">Textos da Interface</CardTitle>
+                <CardDescription>
+                  Mensagens exibidas nas telas do Totem e nos modais de feedback.
+                </CardDescription>
+              </div>
+              <Button
                 type="button"
-                className="admin-btn admin-btn-secondary"
+                variant="outline"
+                size="sm"
                 onClick={() => handleRestoreSection('texts')}
               >
                 Restaurar Textos
-              </button>
-            </div>
-
-            <div className="customization-fields-grid">
-              {TEXT_FIELD_LABELS.map(({ key, label }) => (
-                <div key={key} className="form-group">
-                  <label htmlFor={`text-${key}`}>{label}</label>
-                  <input
-                    id={`text-${key}`}
-                    type="text"
-                    value={draft.texts[key]}
-                    onChange={(e) =>
-                      markDraftDirty({
-                        ...draft,
-                        texts: { ...draft.texts, [key]: e.target.value },
-                      })
-                    }
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {TEXT_FIELD_LABELS.map(({ key, label }) => (
+                  <div key={key} className="space-y-1.5">
+                    <Label htmlFor={`text-${key}`}>{label}</Label>
+                    <Input
+                      id={`text-${key}`}
+                      type="text"
+                      value={draft.texts[key]}
+                      onChange={(e) =>
+                        markDraftDirty({
+                          ...draft,
+                          texts: { ...draft.texts, [key]: e.target.value },
+                        })
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
         </div>
 
-        <div className="customization-preview-column">
-          <h4>Pré-Visualização ao Vivo</h4>
-          <CustomizationPreview customizations={draft} />
+        {/* Coluna de Preview ao Vivo Isolado */}
+        <div
+          data-testid="customization-preview-pane"
+          data-mobile-visible={mobilePane === 'preview' ? 'true' : 'false'}
+          className={cn(
+            'lg:sticky lg:top-20 lg:self-start',
+            mobilePane !== 'preview' && 'hidden lg:block',
+          )}
+        >
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Pré-Visualização ao Vivo</CardTitle>
+              <CardDescription>
+                Simulação isolada das telas do Totem com as cores e textos atuais.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <CustomizationPreview customizations={draft} />
+            </CardContent>
+          </Card>
         </div>
       </div>
-    </section>
+
+      {/* Barra inferior fixa exibida quando houver alterações não salvas */}
+      {isDirty && (
+        <div
+          data-testid="customization-sticky-action-bar"
+          role="region"
+          aria-label="Alterações pendentes de aparência"
+          className="sticky bottom-0 z-20 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card/95 px-4 py-3 shadow-lg backdrop-blur-xs"
+        >
+          <p className="text-sm font-medium text-foreground">
+            Você tem alterações não salvas na aparência deste Evento.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => resetFromEvent(targetEvent)}
+              disabled={saving}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Descartar
+            </Button>
+            <Button type="button" size="sm" onClick={() => void handleSave()} disabled={saving}>
+              <Save className="h-4 w-4" />
+              {saving ? 'Salvando...' : 'Salvar Personalização'}
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
