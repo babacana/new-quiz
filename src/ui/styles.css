@@ -1454,6 +1454,10 @@ body {
 }
 
 /* Modais de Pareamento, PIN e Diagnóstico Local do Totem */
+#totem-pairing-modal {
+  z-index: 999;
+}
+
 .totem-pairing-code-box {
   text-align: center;
   margin: 12px 0 18px;

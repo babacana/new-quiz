@@ -137,6 +137,7 @@ export class TotemSessionEngine {
   private deviceOnlineOverride: boolean | null = null;
   private deferredCommands: RemoteCommandPayload[] = [];
   private stagedSnapshotsByEventId = new Map<string, CloudEventSnapshot>();
+  private readonly processedCommandIds = new Set<string>();
   private lastHeartbeatAt: string | null = null;
   private readonly snapshotListeners = new Set<(snapshot: TotemSessionSnapshot) => void>();
   private readonly channelUnsubscribe: () => void;
@@ -323,8 +324,10 @@ export class TotemSessionEngine {
       await this.activateWithCode(options.activationCode);
       preservedError = this.lastValidationError;
       if (this.pairingStatus !== 'paired') {
-        await this.requestPairing();
+        await this.refreshPairingRegistration();
       }
+    } else if (this.pairingStatus === 'awaiting_authorization') {
+      await this.refreshPairingRegistration();
     } else if ((options?.requirePairing ?? this.requirePairing) && this.pairingStatus !== 'paired') {
       await this.requestPairing();
     }
@@ -537,9 +540,52 @@ export class TotemSessionEngine {
     return false;
   }
 
+  async refreshPairingRegistration(): Promise<TotemSessionSnapshot> {
+    if (this.pairingStatus === 'paired') {
+      return this.getSnapshot();
+    }
+
+    if (!this.totemConfig.totemId || !this.totemConfig.pairingCode) {
+      return this.requestPairing();
+    }
+
+    if (this.isEffectiveOnline()) {
+      try {
+        const claimed = await this.cloudGateway.claimTotemPairing(this.totemConfig.pairingCode);
+        if (claimed) {
+          await this.applyAuthorizedPairing(claimed);
+          return this.getSnapshot();
+        }
+        await this.cloudGateway.requestTotemPairing({
+          id: this.totemConfig.totemId,
+          pairingCode: this.totemConfig.pairingCode,
+          currentScreen: this.screen,
+          configVersion: this.totemConfig.event.configVersion,
+          pendingSyncCount: this.pendingSyncCount,
+        });
+      } catch {
+        // Aguarda próxima reconexão sem perder o código curto já exibido localmente.
+      }
+    }
+
+    this.pairingStatus = 'awaiting_authorization';
+    this.notifySubscribers();
+    return this.getSnapshot();
+  }
+
   async receiveRemoteCommand(command: RemoteCommandPayload): Promise<TotemSessionSnapshot> {
     if (!this.commandAppliesToThisTotem(command)) {
       return this.getSnapshot();
+    }
+    if (this.processedCommandIds.has(command.id)) {
+      return this.getSnapshot();
+    }
+    this.processedCommandIds.add(command.id);
+    if (this.processedCommandIds.size > 200) {
+      const oldest = this.processedCommandIds.values().next().value;
+      if (oldest) {
+        this.processedCommandIds.delete(oldest);
+      }
     }
 
     if (this.activeMatch !== null) {
@@ -837,18 +883,21 @@ export class TotemSessionEngine {
     return this.getSnapshot();
   }
 
-  private transitionWithCleanState(targetScreen: TotemScreenId): TotemSessionSnapshot {
+  private transitionWithCleanState(
+    targetScreen: TotemScreenId,
+    shouldFlushDeferred = true,
+  ): TotemSessionSnapshot {
     this.activeMatch = null;
     this.lastResult = null;
     this.alreadyWonModal = null;
     this.lastValidationError = null;
     this.screen = targetScreen;
-    if (this.deferredCommands.length > 0) {
+    if (shouldFlushDeferred && this.deferredCommands.length > 0) {
       void this.flushDeferredCommands().then(() => {
         void this.sendHeartbeat();
         this.notifySubscribers();
       });
-    } else {
+    } else if (shouldFlushDeferred) {
       void this.sendHeartbeat();
     }
     return this.getSnapshot();
@@ -879,7 +928,7 @@ export class TotemSessionEngine {
 
     const participantPhone = this.activeMatch.participantPhone;
     const lockoutMinutes = this.eventSettings.giveUpLockoutMinutes;
-    this.transitionWithCleanState('initial-screen');
+    this.transitionWithCleanState('initial-screen', false);
 
     if (lockoutMinutes > 0) {
       const lockedAtMs = this.clock.now();
@@ -1169,6 +1218,8 @@ export class TotemSessionEngine {
     // Quando online, consolida Ranking com Partidas de outros Totens após sincronizar a Partida atual.
     if (this.isEffectiveOnline()) {
       await this.pullAndMergeCloudSnapshot();
+      // Evita que CONFIG_UPDATED diferido sobrescreva o snapshot pós-Partida com cache antigo.
+      this.stagedSnapshotsByEventId.delete(matchRecord.eventId);
       const cloudRanking = await this.refreshRankingCache();
       const updatedPosition =
         cloudRanking.find((entry) => entry.matchId === matchId)?.position ?? rankingPosition;

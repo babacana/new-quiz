@@ -654,18 +654,19 @@ export class EventAdminController {
     });
   }
 
+  private async bumpAndNotifyEvent(event: EventConfig): Promise<void> {
+    const nextVersion = event.configVersion + 1;
+    await this.cloudGateway.saveEvent({
+      ...structuredClone(event),
+      configVersion: nextVersion,
+    });
+    await this.dispatchConfigUpdatedForEvent(event.id, nextVersion);
+  }
+
   private async notifyActiveEventsQuestionsChanged(): Promise<void> {
     const events = await this.cloudGateway.listEvents();
     for (const ev of events) {
-      if (!ev.isActive) {
-        continue;
-      }
-      const nextVersion = ev.configVersion + 1;
-      await this.cloudGateway.saveEvent({
-        ...structuredClone(ev),
-        configVersion: nextVersion,
-      });
-      await this.dispatchConfigUpdatedForEvent(ev.id, nextVersion);
+      await this.bumpAndNotifyEvent(ev);
     }
   }
 
@@ -675,12 +676,7 @@ export class EventAdminController {
     if (!existing) {
       throw new Error(`Evento não encontrado (${eventId}).`);
     }
-    const nextVersion = existing.configVersion + 1;
-    await this.cloudGateway.saveEvent({
-      ...structuredClone(existing),
-      configVersion: nextVersion,
-    });
-    await this.dispatchConfigUpdatedForEvent(eventId, nextVersion);
+    await this.bumpAndNotifyEvent(existing);
   }
 
   async setEventQuestions(eventId: string, questionIds: number[]): Promise<void> {

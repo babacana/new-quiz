@@ -876,11 +876,13 @@ export class SupabaseCloudGateway implements CloudGateway {
     }
 
     const configVersion = existingRow?.config_version ?? eventRow?.config_version ?? 1;
+    const deviceToken =
+      existingRow?.is_paired && existingRow.device_token ? existingRow.device_token : input.deviceToken;
     const payload = {
       id: existingRow?.id ?? input.id,
       name: input.name.trim(),
       pairing_code: normalizedCode,
-      device_token: input.deviceToken,
+      device_token: deviceToken,
       event_id: input.eventId,
       pin_code: input.pinCode.trim(),
       is_paired: true,
