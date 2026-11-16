@@ -114,7 +114,8 @@ body.totem-fullscreen-mode {
   opacity: 0;
 }
 
-.hidden {
+/* Escopado ao contêiner do Totem para não sobrescrever a classe utilitária `hidden` do Tailwind no Admin */
+.quiz-container .hidden {
   display: none !important;
 }
 
