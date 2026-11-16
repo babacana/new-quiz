@@ -38,22 +38,23 @@
   --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
 }
 
-* {
+.quiz-container,
+.quiz-container * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
 
-html,
-body,
-#root {
+html.totem-fullscreen-mode,
+body.totem-fullscreen-mode,
+body.totem-fullscreen-mode #root {
   width: 100%;
   height: 100%;
   overflow: hidden;
   font-family: var(--font-family);
 }
 
-body {
+body.totem-fullscreen-mode {
   background-color: var(--quiz-main-background);
   color: var(--quiz-main-text-color);
   display: flex;

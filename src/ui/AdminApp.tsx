@@ -20,19 +20,27 @@ import { AdminTotemsTab } from './AdminTotemsTab';
 import type { ExternalRouteNavigationRequest } from './AppRouter';
 import { DevSimulatorModal } from './DevSimulatorModal';
 import { OperatorPanel } from './OperatorPanel';
+import {
+  getHashForAdminTab,
+  resolveInitialAdminTab,
+  type AdminTabId,
+} from './adminRoutes';
 import { createDefaultCloudGateway } from './cloudFactory';
+import { AdminLoginScreen } from './components/AdminLoginScreen';
+import { AdminSaasShell } from './components/AdminSaasShell';
+import { Button } from './components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from './components/ui/dialog';
+import { ToastViewport, type ToastMessage } from './components/ui/toast';
+import { useSaasTheme } from './hooks/useSaasTheme';
+import './saas.css';
 import './styles.css';
-
-type AdminTabId =
-  | 'events'
-  | 'customization'
-  | 'reports'
-  | 'analytics'
-  | 'question-stats'
-  | 'questions'
-  | 'totems'
-  | 'backup'
-  | 'staff';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -46,6 +54,8 @@ type PendingNavigationAction =
 export interface AdminAppProps {
   controller?: EventAdminController;
   routeMode?: 'admin' | 'operator';
+  activeTab?: AdminTabId;
+  onAdminTabChange?: (tab: AdminTabId) => void;
   onOpenTotem?: () => void;
   onSwitchPanelRoute?: (route: 'admin' | 'operator') => void;
   externalRouteRequest?: ExternalRouteNavigationRequest | null;
@@ -60,10 +70,12 @@ function createDefaultController(): EventAdminController {
   });
 }
 
-// Painel de Equipe do Estande (Administrador em #admin e Operador em #operador).
+// Painel de Equipe do Estande (Administrador em #admin/* e Operador em #operador).
 export function AdminApp({
   controller: injectedController,
   routeMode = 'admin',
+  activeTab: controlledActiveTab,
+  onAdminTabChange,
   onOpenTotem,
   onSwitchPanelRoute,
   externalRouteRequest,
@@ -74,33 +86,63 @@ export function AdminApp({
     [injectedController],
   );
 
+  const { theme, toggleTheme } = useSaasTheme();
+
   const [session, setSession] = useState<AuthSession | null>(() => controller.getSession());
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<AdminTabId>('events');
+  const [internalActiveTab, setInternalActiveTab] = useState<AdminTabId>(() =>
+    resolveInitialAdminTab(),
+  );
+  const activeTab = controlledActiveTab ?? internalActiveTab;
+
   const [events, setEvents] = useState<EventConfig[]>([]);
   const [allQuestions, setAllQuestions] = useState<Question[]>([]);
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
 
-  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(
-    null,
-  );
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const toastCounterRef = useRef(0);
   const [unsavedPrompt, setUnsavedPrompt] = useState<UnsavedNavigationPrompt | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingNavigationAction | null>(null);
   const [isDevSimulatorOpen, setIsDevSimulatorOpen] = useState(false);
 
   const activeSaveHandlerRef = useRef<(() => Promise<void>) | null>(null);
 
+  useEffect(() => {
+    document.documentElement.classList.remove('totem-fullscreen-mode');
+    document.body.classList.remove('totem-fullscreen-mode');
+  }, []);
+
   const registerSaveHandler = useCallback((handler: (() => Promise<void>) | null) => {
     activeSaveHandlerRef.current = handler;
   }, []);
 
   const handleStatusMessage = useCallback((type: 'success' | 'error', message: string) => {
-    setFeedback({ type, message });
+    toastCounterRef.current += 1;
+    const id = toastCounterRef.current;
+    setToasts((prev) => [...prev.slice(-3), { id, type, message }]);
   }, []);
+
+  const dismissToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((item) => item.id !== id));
+  }, []);
+
+  const setActiveTab = useCallback(
+    (nextTab: AdminTabId) => {
+      if (onAdminTabChange) {
+        onAdminTabChange(nextTab);
+      } else {
+        setInternalActiveTab(nextTab);
+        if (typeof window !== 'undefined' && window.location.hash.toLowerCase().startsWith('#admin')) {
+          window.location.hash = getHashForAdminTab(nextTab);
+        }
+      }
+    },
+    [onAdminTabChange],
+  );
 
   const loadWorkspaceData = useCallback(
     async (preferredSelectedId?: string) => {
@@ -125,14 +167,13 @@ export function AdminApp({
           setAllQuestions(allQuestionsList);
         }
       } catch (error) {
-        setFeedback({
-          type: 'error',
-          message:
-            error instanceof Error ? error.message : 'Erro ao carregar dados do painel.',
-        });
+        handleStatusMessage(
+          'error',
+          error instanceof Error ? error.message : 'Erro ao carregar dados do painel.',
+        );
       }
     },
-    [controller],
+    [controller, handleStatusMessage],
   );
 
   useEffect(() => {
@@ -177,7 +218,9 @@ export function AdminApp({
       const authenticated = await controller.login(loginEmail, loginPassword);
       setSession(authenticated);
       setLoginPassword('');
-      setActiveTab('events');
+      if (!controlledActiveTab) {
+        setInternalActiveTab(resolveInitialAdminTab());
+      }
       await loadWorkspaceData();
     } catch (error) {
       setLoginError(
@@ -191,12 +234,12 @@ export function AdminApp({
   const executeNavigationAction = useCallback(
     async (action: PendingNavigationAction) => {
       if (action.type === 'tab') {
-        setFeedback(null);
+        setToasts([]);
         setActiveTab(action.tab);
         return;
       }
       if (action.type === 'select-event') {
-        setFeedback(null);
+        setToasts([]);
         setSelectedEventId(action.eventId);
         return;
       }
@@ -211,7 +254,7 @@ export function AdminApp({
         setLoginPassword('');
         setEvents([]);
         setAllQuestions([]);
-        setFeedback(null);
+        setToasts([]);
         return;
       }
       if (action.type === 'switch-route') {
@@ -224,7 +267,7 @@ export function AdminApp({
       }
       onOpenTotem?.();
     },
-    [controller, onOpenTotem, onResolveExternalRoute, onSwitchPanelRoute],
+    [controller, onOpenTotem, onResolveExternalRoute, onSwitchPanelRoute, setActiveTab],
   );
 
   const requestGuardedAction = useCallback(
@@ -272,69 +315,22 @@ export function AdminApp({
 
   if (!session) {
     return (
-      <div id="admin-login-screen" className="admin-shell">
-        <div className="admin-login-card">
-          <h1>
-            {routeMode === 'operator'
-              ? 'Operação do Estande'
-              : 'Painel Administrativo do Quiz'}
-          </h1>
-          <p className="admin-subtitle">
-            Acesso autenticado para a Equipe do Estande (Administrador e Operador).
-          </p>
-
-          <form onSubmit={(e) => void handleLoginSubmit(e)}>
-            <div className="admin-field">
-              <label htmlFor="admin-login-email">E-mail</label>
-              <input
-                id="admin-login-email"
-                type="email"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-                placeholder="admin@caesb.df.gov.br"
-                required
-              />
-            </div>
-
-            <div className="admin-field">
-              <label htmlFor="admin-login-password">Senha</label>
-              <input
-                id="admin-login-password"
-                type="password"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-                required
-              />
-            </div>
-
-            {loginError && (
-              <p className="admin-alert admin-alert-error" role="alert">
-                {loginError}
-              </p>
-            )}
-
-            <div className="admin-form-footer">
-              <button
-                id="admin-login-submit"
-                type="submit"
-                className="admin-btn admin-btn-primary"
-                disabled={isLoggingIn}
-              >
-                {isLoggingIn ? 'Autenticando...' : 'Entrar'}
-              </button>
-              {onOpenTotem && (
-                <button
-                  type="button"
-                  className="admin-btn admin-btn-secondary"
-                  onClick={onOpenTotem}
-                >
-                  Voltar ao Totem
-                </button>
-              )}
-            </div>
-          </form>
-        </div>
-      </div>
+      <>
+        <AdminLoginScreen
+          routeMode={routeMode}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          email={loginEmail}
+          password={loginPassword}
+          error={loginError}
+          isSubmitting={isLoggingIn}
+          onEmailChange={setLoginEmail}
+          onPasswordChange={setLoginPassword}
+          onSubmit={(e) => void handleLoginSubmit(e)}
+          onOpenTotem={onOpenTotem}
+        />
+        <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+      </>
     );
   }
 
@@ -342,288 +338,168 @@ export function AdminApp({
   const showOperatorView = !isAdmin || routeMode === 'operator';
 
   return (
-    <div id="admin-dashboard" className="admin-shell">
-      <header className="admin-topbar">
-        <div>
-          <h2>
-            {showOperatorView ? 'Operação do Estande' : 'Painel Administrativo do Quiz'}
-          </h2>
-          <small>
-            Conectado como <strong>{session.user.name}</strong> (
-            {isAdmin ? 'Administrador' : 'Operador'})
-          </small>
-        </div>
+    <>
+      <AdminSaasShell
+        session={session}
+        isAdmin={isAdmin}
+        showOperatorView={showOperatorView}
+        routeMode={routeMode}
+        activeTab={activeTab}
+        events={events}
+        selectedEventId={selectedEventId}
+        theme={theme}
+        onToggleTheme={toggleTheme}
+        onSelectTab={(tab) => requestGuardedAction({ type: 'tab', tab })}
+        onSelectEvent={(eventId) => requestGuardedAction({ type: 'select-event', eventId })}
+        onSwitchPanelRoute={
+          onSwitchPanelRoute
+            ? (targetRoute) => requestGuardedAction({ type: 'switch-route', targetRoute })
+            : undefined
+        }
+        onOpenDevSimulator={isAdmin ? () => setIsDevSimulatorOpen(true) : undefined}
+        onOpenTotem={onOpenTotem ? () => requestGuardedAction({ type: 'totem' }) : undefined}
+        onLogout={() => requestGuardedAction({ type: 'logout' })}
+      >
+        {showOperatorView ? (
+          <OperatorPanel
+            controller={controller}
+            events={events}
+            isAdmin={isAdmin}
+            onEventsChanged={() => loadWorkspaceData()}
+            onStatusMessage={handleStatusMessage}
+          />
+        ) : (
+          <>
+            {activeTab === 'events' && (
+              <AdminEventsTab
+                controller={controller}
+                events={events}
+                allQuestions={allQuestions}
+                selectedEventId={selectedEventId}
+                onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
+                onRequestGuardedAction={requestGuardedCallback}
+                onEventsChanged={loadWorkspaceData}
+                onRegisterSaveHandler={registerSaveHandler}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
 
-        <div className="admin-row-actions">
-          {isAdmin && onSwitchPanelRoute && routeMode === 'operator' && (
-            <button
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() =>
-                requestGuardedAction({ type: 'switch-route', targetRoute: 'admin' })
-              }
-            >
-              Painel do Administrador
-            </button>
-          )}
-          {isAdmin && onSwitchPanelRoute && routeMode === 'admin' && (
-            <button
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() =>
-                requestGuardedAction({ type: 'switch-route', targetRoute: 'operator' })
-              }
-            >
-              Visão de Operador
-            </button>
-          )}
-          {isAdmin && (
-            <button
-              id="admin-dev-simulator-btn"
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() => setIsDevSimulatorOpen(true)}
-            >
-              Modo Desenvolvedor / Simulador
-            </button>
-          )}
-          {onOpenTotem && (
-            <button
-              id="admin-open-totem-btn"
-              type="button"
-              className="admin-btn admin-btn-secondary"
-              onClick={() => requestGuardedAction({ type: 'totem' })}
-            >
-              Ir para Totem
-            </button>
-          )}
-          <button
-            id="admin-logout-btn"
-            type="button"
-            className="admin-btn admin-btn-danger"
-            onClick={() => requestGuardedAction({ type: 'logout' })}
-          >
-            Sair
-          </button>
-        </div>
-      </header>
+            {activeTab === 'customization' && (
+              <AdminCustomizationTab
+                controller={controller}
+                events={events}
+                selectedEventId={selectedEventId}
+                onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
+                onEventsChanged={loadWorkspaceData}
+                onRegisterSaveHandler={registerSaveHandler}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
 
-      {feedback && (
-        <div
-          className={`admin-alert ${
-            feedback.type === 'error' ? 'admin-alert-error' : 'admin-alert-success'
-          }`}
-          role="status"
-        >
-          {feedback.message}
-        </div>
-      )}
+            {activeTab === 'reports' && (
+              <AdminReportsTab
+                controller={controller}
+                events={events}
+                onEventsChanged={() => loadWorkspaceData()}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
 
-      {showOperatorView ? (
-        <OperatorPanel
-          controller={controller}
-          events={events}
-          isAdmin={isAdmin}
-          onEventsChanged={() => loadWorkspaceData()}
-          onStatusMessage={handleStatusMessage}
-        />
-      ) : (
-        <>
-          <nav className="admin-tabs-nav" aria-label="Navegação administrativa">
-            <button
+            {activeTab === 'analytics' && (
+              <AdminAnalyticsTab
+                controller={controller}
+                events={events}
+                allQuestions={allQuestions}
+                onQuestionsChanged={() => loadWorkspaceData()}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'question-stats' && (
+              <AdminQuestionStatsTab
+                controller={controller}
+                events={events}
+                onQuestionsChanged={() => loadWorkspaceData()}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'backup' && (
+              <AdminBackupTab
+                controller={controller}
+                events={events}
+                onWorkspaceRestored={() => loadWorkspaceData()}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'questions' && (
+              <AdminQuestionsTab
+                controller={controller}
+                onRequestGuardedAction={requestGuardedCallback}
+                onQuestionsChanged={() => loadWorkspaceData()}
+                onRegisterSaveHandler={registerSaveHandler}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'totems' && (
+              <AdminTotemsTab
+                controller={controller}
+                events={events}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'staff' && (
+              <AdminStaffTab controller={controller} onStatusMessage={handleStatusMessage} />
+            )}
+          </>
+        )}
+      </AdminSaasShell>
+
+      <ToastViewport toasts={toasts} onDismiss={dismissToast} />
+
+      <Dialog
+        open={Boolean(unsavedPrompt)}
+        onOpenChange={(open) => {
+          if (!open && unsavedPrompt) {
+            void handleUnsavedResolution('cancel');
+          }
+        }}
+      >
+        <DialogContent id="unsaved-changes-modal" hideCloseButton>
+          <DialogHeader>
+            <DialogTitle id="unsaved-changes-title">Alterações Não Salvas</DialogTitle>
+            <DialogDescription>{unsavedPrompt?.message}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              id="unsaved-cancel-btn"
               type="button"
-              className={`admin-tab-btn ${activeTab === 'events' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'events' })}
+              variant="outline"
+              onClick={() => void handleUnsavedResolution('cancel')}
             >
-              Eventos e Configurações
-            </button>
-            <button
+              Cancelar
+            </Button>
+            <Button
+              id="unsaved-discard-leave-btn"
               type="button"
-              className={`admin-tab-btn ${activeTab === 'customization' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'customization' })}
+              variant="destructive"
+              onClick={() => void handleUnsavedResolution('discard_and_leave')}
             >
-              Personalização Visual
-            </button>
-            <button
+              Sair sem Salvar
+            </Button>
+            <Button
+              id="unsaved-save-leave-btn"
               type="button"
-              className={`admin-tab-btn ${activeTab === 'reports' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'reports' })}
+              onClick={() => void handleUnsavedResolution('save_and_leave')}
             >
-              Relatórios e Participantes
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'analytics' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'analytics' })}
-            >
-              Dashboard Analítico
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'question-stats' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'question-stats' })}
-            >
-              Estatísticas de Questões
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'questions' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'questions' })}
-            >
-              Banco de Questões
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'totems' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'totems' })}
-            >
-              Totens e Pareamento
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'backup' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'backup' })}
-            >
-              Backup e Migração
-            </button>
-            <button
-              type="button"
-              className={`admin-tab-btn ${activeTab === 'staff' ? 'active' : ''}`}
-              onClick={() => requestGuardedAction({ type: 'tab', tab: 'staff' })}
-            >
-              Equipe do Estande
-            </button>
-          </nav>
-
-          {activeTab === 'events' && (
-            <AdminEventsTab
-              controller={controller}
-              events={events}
-              allQuestions={allQuestions}
-              selectedEventId={selectedEventId}
-              onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
-              onRequestGuardedAction={requestGuardedCallback}
-              onEventsChanged={loadWorkspaceData}
-              onRegisterSaveHandler={registerSaveHandler}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'customization' && (
-            <AdminCustomizationTab
-              controller={controller}
-              events={events}
-              selectedEventId={selectedEventId}
-              onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
-              onEventsChanged={loadWorkspaceData}
-              onRegisterSaveHandler={registerSaveHandler}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'reports' && (
-            <AdminReportsTab
-              controller={controller}
-              events={events}
-              onEventsChanged={() => loadWorkspaceData()}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'analytics' && (
-            <AdminAnalyticsTab
-              controller={controller}
-              events={events}
-              allQuestions={allQuestions}
-              onQuestionsChanged={() => loadWorkspaceData()}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'question-stats' && (
-            <AdminQuestionStatsTab
-              controller={controller}
-              events={events}
-              onQuestionsChanged={() => loadWorkspaceData()}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'backup' && (
-            <AdminBackupTab
-              controller={controller}
-              events={events}
-              onWorkspaceRestored={() => loadWorkspaceData()}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'questions' && (
-            <AdminQuestionsTab
-              controller={controller}
-              onRequestGuardedAction={requestGuardedCallback}
-              onQuestionsChanged={() => loadWorkspaceData()}
-              onRegisterSaveHandler={registerSaveHandler}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'totems' && (
-            <AdminTotemsTab
-              controller={controller}
-              events={events}
-              onStatusMessage={handleStatusMessage}
-            />
-          )}
-
-          {activeTab === 'staff' && (
-            <AdminStaffTab controller={controller} onStatusMessage={handleStatusMessage} />
-          )}
-        </>
-      )}
-
-      {unsavedPrompt && (
-        <div
-          id="unsaved-changes-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="unsaved-changes-title"
-        >
-          <div className="modal-content admin-modal">
-            <h3 id="unsaved-changes-title" className="modal-title">
-              Alterações Não Salvas
-            </h3>
-            <p className="modal-text">{unsavedPrompt.message}</p>
-            <div className="modal-actions">
-              <button
-                id="unsaved-save-leave-btn"
-                type="button"
-                className="admin-btn admin-btn-primary"
-                onClick={() => void handleUnsavedResolution('save_and_leave')}
-              >
-                Salvar e Sair
-              </button>
-              <button
-                id="unsaved-discard-leave-btn"
-                type="button"
-                className="admin-btn admin-btn-danger"
-                onClick={() => void handleUnsavedResolution('discard_and_leave')}
-              >
-                Sair sem Salvar
-              </button>
-              <button
-                id="unsaved-cancel-btn"
-                type="button"
-                className="admin-btn admin-btn-secondary"
-                onClick={() => void handleUnsavedResolution('cancel')}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              Salvar e Sair
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {isDevSimulatorOpen && (
         <DevSimulatorModal
@@ -631,6 +507,6 @@ export function AdminApp({
           onClose={() => setIsDevSimulatorOpen(false)}
         />
       )}
-    </div>
+    </>
   );
 }
