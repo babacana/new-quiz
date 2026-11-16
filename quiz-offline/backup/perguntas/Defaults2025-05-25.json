@@ -1,0 +1,145 @@
+[
+  {
+    "id": "q1",
+    "text": "Qual é a capital do Brasil?",
+    "options": [
+      "São Paulo",
+      "Rio de Janeiro",
+      "Brasília",
+      "Salvador"
+    ],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q2",
+    "text": "Qual monumento é um ícone de Brasília, projetado por Oscar Niemeyer, e sede do Congresso Nacional?",
+    "options": [
+      "Palácio da Alvorada",
+      "Catedral Metropolitana",
+      "Congresso Nacional",
+      "Ponte JK"
+    ],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q3",
+    "text": "A CAESB é responsável por qual serviço essencial no Distrito Federal?",
+    "options": [
+      "Transporte Público",
+      "Energia Elétrica",
+      "Saneamento Básico (Água e Esgoto)",
+      "Comunicações"
+    ],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q4",
+    "text": "Qual o principal reservatório de água que abastece o Distrito Federal?",
+    "options": [
+      "Lago Paranoá",
+      "Represa do Descoberto",
+      "Represa de Santa Maria",
+      "Ambos Descoberto e Santa Maria"
+    ],
+    "correct": 3,
+    "isDisabled": false,
+    "difficulty": "moderado"
+  },
+  {
+    "id": "q5",
+    "text": "O slogan da campanha da CAESB mencionada é:",
+    "options": [
+      "Água é Vida",
+      "CAESB, Água para Todos",
+      "Água da CAESB, Patrimônio de Brasília",
+      "Beba Água, Viva Melhor"
+    ],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "dificil"
+  },
+  {
+    "id": "q6",
+    "text": "Qual destes NÃO é um monumento famoso de Brasília?",
+    "options": [
+      "Museu Nacional Honestino Guimarães",
+      "Torre de TV",
+      "Cristo Redentor",
+      "Memorial JK"
+    ],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q7",
+    "text": "A água fornecida pela CAESB passa por rigorosos processos de tratamento. Verdadeiro ou Falso?",
+    "options": [
+      "Verdadeiro",
+      "Falso",
+      "Depende da estação do ano",
+      "Apenas para indústria"
+    ],
+    "correct": 0,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q8",
+    "text": "O uso consciente da água é importante para a sustentabilidade. Verdadeiro ou Falso?",
+    "options": [
+      "Verdadeiro",
+      "Falso",
+      "Apenas em épocas de seca",
+      "Apenas para grandes consumidores"
+    ],
+    "correct": 0,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q9",
+    "text": "A Ponte JK em Brasília é conhecida por seus:",
+    "options": [
+      "Arcos de sustentação assimétricos",
+      "Jardins suspensos",
+      "Pilares retos e simples",
+      "Ser uma ponte pênsil"
+    ],
+    "correct": 0,
+    "isDisabled": false,
+    "difficulty": "facil"
+  },
+  {
+    "id": "q10",
+    "text": "Qual arquiteto foi o principal responsável pelo plano urbanístico de Brasília?",
+    "options": [
+      "Oscar Niemeyer",
+      "Lucio Costa",
+      "Affonso Eduardo Reidy",
+      "Burle Marx"
+    ],
+    "correct": 1,
+    "isDisabled": false,
+    "difficulty": "moderado"
+  },
+  {
+    "id": "q11",
+    "text": "A Catedral de Brasília tem sua estrutura inspirada em:",
+    "options": [
+      "Uma coroa de espinhos e mãos em prece",
+      "Uma flor do cerrado",
+      "Uma nave espacial",
+      "Ondas do mar"
+    ],
+    "correct": 0,
+    "isDisabled": false,
+    "difficulty": "moderado"
+  }
+]

@@ -1,0 +1,1194 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Admin Quiz CAESB</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="quiz-container admin-page-container">
+
+        <div id="accessibility-controls" class="accessibility-controls-container">
+            <button id="decrease-font" title="Diminuir fonte" aria-label="Diminuir tamanho da fonte">A-</button>
+            <button id="increase-font" title="Aumentar fonte" aria-label="Aumentar tamanho da fonte">A+</button>
+            <button id="go-to-quiz-btn" title="Voltar para o Quiz" aria-label="Voltar para o Quiz">🏠</button>
+            <button id="admin-logout-icon-btn" class="hidden" title="Sair do Painel Administrativo" aria-label="Sair do Painel Administrativo">🚪</button>
+        </div>
+
+        <section id="admin-login-screen" class="screen active">
+            <div class="screen-content">
+                <img src="assets/logo.png" alt="Logo CAESB" class="caesb-logo">
+                <h2>Acesso Administrativo</h2>
+                <div class="form-group">
+                    <input type="password" id="admin-password" name="admin-password" placeholder="Senha">
+                </div>
+                <button id="admin-login-btn" class="btn">Entrar</button>
+                <p id="admin-login-error" class="error-message hidden">Senha incorreta.</p>
+            </div>
+        </section>
+
+        <section id="admin-dashboard-screen" class="screen">
+            <div class="screen-header-admin">
+                <h2>Painel de Administração</h2>
+            </div>
+            <div class="screen-content admin-dashboard-content">
+                <button class="admin-dashboard-card" data-target-screen="admin-event-screen">
+                    <h3>Gerenciar Evento Atual</h3>
+                    <p>Configure o período de funcionamento do quiz.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-questions-screen">
+                    <h3>Gerenciar Questões</h3>
+                    <p>Adicione, edite e exclua perguntas do quiz.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-settings-screen">
+                    <h3>Configurações Gerais</h3>
+                    <p>Ajuste pontuação, ranking, logos e mais.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-customization-screen">
+                    <h3>Personalização do Quiz</h3>
+                    <p>Altere textos, cores e fontes do quiz.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-reports-screen">
+                    <h3>Relatórios de Participantes</h3>
+                    <p>Visualize e exporte os dados dos jogadores.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-analytics-screen">
+                    <h3>Dashboard Analítico</h3>
+                    <p>Insights visuais sobre o desempenho do quiz.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-backup-screen">
+                    <h3>Backup e Restauração</h3>
+                    <p>Faça backup e restaure todos os dados do quiz.</p>
+                </button>
+                <button class="admin-dashboard-card" data-target-screen="admin-tester-screen">
+                    <h3>Testador de Cenários</h3>
+                    <p>Simule diferentes fluxos do quiz para testes.</p>
+                </button>
+            </div>
+        </section>
+
+        <section id="admin-analytics-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Dashboard Analítico Avançado</h2>
+            </div>
+            <div class="screen-content admin-content new-analytics-dashboard">
+                <!-- Barra de Ferramentas e Filtros -->
+                <div class="analytics-toolbar">
+                    <div class="form-group">
+                        <label for="analytics-period-filter">Período:</label>
+                        <select id="analytics-period-filter">
+                            <option value="today">Hoje</option>
+                            <option value="last3days">Últimos 3 Dias</option>
+                            <option value="last7days">Últimos 7 Dias</option>
+                            <option value="last30days">Últimos 30 Dias</option>
+                            <option value="all">Todo o Período</option>
+                            <option value="custom">Personalizado</option> <!-- Novo -->
+                        </select>
+                    </div>
+                    <div id="analytics-custom-date-range-picker" class="form-group hidden" style="display:flex; gap:10px;"> <!-- Novo -->
+                        <input type="date" id="analytics-start-date" aria-label="Data de início">
+                        <input type="date" id="analytics-end-date" aria-label="Data de fim">
+                    </div>
+                    <button id="refresh-analytics-data-btn" class="btn-secondary">Atualizar Dados</button> <!-- Novo -->
+                </div>
+
+                <!-- KPIs Principais -->
+                <div class="kpi-main-row"> <!-- Novo container para os 4 KPIs principais -->
+                    <div class="kpi-card-new" id="kpi-total-participations-card">
+                        <h3 class="kpi-title">Total de Participações</h3>
+                        <p class="kpi-value" id="kpi-total-participations">-</p>
+                        <span class="kpi-trend" id="kpi-total-participations-trend"></span>
+                    </div>
+                    <div class="kpi-card-new" id="kpi-avg-score-card">
+                        <h3 class="kpi-title">Média de Acertos</h3>
+                        <p class="kpi-value" id="kpi-avg-score">-</p>
+                        <span class="kpi-trend" id="kpi-avg-score-trend"></span>
+                    </div>
+                    <div class="kpi-card-new" id="kpi-avg-time-card">
+                        <h3 class="kpi-title">Tempo Médio de Jogo</h3>
+                        <p class="kpi-value" id="kpi-avg-time">-</p>
+                        <span class="kpi-trend" id="kpi-avg-time-trend"></span>
+                    </div>
+                    <div class="kpi-card-new" id="kpi-success-rate-card">
+                        <h3 class="kpi-title">Taxa de Sucesso (Brinde)</h3>
+                        <p class="kpi-value" id="kpi-success-rate">-</p>
+                        <span class="kpi-trend" id="kpi-success-rate-trend"></span>
+                    </div>
+                </div>
+
+                <!-- Container para Gráficos e outras análises (cada um em sua linha) -->
+                <div class="analytics-charts-area">
+                    <div class="chart-widget" id="participations-over-time-widget">
+                        <div class="chart-header">
+                            <h4>Participações ao Longo do Tempo</h4>
+                            <!-- Controles do gráfico (ex: tipo de gráfico, granularidade) podem ir aqui -->
+                        </div>
+                        <div class="chart-content">
+                            <canvas id="analytics-participations-over-time-chart"></canvas> <!-- Usar Canvas para Chart.js -->
+                        </div>
+                    </div>
+
+                    <div class="chart-widget" id="score-distribution-widget">
+                        <div class="chart-header">
+                            <h4>Distribuição de Pontuações</h4>
+                        </div>
+                        <div class="chart-content">
+                            <canvas id="analytics-score-distribution-chart"></canvas> <!-- Usar Canvas para Chart.js -->
+                        </div>
+                    </div>
+
+                    <!-- Novo: Engajamento por Hora do Dia -->
+                    <div class="chart-widget" id="hourly-engagement-widget">
+                        <div class="chart-header">
+                            <h4>Engajamento por Hora do Dia</h4>
+                        </div>
+                        <div class="chart-content">
+                            <canvas id="analytics-hourly-engagement-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Novo: Análise de Questões -->
+                    <div class="chart-widget" id="question-analysis-widget">
+                        <div class="chart-header">
+                            <h4>Análise Detalhada de Questões</h4>
+                            <select id="question-analysis-metric-filter">
+                                <option value="difficulty">Mais Difíceis</option>
+                                <option value="easiness">Mais Fáceis</option>
+                                <option value="most_answered">Mais Respondidas</option>
+                                <option value="least_answered">Menos Respondidas</option>
+                            </select>
+                        </div>
+                        <div class="chart-content">
+                            <!-- Pode ser uma tabela ou um gráfico de barras horizontais -->
+                            <div id="analytics-question-analysis-table"></div>
+                            <div id="question-analysis-pagination-controls" class="pagination-controls" style="margin-top:15px; text-align: center;">
+                                <!-- Controles de paginação serão inseridos aqui pelo JavaScript -->
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Placeholders removidos -->
+                </div>
+            </div>
+        </section>
+        <section id="admin-event-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Gerenciar Evento Atual do Quiz</h2>
+            </div>
+            <div class="screen-content admin-content">
+                <div class="admin-form-section">
+                    <h4>Configurar Evento</h4>
+                    <p class="admin-instructions">Defina um nome e o período em que o quiz estará ativo. Apenas um evento pode ser configurado por vez. Salvar um novo evento substituirá o anterior.</p>
+                    <div class="form-group">
+                        <label for="event-name-input">Nome do Evento (opcional):</label>
+                        <input type="text" id="event-name-input" placeholder="Ex: Feira de Ciências 2025">
+                    </div>
+                    <div class="form-group">
+                        <label for="event-start-time-input">Data e Hora de Início:</label>
+                        <input type="datetime-local" id="event-start-time-input">
+                    </div>
+                    <div class="form-group">
+                        <label for="event-end-time-input">Data e Hora de Fim:</label>
+                        <input type="datetime-local" id="event-end-time-input">
+                    </div>
+                    <div class="form-group">
+                        <input type="checkbox" id="event-enable-message-checkbox" checked>
+                        <label for="event-enable-message-checkbox" class="checkbox-label-text">Ativar mensagens e bloqueios fora do período do evento.</label>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Se desmarcado, o quiz funcionará normalmente ignorando as datas do evento.</p>
+                    </div>
+                    <button id="save-event-btn" class="btn">Salvar Evento</button>
+                    <button id="clear-event-btn" class="btn-secondary btn-danger" style="margin-top: 10px;">Limpar/Desativar Evento Atual</button>
+                    <p id="event-config-status-message" class="status-message" style="margin-top:10px;"></p>
+                </div>
+
+                <div class="admin-form-section">
+                    <h4>Evento Configurado Atualmente</h4>
+                    <div id="current-event-display">
+                        <p>Nenhum evento configurado.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="admin-questions-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Gerenciar Questões</h2>
+            </div>
+            <div class="screen-content admin-content">
+                <button id="add-question-form-btn" class="btn">Adicionar Nova Questão</button>
+                <!-- O formulário de edição foi movido para dentro do modal question-details-modal -->
+
+                <div class="admin-list-section questions-management-area">
+                    <div class="questions-toolbar admin-form-section" style="margin-bottom: 15px; padding: 15px;">
+                        <div class="toolbar-row">
+                            <div class="form-group toolbar-search-group" style="flex-grow: 2; min-width: 250px;">
+                                <label for="search-questions-input" class="sr-only">Buscar Questões</label>
+                                <input type="search" id="search-questions-input" placeholder="Buscar por texto na pergunta ou alternativas...">
+                            </div>
+                            <div class="form-group" style="min-width: 180px;">
+                                <label for="sort-questions-by" class="sr-only">Ordenar por</label>
+                                <select id="sort-questions-by">
+                                    <option value="text_asc">Texto da Questão (A-Z)</option>
+                                    <option value="text_desc">Texto da Questão (Z-A)</option>
+                                    <option value="difficulty_asc">Dificuldade (Fácil > Difícil)</option>
+                                    <option value="difficulty_desc">Dificuldade (Difícil > Fácil)</option>
+                                </select>
+                            </div>
+                            <button id="advanced-filters-btn" class="btn-secondary" type="button" style="padding: 10px 15px; font-size: 0.9em;">
+                                <span class="filter-icon"></span> Filtros Avançados <span id="active-filters-count" class="badge hidden">0</span>
+                            </button>
+                        </div>
+                        <div class="toolbar-row batch-actions-row" style="margin-top:10px; justify-content: flex-end; align-items: center; gap: 10px;">
+                            <span id="explicit-selected-count-text" style="font-size: 0.9em; color: var(--quiz-main-text-color);">0 questões selecionadas</span>
+                            <button id="disableSelectedQuestionsBtn" class="btn btn-warning" style="margin-top:0; min-width: 180px; padding: 10px 15px; font-size: 0.9em;" disabled>Desativar Selecionadas</button>
+                            <button id="deleteSelectedQuestionsBtn" class="btn btn-danger" style="margin-top:0; min-width: 180px; padding: 10px 15px; font-size: 0.9em;" disabled>Excluir Selecionadas (<span id="selected-questions-count">0</span>)</button>
+                        </div>
+                    </div>
+
+                    <div id="advanced-filters-container" class="admin-form-section hidden" style="margin-bottom: 15px; padding:15px; background-color: rgba(0, 25, 50, 0.9);">
+                        <h5>Filtros Avançados</h5>
+                        <div class="filters-grid">
+                            <div class="form-group">
+                                <label for="filter-difficulty">Dificuldade:</label>
+                                <select id="filter-difficulty" multiple>
+                                    <option value="facil">Fácil</option>
+                                    <option value="moderado">Moderado</option>
+                                    <option value="dificil">Difícil</option>
+                                </select>
+                                <small>Segure Ctrl/Cmd para selecionar múltiplos.</small>
+                           </div>
+                           <div class="form-group">
+                               <label for="filter-status">Status da Questão:</label>
+                               <select id="filter-status">
+                                   <option value="all">Todos os Status</option>
+                                   <option value="enabled">Apenas Habilitadas</option>
+                                   <option value="disabled">Apenas Desabilitadas</option>
+                               </select>
+                           </div>
+                           <!-- O form-group para filtro de status foi removido -->
+                       </div>
+                        <div style="text-align: right; margin-top: 10px;">
+                            <button id="apply-advanced-filters-btn" class="btn" type="button" style="padding: 8px 15px; font-size:0.9em;">Aplicar Filtros</button>
+                            <button id="clear-advanced-filters-btn" class="btn-secondary" type="button" style="padding: 8px 15px; font-size:0.9em;">Limpar Filtros</button>
+                        </div>
+                    </div>
+                    
+                    <div class="questions-list-header">
+                        <h4>Lista de Questões (<span id="total-questions-count">0</span>)</h4>
+                        <div class="view-options">
+                            <label for="items-per-page-select" class="sr-only">Itens por página:</label>
+                            <select id="items-per-page-select" title="Itens por página">
+                                <option value="10">10 por página</option>
+                                <option value="25" selected>25 por página</option>
+                                <option value="50">50 por página</option>
+                                <option value="100">100 por página</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="questions-table-view">
+                        <div class="question-table-header-row">
+                            <div class="question-table-cell header-cell cell-select" style="justify-content: center;">
+                                <input type="checkbox" id="selectAllQuestionsCheckbox" title="Selecionar Todas as Questões na Página Atual">
+                            </div>
+                            <div class="question-table-cell header-cell cell-text" data-sort-key="text">Texto da Questão</div>
+                            <div class="question-table-cell header-cell cell-difficulty" data-sort-key="difficulty">Dificuldade</div>
+                        </div>
+                        <ul id="questions-list" class="question-table-body"></ul>
+                    </div>
+                    <div id="questions-card-view" class="hidden">
+                    </div>
+                    <div id="questions-pagination-controls" class="pagination-controls" style="margin-top:15px;">
+                        <button id="questions-prev-page-btn" class="btn-pagination" disabled>&laquo; Anterior</button>
+                        <span id="questions-page-info" class="page-info">Página 1 de 1</span>
+                        <button id="questions-next-page-btn" class="btn-pagination" disabled>Próxima &raquo;</button>
+                    </div>
+                </div>
+
+                <div class="admin-form-section">
+                    <h4>Importar/Exportar Questões</h4>
+                    <p class="admin-instructions">Gerencie suas questões importando de um arquivo JSON ou exportando para JSON/CSV.</p>
+
+                    <div class="admin-form-section" style="margin-top: 15px;">
+                        <h5>Exportar Questões</h5>
+                        <div class="report-buttons-row">
+                            <button id="export-questions-json-btn" class="btn">Exportar JSON</button>
+                            <button id="export-questions-csv-btn" class="btn">Exportar CSV</button>
+                        </div>
+                    </div>
+
+                    <div class="admin-form-section" style="margin-top: 20px;">
+                        <h5>Importar Questões</h5>
+                        <p class="admin-instructions">Selecione um arquivo JSON contendo as questões. Os IDs serão tratados como numéricos. Se um ID importado já existir, a questão será atualizada (se "Adicionar e Atualizar" estiver marcado), caso contrário, um novo ID sequencial será gerado para novas questões.</p>
+                        <div class="form-group">
+                            <input type="checkbox" id="add-questions-mode-checkbox" name="add-questions-mode">
+                            <label for="add-questions-mode-checkbox" class="checkbox-label-text">Adicionar novas questões E ATUALIZAR existentes com o mesmo ID</label>
+                            <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Se desmarcado, todas as questões atuais serão substituídas pelas do arquivo (IDs serão re-numerados sequencialmente).</p>
+                        </div>
+                        <div class="form-group">
+                            <label for="import-questions-file">Selecionar Arquivo de Questões (.json):</label>
+                            <input type="file" id="import-questions-file" accept=".json">
+                        </div>
+                        <button id="import-questions-btn" class="btn-secondary">Importar Questões Selecionadas</button>
+                        <p id="questions-import-export-status-message" class="status-message" style="margin-top:10px;"></p>
+                        
+                        <div class="json-example-container">
+                            <p class="admin-instructions" style="margin-top: 15px;"><strong>Exemplo de formato JSON para importação (um array de objetos):</strong></p>
+                            <pre class="json-example-display">
+[
+  {
+    "id": 1, 
+    "text": "Qual a capital da França?",
+    "options": ["Berlim", "Madri", "Paris", "Lisboa"],
+    "correct": 2,
+    "isDisabled": false,
+    "difficulty": "facil" 
+  },
+  { 
+    "text": "Quanto é 2+2?",
+    "options": ["3", "4", "5"],
+    "correct": 1
+  }
+]
+                            </pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="admin-settings-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Configurações Gerais do Quiz</h2>
+            </div>
+            <div class="screen-content admin-content">
+
+                <!-- Subseção 1: Dinâmica e Apresentação do Quiz -->
+                <div class="admin-form-section">
+                    <h4>Dinâmica e Apresentação do Quiz</h4>
+                    <p class="admin-instructions">Defina as regras de pontuação, tempo, dificuldade e como o quiz se apresenta.</p>
+                    
+                    <div class="form-group setting-item">
+                        <label for="number-of-questions">Número de perguntas por partida:</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="number-of-questions" min="1" max="50">
+                            <button class="btn-reset-setting" data-setting-key="numberOfQuestions" title="Resetar para padrão">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">O quiz selecionará aleatoriamente esta quantidade de perguntas do banco total. Mínimo 1.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="time-per-question">Tempo por pergunta (segundos):</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="time-per-question" min="5" max="120">
+                            <button class="btn-reset-setting" data-setting-key="timePerQuestion" title="Resetar para padrão (30s)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Tempo limite para responder cada pergunta. Mínimo 5s, Máximo 120s.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group">
+                        <label>Distribuição de Dificuldade das Questões (%):</label>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: -5px; margin-bottom:10px;">A soma deve ser 100%. O sistema tentará atender a esses percentuais com base nas questões disponíveis.</p>
+                        <div class="difficulty-percentage-container">
+                            <div class="difficulty-percentage-group">
+                                <label for="difficulty-percentage-facil">Fácil:</label>
+                                <input type="number" id="difficulty-percentage-facil" min="0" max="100" value="40"> %
+                            </div>
+                            <div class="difficulty-percentage-group">
+                                <label for="difficulty-percentage-moderado">Moderado:</label>
+                                <input type="number" id="difficulty-percentage-moderado" min="0" max="100" value="40"> %
+                            </div>
+                            <div class="difficulty-percentage-group">
+                                <label for="difficulty-percentage-dificil">Difícil:</label>
+                                <input type="number" id="difficulty-percentage-dificil" min="0" max="100" value="20"> %
+                            </div>
+                        </div>
+                         <p id="difficulty-percentage-sum-error" class="error-message hidden" style="margin-top: 5px;">A soma dos percentuais deve ser 100%.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="min-score-prize">Pontuação mínima para ganhar um brinde:</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="min-score-prize" min="1" max="50">
+                            <button class="btn-reset-setting" data-setting-key="minScoreForPrize" title="Resetar para padrão">↺</button>
+                        </div>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="show-correct-answer-on-wrong">Feedback ao errar:</label>
+                        <div class="setting-input-group">
+                             <div> <input type="checkbox" id="show-correct-answer-on-wrong" name="show-correct-answer-on-wrong">
+                                <span class="checkbox-label-text">Mostrar a alternativa correta após o erro.</span>
+                            </div>
+                            <button class="btn-reset-setting" data-setting-key="showCorrectAnswerOnWrong" title="Resetar para padrão">↺</button>
+                        </div>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="ranking-display-count">Número de participantes a exibir no ranking:</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="ranking-display-count" min="1" placeholder="Padrão: 10">
+                            <button class="btn-reset-setting" data-setting-key="rankingDisplayCount" title="Resetar para padrão">↺</button>
+                        </div>
+                        <p class="admin-instructions">Ex: 10, 20, etc.</p>
+                    </div>
+                </div>
+
+                <!-- Subseção 2: Interface e Experiência do Usuário -->
+                <div class="admin-form-section">
+                    <h4>Interface e Experiência do Usuário</h4>
+                    <p class="admin-instructions">Configure o modo de descanso, alertas visuais e o teclado virtual.</p>
+                    <div class="form-group setting-item">
+                        <label for="idle-timeout-seconds">Tempo para Modo Descanso (segundos):</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="idle-timeout-seconds" min="15" max="600">
+                            <button class="btn-reset-setting" data-setting-key="idleTimeoutSeconds" title="Resetar para padrão (60s)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Tempo de inatividade (15-600s) antes do quiz entrar em modo de descanso.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="fade-out-lead-time-seconds">Tempo do Aviso de Esmaecimento (segundos):</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="fade-out-lead-time-seconds" min="3" max="30">
+                            <button class="btn-reset-setting" data-setting-key="fadeOutLeadTimeSeconds" title="Resetar para padrão (5s)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Quantos segundos antes do modo descanso o aviso de esmaecimento deve iniciar (3-30s). Deve ser menor que o tempo total para descanso.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="enable-time-alert-border-pulse-toggle">Alerta Visual (Borda Pulsante):</label>
+                        <div class="setting-input-group">
+                            <div>
+                                <input type="checkbox" id="enable-time-alert-border-pulse-toggle" name="enable-time-alert-border-pulse-toggle">
+                                <span class="checkbox-label-text">Habilitar Borda Pulsante de Alerta de Tempo</span>
+                            </div>
+                            <button class="btn-reset-setting" data-setting-key="enableTimeAlertBorderPulse" title="Resetar para padrão (Habilitado)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">
+                            Se habilitado, uma borda pulsante aparecerá na tela quando o tempo da pergunta estiver acabando.
+                        </p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="enable-time-alert-flash-toggle">Alerta Visual (Flash na Tela):</label>
+                        <div class="setting-input-group">
+                            <div>
+                                <input type="checkbox" id="enable-time-alert-flash-toggle" name="enable-time-alert-flash-toggle">
+                                <span class="checkbox-label-text">Habilitar Flash de Alerta de Tempo</span>
+                            </div>
+                            <button class="btn-reset-setting" data-setting-key="enableTimeAlertFlash" title="Resetar para padrão (Habilitado)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">
+                            Se habilitado, um flash sutil aparecerá na tela quando o tempo da pergunta estiver crítico.
+                        </p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="virtual-keyboard-height">Altura do Teclado Virtual (vh):</label>
+                        <div class="setting-input-group">
+                            <input type="number" id="virtual-keyboard-height" min="20" max="60" step="1">
+                            <button class="btn-reset-setting" data-setting-key="virtualKeyboardHeight" title="Resetar para padrão (30vh)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">Define a altura do teclado em relação à altura da tela (20vh a 60vh). Padrão: 30vh.</p>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item">
+                        <label for="enable-virtual-keyboard-toggle">Controle do Teclado Virtual:</label>
+                        <div class="setting-input-group">
+                            <div>
+                                <input type="checkbox" id="enable-virtual-keyboard-toggle" name="enable-virtual-keyboard-toggle">
+                                <span class="checkbox-label-text">Habilitar Teclado Virtual</span>
+                            </div>
+                            <button class="btn-reset-setting" data-setting-key="enableVirtualKeyboard" title="Resetar para padrão (Habilitado)">↺</button>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">
+                            Se desmarcado, o teclado virtual não será exibido na tela inicial do quiz.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Subseção 3: Gerenciamento de Participantes -->
+                <div class="admin-form-section">
+                    <h4>Gerenciamento de Participantes</h4>
+                    <p class="admin-instructions">Gerencie as regras para quem pode jogar e quando, e limpe listas de bloqueio.</p>
+                    <div class="form-group setting-item">
+                        <label for="enable-prize-lock">Bloqueio para ganhadores de brinde:</label>
+                         <div class="setting-input-group">
+                            <div> <input type="checkbox" id="enable-prize-lock" name="enable-prize-lock">
+                                <span class="checkbox-label-text">Impedir que quem já ganhou um brinde jogue novamente para ganhar.</span>
+                            </div>
+                            <button class="btn-reset-setting" data-setting-key="enablePrizeLock" title="Resetar para padrão">↺</button>
+                        </div>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <button id="clear-prize-winners-btn" class="btn-secondary btn-warning" style="margin-top: 10px;">Limpar Lista de Ganhadores de Brindes</button>
+                    <hr class="setting-item-divider">
+                    <div class="form-group setting-item" style="margin-top: 25px;">
+                        <label for="give-up-lockout-minutes">Tempo de bloqueio após desistência (minutos):</label>
+                        <p class="admin-instructions" style="margin-top: 0; margin-bottom: 8px;">Defina por quantos minutos um participante que desistir do quiz ficará impedido de jogar novamente. (0 para desabilitar)</p>
+                        <div class="setting-input-group">
+                            <input type="number" id="give-up-lockout-minutes" min="0" value="0">
+                            <button class="btn-reset-setting" data-setting-key="giveUpLockoutMinutes" title="Resetar para padrão">↺</button>
+                        </div>
+                    </div>
+                    <hr class="setting-item-divider">
+                    <button id="clear-give-up-lockout-btn" class="btn-secondary btn-warning" style="margin-top: 10px;">Limpar Lista de Bloqueio por Desistência</button>
+                </div>
+
+                <!-- Subseção 4: Configurações Avançadas -->
+                <div class="admin-form-section">
+                    <h4>Configurações Avançadas</h4>
+                     <div class="form-group setting-item">
+                        <div class="setting-input-group">
+                            <div>
+                                <input type="checkbox" id="dev-mode-toggle" name="dev-mode-toggle">
+                                <span class="checkbox-label-text">Ativar Modo Desenvolvedor</span>
+                            </div>
+                        </div>
+                        <p class="admin-instructions" style="font-size: 0.8em; margin-top: 5px;">
+                            Se ativado, o login será pulado nos próximos acessos e o cabeçalho mudará de cor.
+                        </p>
+                    </div>
+                </div>
+
+                <button id="save-settings-btn" class="btn" style="margin-top: 30px;">Salvar Todas as Configurações</button>
+                <p id="settings-status-message" class="status-message" style="margin-top:10px;"></p>
+            </div>
+        </section>
+
+        <section id="admin-customization-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Personalização do Quiz</h2>
+            </div>
+            <div class="screen-content admin-content"> <!-- Removida a classe admin-customization-layout daqui -->
+                <div class="admin-customization-layout"> <!-- Novo container para o layout de duas colunas -->
+                    <div class="customization-controls-area">
+                        <p class="admin-instructions" style="margin-bottom: 20px;">Ajuste os textos, cores, fontes e a identidade visual do quiz. As alterações podem ser pré-visualizadas ao lado e serão aplicadas no quiz (`index.html`) ao salvar.</p>
+
+                        <!-- Seção 1: Aparência Geral e Layout -->
+                        <div class="accordion-item">
+                        <button class="accordion-header" aria-expanded="true">Aparência Geral e Layout</button>
+                        <div class="accordion-content">
+                            <div class="admin-form-section">
+                                <h5>Cores Principais</h5>
+                                <div class="form-group">
+                                    <label for="custom-color-quizMainBackground">Cor de Fundo Principal do Quiz:</label>
+                                    <input type="color" id="custom-color-quizMainBackground">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizMainTextColor">Cor Principal do Texto Geral:</label>
+                                    <input type="color" id="custom-color-quizMainTextColor">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizHighlightColor">Cor de Destaque (Títulos, Slogans):</label>
+                                    <input type="color" id="custom-color-quizHighlightColor">
+                                </div>
+                                <hr>
+                                <div class="form-group">
+                                    <label for="custom-color-quizPrimaryButtonBg">Cor de Fundo Botão Primário:</label>
+                                    <input type="color" id="custom-color-quizPrimaryButtonBg">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizPrimaryButtonText">Cor do Texto Botão Primário:</label>
+                                    <input type="color" id="custom-color-quizPrimaryButtonText">
+                                </div>
+                                <hr>
+                                <div class="form-group">
+                                    <label for="custom-color-quizSecondaryButtonBg">Cor de Fundo Botão Secundário:</label>
+                                    <input type="color" id="custom-color-quizSecondaryButtonBg">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizSecondaryButtonBorder">Cor da Borda Botão Secundário:</label>
+                                    <input type="color" id="custom-color-quizSecondaryButtonBorder">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizSecondaryButtonText">Cor do Texto Botão Secundário:</label>
+                                    <input type="color" id="custom-color-quizSecondaryButtonText">
+                                </div>
+                                <hr>
+                                <div class="form-group">
+                                    <label for="custom-color-quizOptionBg">Cor de Fundo Opção de Resposta:</label>
+                                    <input type="color" id="custom-color-quizOptionBg">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizOptionText">Cor do Texto Opção de Resposta:</label>
+                                    <input type="color" id="custom-color-quizOptionText">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizOptionCorrectBg">Cor de Fundo Opção Correta:</label>
+                                    <input type="color" id="custom-color-quizOptionCorrectBg">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-quizOptionIncorrectBg">Cor de Fundo Opção Incorreta:</label>
+                                    <input type="color" id="custom-color-quizOptionIncorrectBg">
+                                </div>
+                                <hr>
+                                <div class="form-group">
+                                    <label for="custom-color-inputBorder">Cor da Borda Inputs (Nome/Telefone):</label>
+                                    <input type="color" id="custom-color-inputBorder">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-color-inputPlaceholder">Cor do Texto Placeholder (Nome/Telefone):</label>
+                                    <input type="color" id="custom-color-inputPlaceholder">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Tamanhos de Fonte Principais</h5>
+                                <p class="admin-instructions">Use unidades válidas de CSS (ex: 1.2em, 16px, clamp(1em, 4vw, 1.5em)).</p>
+                                <div class="form-group">
+                                    <label for="custom-fontSize-initialSloganFontSize">Tam. Fonte Slogan (Tela Inicial/Descanso):</label>
+                                    <input type="text" id="custom-fontSize-initialSloganFontSize" placeholder="Ex: clamp(1.1em, 4vw, 1.25em)">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-fontSize-idleCallToActionFontSize">Tam. Fonte Chamada (Tela Descanso):</label>
+                                    <input type="text" id="custom-fontSize-idleCallToActionFontSize" placeholder="Ex: clamp(2.8em, 7vw, 5.5em)">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-fontSize-mainButtonsFontSize">Tam. Fonte Botões Principais:</label>
+                                    <input type="text" id="custom-fontSize-mainButtonsFontSize" placeholder="Ex: 1.1em">
+                                </div>
+                                 <div class="form-group">
+                                    <label for="custom-fontSize-questionTextFontSize">Tam. Fonte Texto da Pergunta:</label>
+                                    <input type="text" id="custom-fontSize-questionTextFontSize" placeholder="Ex: clamp(1.1em, 3vw, 1.3em)">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Fontes</h5>
+                                <div class="form-group">
+                                    <label for="custom-fontFamily-main">Família de Fontes Principal:</label>
+                                    <select id="custom-fontFamily-main">
+                                        <option value="'Segoe UI', Tahoma, Geneva, Verdana, sans-serif">Padrão (Segoe UI)</option>
+                                        <option value="Arial, Helvetica, sans-serif">Arial</option>
+                                        <option value="Verdana, Geneva, sans-serif">Verdana</option>
+                                        <option value="'Trebuchet MS', Helvetica, sans-serif">Trebuchet MS</option>
+                                        <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                                        <option value="Georgia, serif">Georgia</option>
+                                        <option value="'Courier New', Courier, monospace">Courier New</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn-secondary btn-small btn-reset-section" data-section-reset="appearance">Resetar Aparência</button>
+                        </div>
+                    </div>
+
+                    <!-- Seção 2: Textos -->
+                    <div class="accordion-item">
+                        <button class="accordion-header" aria-expanded="false">Textos Personalizáveis</button>
+                        <div class="accordion-content">
+                            <div class="admin-form-section">
+                                <h5>Tela Inicial</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-initialScreenTitle">Título da Tela Inicial:</label>
+                                    <input type="text" id="custom-text-initialScreenTitle">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-initialScreenSlogan">Slogan da Tela Inicial:</label>
+                                    <input type="text" id="custom-text-initialScreenSlogan">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-initialScreenStartButton">Texto Botão "Iniciar Quiz":</label>
+                                    <input type="text" id="custom-text-initialScreenStartButton">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-initialScreenRankingButton">Texto Botão "Ver Ranking":</label>
+                                    <input type="text" id="custom-text-initialScreenRankingButton">
+                                </div>
+                                 <div class="form-group">
+                                    <label for="custom-text-inputNamePlaceholder">Placeholder Input Nome:</label>
+                                    <input type="text" id="custom-text-inputNamePlaceholder">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-inputPhonePlaceholder">Placeholder Input Telefone:</label>
+                                    <input type="text" id="custom-text-inputPhonePlaceholder">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Tela do Quiz</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-quizScreenNextButton">Texto Botão "Próxima Pergunta":</label>
+                                    <input type="text" id="custom-text-quizScreenNextButton">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-quizScreenFinalizeButton">Texto Botão "Finalizar Quiz":</label>
+                                    <input type="text" id="custom-text-quizScreenFinalizeButton">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Tela de Resultado</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-resultScreenPrizeWon">Mensagem "Ganhou Brinde":</label>
+                                    <input type="text" id="custom-text-resultScreenPrizeWon">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-resultScreenPrizeNotWon">Mensagem "Não Ganhou Brinde":</label>
+                                    <input type="text" id="custom-text-resultScreenPrizeNotWon">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-resultScreenRankingButton">Texto Botão "Ver Ranking":</label>
+                                    <input type="text" id="custom-text-resultScreenRankingButton">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-resultScreenPlayAgainButton">Texto Botão "Jogar Novamente":</label>
+                                    <input type="text" id="custom-text-resultScreenPlayAgainButton">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Tela de Ranking</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-rankingScreenTitle">Título Tela de Ranking:</label>
+                                    <input type="text" id="custom-text-rankingScreenTitle">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-rankingScreenBackButton">Texto Botão "Voltar ao Início":</label>
+                                    <input type="text" id="custom-text-rankingScreenBackButton">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Tela de Descanso</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-idleScreenCallToAction">Texto Chamada Tela de Descanso:</label>
+                                    <input type="text" id="custom-text-idleScreenCallToAction">
+                                </div>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Modais</h5>
+                                <div class="form-group">
+                                    <label for="custom-text-modalAlreadyWonTitle">Título Modal "Já Ganhou":</label>
+                                    <input type="text" id="custom-text-modalAlreadyWonTitle">
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-modalAlreadyWonMessage">Mensagem Modal "Já Ganhou":</label>
+                                    <textarea id="custom-text-modalAlreadyWonMessage" rows="3"></textarea>
+                                </div>
+                                <div class="form-group">
+                                    <label for="custom-text-modalIncorrectAnswersTitle">Título Modal "Respostas Incorretas":</label>
+                                    <input type="text" id="custom-text-modalIncorrectAnswersTitle">
+                                </div>
+                            </div>
+                            <button class="btn-secondary btn-small btn-reset-section" data-section-reset="texts">Resetar Textos</button>
+                        </div>
+                    </div>
+
+                    <!-- Seção 3: Identidade Visual -->
+                    <div class="accordion-item">
+                        <button class="accordion-header" aria-expanded="false">Identidade Visual</button>
+                        <div class="accordion-content">
+                            <div class="admin-form-section">
+                                <h5>Logotipo do Quiz</h5>
+                                <p class="admin-instructions">Adicione o arquivo de imagem (PNG, JPG, SVG) na pasta 'assets' e digite o nome completo do arquivo abaixo.</p>
+                                <div class="form-group setting-item">
+                                    <label for="logo-filename-input">Nome do arquivo do logotipo (ex: novo_logo.png):</label>
+                                     <div class="setting-input-group">
+                                        <input type="text" id="logo-filename-input" placeholder="ex: logo_empresa.png">
+                                    </div>
+                                </div>
+                                <div id="logo-preview-container" class="logo-preview-container">
+                                    <p>Pré-visualização:</p>
+                                    <img id="logo-preview-img" src="assets/logo.png" alt="Pré-visualização do Logo" class="logo-preview">
+                                </div>
+                                <button id="restore-default-logo-btn" class="btn-secondary btn-small">Restaurar Logotipo Padrão</button>
+                                <p id="logo-status-message" class="status-message" style="margin-top:10px;"></p>
+                            </div>
+                            <div class="admin-form-section">
+                                <h5>Imagem de Fundo do Quiz</h5>
+                                <p class="admin-instructions">Adicione o arquivo de imagem à pasta 'assets' e digite o nome completo do arquivo abaixo. Se habilitado, substituirá a cor de fundo padrão.</p>
+                                <div class="form-group setting-item">
+                                    <label for="background-filename-input">Nome do arquivo da imagem de fundo (ex: fundo_quiz.jpg):</label>
+                                    <div class="setting-input-group">
+                                        <input type="text" id="background-filename-input" placeholder="placeholder-background.jpg">
+                                    </div>
+                                </div>
+                                <div class="form-group setting-item">
+                                     <div class="setting-input-group">
+                                        <div> <input type="checkbox" id="enable-custom-background" name="enable-custom-background">
+                                            <span class="checkbox-label-text">Habilitar imagem de fundo personalizada.</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="form-group setting-item">
+                                    <label for="custom-backgroundOpacity">Opacidade da Imagem de Fundo:</label>
+                                    <div class="setting-input-group">
+                                        <input type="range" id="custom-backgroundOpacity" min="0" max="1" step="0.05" style="width: 80%;">
+                                        <span id="custom-backgroundOpacity-value" style="margin-left: 10px;">100%</span>
+                                    </div>
+                                </div>
+                                <button id="restore-default-background-btn" class="btn-secondary btn-small">Restaurar Fundo Padrão</button>
+                            </div>
+                            <button class="btn-secondary btn-small btn-reset-section" data-section-reset="visualIdentity">Resetar Identidade Visual</button>
+                        </div>
+                    </div>
+
+                    <!-- Seção 4: Temas Pré-definidos -->
+                    <div class="accordion-item">
+                        <button class="accordion-header" aria-expanded="false">Temas Pré-definidos</button>
+                        <div class="accordion-content">
+                            <div class="admin-form-section">
+                                <p class="admin-instructions">Selecione um tema para aplicar um conjunto de personalizações rapidamente.</p>
+                                <div id="predefined-themes-gallery" class="themes-gallery">
+                                    <!-- Os temas serão populados aqui pelo JavaScript -->
+                                    <p>Em breve...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="customization-buttons-footer">
+                        <button id="save-customizations-btn" class="btn">Salvar Personalizações</button>
+                        <button id="restore-default-customizations-btn" class="btn-secondary btn-warning">Restaurar Padrões Globais</button>
+                    </div>
+                    <p id="customization-status-message" class="status-message" style="margin-top:15px;"></p>
+                        </div> <!-- Fim .customization-controls-area -->
+
+                        <div id="customization-preview-area" class="customization-preview-area-placeholder">
+                            <!-- A pré-visualização dinâmica será renderizada aqui -->
+                            <h4>Pré-visualização do Quiz</h4>
+                            <div class="preview-screen-selector">
+                                <button data-preview-target="initial" class="active">Tela Inicial</button>
+                                <button data-preview-target="quiz">Tela de Quiz</button>
+                                <button data-preview-target="result">Tela de Resultado</button>
+                            </div>
+                            <div id="preview-content-area">
+                                <!-- Conteúdo da pré-visualização da tela selecionada -->
+                                <p>A pré-visualização aparecerá aqui.</p>
+                            </div>
+                        </div> <!-- Fim #customization-preview-area -->
+                    </div> <!-- Fim .admin-customization-layout -->
+            </div> <!-- Fim .screen-content -->
+        </section>
+
+        <section id="admin-reports-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Relatório de Participantes (<span id="participants-total-count">0</span>)</h2>
+            </div>
+            <div class="screen-content admin-content">
+                <!-- 1. Barra de Pesquisa Global -->
+                <div id="report-global-search-bar" class="admin-form-section" style="margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label for="search-participants-input" class="sr-only">Buscar por Nome ou Telefone:</label>
+                        <input type="search" id="search-participants-input" placeholder="Buscar por Nome ou Telefone...">
+                    </div>
+                </div>
+
+                <!-- 2. Painel de Filtros Expansível -->
+                <div id="report-filters-panel" class="admin-form-section filter-section collapsible-section">
+                    <h4 class="collapsible-header">Opções de Filtro <span class="collapse-icon">►</span></h4>
+                    <div class="collapsible-content">
+                        <div class="filters-grid-reports"> <!-- Nova classe para layout em grid -->
+                            <div class="form-group">
+                                <label>Período de Participação:</label>
+                                <div>
+                                    <input type="radio" id="filter-all" name="report-filter-period" value="all" checked>
+                                    <span class="checkbox-label-text">Todos</span>
+                                </div>
+                                <div class="filter-inline-group">
+                                     <input type="radio" id="filter-specific-period" name="report-filter-period" value="specific">
+                                     <span class="checkbox-label-text">Período Específico:</span>
+                                     <input type="date" id="filter-start-date" aria-label="Data de início">
+                                     <span class="checkbox-label-text" style="margin-left: 5px; margin-right: 5px;">até</span>
+                                     <input type="date" id="filter-end-date" aria-label="Data de fim">
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Status do Brinde:</label>
+                                <div>
+                                    <input type="checkbox" id="filter-prize-winners" name="filter-prize-winners">
+                                    <span class="checkbox-label-text">Mostrar apenas ganhadores de brinde</span>
+                                </div>
+                                <div>
+                                    <input type="checkbox" id="filter-not-prize-winners" name="filter-not-prize-winners"> <!-- NOVO -->
+                                    <span class="checkbox-label-text">Mostrar apenas quem NÃO ganhou brinde</span>
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Status de Bloqueio:</label>
+                                <div>
+                                    <input type="checkbox" id="filter-locked-out" name="filter-locked-out">
+                                    <span class="checkbox-label-text">Mostrar apenas bloqueados por desistência</span>
+                                </div>
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="filter-exact-score">Pontuação Exata:</label>
+                                <input type="number" id="filter-exact-score" min="0" placeholder="Ex: 10">
+                            </div>
+
+                            <div class="form-group"> <!-- Placeholder para filtro de evento -->
+                                <label for="filter-event">Evento:</label>
+                                <select id="filter-event" disabled>
+                                    <option value="">Todos os Eventos (Em breve)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="filter-actions" style="margin-top: 15px; text-align: right;">
+                            <button id="apply-report-filters-btn" class="btn">Aplicar Filtros</button>
+                            <button id="clear-report-filters-btn" class="btn-secondary">Limpar Filtros</button>
+                        </div>
+                         <p class="admin-instructions" style="margin-top:10px; font-size: 0.8em;">Clique em uma linha da tabela (exceto no checkbox) para ver detalhes e ações do participante.</p>
+                    </div>
+                </div>
+
+                <!-- 3. Tabela de Participantes -->
+                <div class="table-container">
+                    <table id="participants-table">
+                        <thead>
+                            <tr>
+                                <th class="cell-checkbox"><input type="checkbox" id="select-all-participants-checkbox" title="Selecionar todos na página"></th>
+                                <th data-sort-key="index"># <span class="sort-icon"></span></th>
+                                <th data-sort-key="name">Nome <span class="sort-icon"></span></th>
+                                <th data-sort-key="phone">Telefone <span class="sort-icon"></span></th>
+                                <th data-sort-key="score">Acertos <span class="sort-icon"></span></th>
+                                <th data-sort-key="time">Tempo <span class="sort-icon"></span></th>
+                                <th data-sort-key="wonPrize">Brinde <span class="sort-icon"></span></th> <!-- Manter wonPrize como key para JS, texto é Brinde -->
+                                <th data-sort-key="timestamp">Data Participação <span class="sort-icon"></span></th>
+                            </tr>
+                        </thead>
+                        <tbody id="participants-table-body">
+                            <!-- Linhas serão populadas pelo JavaScript -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- 4. Controles de Paginação Dinâmica -->
+                <div id="participants-pagination-controls" class="pagination-controls">
+                    <button id="participants-prev-page-btn" class="btn-pagination" disabled>&laquo; Anterior</button>
+                    <span id="participants-page-info" class="page-info">Página 1 de 1</span>
+                    <button id="participants-next-page-btn" class="btn-pagination" disabled>Próxima &raquo;</button>
+                </div>
+
+                <!-- 5. Seção de Ações -->
+                <div id="report-actions-section" class="admin-form-section" style="margin-top: 20px;">
+                    <h4>Ações Gerais</h4>
+                    <div id="reports-batch-actions-toolbar">
+                        <div class="btn-row">
+                            <button id="btn-unaward-selected" class="btn-small">Despremiar Selecionados (<span class="batch-action-counter">0</span>)</button>
+                            <button id="btn-unlock-selected" class="btn-small">Desbloquear Selecionados (<span class="batch-action-counter">0</span>)</button>
+                        </div>
+                        
+                        <button id="btn-delete-selected-participants" class="btn-small btn-danger">Excluir Selecionados (<span class="batch-action-counter">0</span>)</button>
+                        
+                        <div class="divider"></div>
+                        
+                        <div class="btn-row">
+                            <button id="export-csv-btn" class="btn-small btn-export">Exportar para CSV</button>
+                            <button id="export-json-btn" class="btn-small btn-export">Exportar para JSON</button>
+                        </div>
+                        
+                        <div class="divider"></div>
+                        
+                        <button id="delete-all-participants-btn" class="btn-small btn-danger">Excluir Todos os Participantes</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+        
+        <section id="admin-backup-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Backup e Restauração de Dados</h2>
+            </div>
+            <div class="screen-content admin-content">
+                <div class="admin-form-section">
+                    <h4>Exportar Dados</h4>
+                    <p>Salve todos os dados do quiz (perguntas, participantes, configurações, evento) em um arquivo JSON.</p>
+                    <button id="export-backup-btn" class="btn">Exportar Backup Completo</button>
+                </div>
+                <div class="admin-form-section">
+                    <h4>Importar Dados</h4>
+                    <p>Importe dados de um arquivo de backup JSON. <strong>Atenção:</strong> Isso sobrescreverá todos os dados existentes!</p>
+                    <div class="form-group">
+                        <label for="import-backup-file">Selecionar Arquivo de Backup (.json):</label>
+                        <input type="file" id="import-backup-file" accept=".json">
+                    </div>
+                    <button id="import-backup-btn" class="btn-secondary">Importar Backup Selecionado</button>
+                    <p id="backup-status-message" class="status-message" style="margin-top:10px;"></p>
+                </div>
+            </div>
+        </section>
+
+        <section id="admin-tester-screen" class="screen admin-sub-screen">
+            <div class="screen-header-admin">
+                <button class="admin-back-btn" data-target-screen="admin-dashboard-screen" aria-label="Voltar ao painel">← Voltar</button>
+                <h2>Testador de Cenários do Quiz</h2>
+            </div>
+            <div class="screen-content admin-content">
+                <p class="admin-instructions">Use os botões abaixo para simular telas e funcionalidades do quiz. As simulações podem abrir 'index.html' em uma nova aba ou tentar acionar modais/estados diretamente se a página do quiz já estiver aberta e o script de teste implementado.</p>
+
+                <div class="admin-form-section">
+                    <h4>Navegação Rápida (Abrirá o Quiz em Nova Aba)</h4>
+                    <button id="test-goto-initial" class="btn-secondary">🏠 Ir para Tela Inicial</button>
+                    <button id="test-goto-quiz" class="btn-secondary">❓ Ir para Tela do Quiz (Início)</button>
+                    <button id="test-goto-result" class="btn-secondary">🏆 Ir para Tela de Resultado (Genérica)</button>
+                    <button id="test-goto-ranking" class="btn-secondary">📊 Ir para Tela de Ranking</button>
+                    <button id="test-goto-idle" class="btn-secondary">😴 Ir para Tela de Descanso</button>
+                </div>
+
+                <div class="admin-form-section">
+                    <h4>Simular Cenários de Evento (Abrirá o Quiz em Nova Aba)</h4>
+                    <p class="admin-instructions" style="font-size: 0.8em;">Estes testes configuram um evento fictício no localStorage para que o `index.html` reaja. A configuração real do evento não será alterada.</p>
+                    <button id="test-event-before-start" class="btn-secondary">⏳ Evento: Antes do Início (Mensagens Ativas)</button>
+                    <button id="test-event-after-end" class="btn-secondary">🏁 Evento: Após o Fim (Mensagens Ativas)</button>
+                    <button id="test-event-during" class="btn-secondary">▶️ Evento: Durante (Mensagens Ativas)</button>
+                    <button id="test-event-messages-disabled-outside-period" class="btn-secondary">🔓 Evento: Fora do Período (Mensagens Desativadas)</button>
+                </div>
+
+                <div class="admin-form-section">
+                    <h4>Simular Modais (Requer que 'index.html' esteja aberto)</h4>
+                    <button id="test-modal-already-won" class="btn-secondary">🚫 Testar Modal 'Já Ganhou Brinde'</button>
+                    <button id="test-modal-top3" class="btn-secondary">✨ Testar Modal 'Parabéns Top 3'</button>
+                    <button id="test-modal-incorrect-answers" class="btn-secondary">❌ Testar Modal 'Respostas Incorretas'</button>
+                </div>
+
+                <div class="admin-form-section">
+                    <h4>Simular Cenários da Tela de Resultado (Requer que 'index.html' esteja aberto e configurado para teste)</h4>
+                    <button id="test-result-top1-winner" class="btn-secondary">🥇 Resultado: Top 1 (Ganhou Brinde)</button>
+                    <button id="test-result-non-top3-winner" class="btn-secondary">✅ Resultado: Ganhador (Não Top 3, Ganhou Brinde)</button>
+                    <button id="test-result-loser" class="btn-secondary">😔 Resultado: Não Ganhou Brinde</button>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <div id="alert-modal" class="modal-overlay hidden" aria-labelledby="alert-modal-title" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="alert-modal-title" class="modal-title">Atenção</h3>
+            <p id="alert-message" class="modal-text"></p>
+            <button id="alert-ok-btn" class="btn modal-close-btn">OK</button>
+        </div>
+    </div>
+
+    <div id="confirm-modal" class="modal-overlay hidden" aria-labelledby="confirm-modal-title" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="confirm-modal-title" class="modal-title">Confirmação</h3>
+            <p id="confirm-message" class="modal-text"></p>
+            <div class="modal-actions">
+                <button id="confirm-save-proceed-btn" class="btn btn-success" style="margin-right: 10px;">Salvar e Sair</button> 
+                <button id="confirm-proceed-btn" class="btn btn-danger">Sair sem Salvar</button> 
+                <button id="confirm-cancel-btn" class="btn btn-warning">Cancelar</button> 
+            </div>
+        </div>
+    </div>
+    
+    <div id="participant-details-modal" class="modal-overlay hidden" aria-labelledby="participant-details-title" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="participant-details-title" class="modal-title">Detalhes do Participante</h3>
+            <button class="modal-close-icon-btn" aria-label="Fechar">&times;</button>
+            <div class="modal-scrollable-content">
+                <div id="participant-info-section">
+                    </div>
+                <hr class="modal-divider">
+                <h4>Resumo das Respostas</h4>
+                <div id="participant-answers-list">
+                    </div>
+            </div>
+            <div id="participant-modal-actions" class="modal-actions" style="margin-top: 15px;">
+                </div>
+        </div>
+    </div>
+
+    <!-- Modal de Pré-visualização da Questão -->
+    <div id="questionPreviewModal" class="modal-overlay hidden" aria-labelledby="question-preview-title" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="question-preview-title" class="modal-title">Pré-visualização da Questão</h3>
+            <button class="modal-close-icon-btn close-preview-btn" aria-label="Fechar Pré-visualização">&times;</button>
+            <div class="modal-scrollable-content">
+                <div id="previewQuestionImageContainer" style="text-align: center; margin-bottom: 15px;">
+                    <!-- A imagem da questão será inserida aqui -->
+                </div>
+                <h4 id="previewQuestionText" style="text-align: center; margin-bottom: 15px; font-size: 1.2em;"></h4>
+                <ul id="previewOptionsList" style="list-style-type: none; padding: 0;">
+                    <!-- As alternativas serão inseridas aqui -->
+                </ul>
+            </div>
+            <button id="close-preview-modal-btn" class="btn modal-close-btn close-preview-btn" style="margin-top: 15px;">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Modal de Detalhes/Ações da Questão -->
+    <div id="question-details-modal" class="modal-overlay hidden" aria-labelledby="question-details-modal-title" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="question-details-modal-title" class="modal-title">Detalhes da Questão</h3>
+            <button class="modal-close-icon-btn" data-close-modal="question-details-modal" aria-label="Fechar Detalhes">&times;</button>
+            <div class="modal-scrollable-content" id="question-details-modal-content">
+                <!-- Seção de Visualização de Detalhes (inicialmente visível) -->
+                <div id="question-details-view-section">
+                    <div class="question-detail-section question-info-basic">
+                        <h6>Informações Básicas</h6>
+                        <p><strong>ID:</strong> <span id="detail-q-id"></span></p>
+                        <p><strong>Dificuldade:</strong> <span id="detail-q-difficulty"></span></p>
+                    </div>
+
+                    <div class="question-detail-section question-text-section">
+                        <h6>Enunciado da Questão</h6>
+                        <p id="detail-q-text"></p>
+                    </div>
+                    
+                    <div class="question-detail-section question-options-section">
+                        <h6>Alternativas (<span id="detail-q-options-count">0</span>)</h6>
+                        <ul id="detail-q-options-list">
+                            <!-- Alternativas serão populadas aqui -->
+                        </ul>
+                    </div>
+                    
+<div class="question-detail-section question-stats-section" id="detail-q-stats-container" style="display: none;">
+                        <h6>Estatísticas da Questão</h6>
+                        <p><strong>Total de Vezes Respondida:</strong> <span id="detail-q-stat-total">Carregando...</span></p>
+                        <p><strong>Total de Acertos:</strong> <span id="detail-q-stat-correct">Carregando...</span></p>
+                        <p><strong>Total de Erros:</strong> <span id="detail-q-stat-incorrect">Carregando...</span></p>
+                        <p><strong>Taxa de Acerto:</strong> <span id="detail-q-stat-accuracy">Carregando...</span></p>
+                    </div>
+                    <div class="question-detail-section question-actions-section">
+                        <h5>Ações da Questão</h5>
+                        <div id="question-actions-modal-container" class="modal-actions" style="display: flex; flex-direction: column; gap: 10px; width: 100%;">
+                            <!-- Botões de ação (incluindo o novo "Editar") serão inseridos aqui pelo JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Seção de Edição da Questão (inicialmente oculta) -->
+                <div id="question-edit-form-section" class="admin-form-section hidden" style="padding-top: 15px; border-top: 1px solid #ccc; margin-top:15px;">
+                    <h4>Editar Questão</h4>
+                    <!-- Conteúdo do formulário movido para cá -->
+                    <input type="hidden" id="edit-question-id"> <!-- Este ID é referenciado no JS, manter -->
+                    <div class="form-group">
+                        <label for="question-input">Pergunta:</label>
+                        <textarea id="question-input" rows="3"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>Opções (marque a correta):</label>
+                        <div class="option-group"><input type="radio" name="correct-option" value="0" checked> <input type="text" id="option1-input" placeholder="Opção 1"></div>
+                        <div class="option-group"><input type="radio" name="correct-option" value="1"> <input type="text" id="option2-input" placeholder="Opção 2"></div>
+                        <div class="option-group"><input type="radio" name="correct-option" value="2"> <input type="text" id="option3-input" placeholder="Opção 3"></div>
+                        <div class="option-group"><input type="radio" name="correct-option" value="3"> <input type="text" id="option4-input" placeholder="Opção 4"></div>
+                    </div>
+                    <div class="form-group">
+                        <label for="question-difficulty-input">Nível de Dificuldade:</label>
+                        <select id="question-difficulty-input">
+                            <option value="facil">Fácil</option>
+                            <option value="moderado">Moderado</option>
+                            <option value="dificil">Difícil</option>
+                        </select>
+                    </div>
+                    <button type="button" id="previewQuestionBtn" class="btn-secondary" style="margin-bottom: 10px;">Pré-visualizar Questão (do formulário)</button>
+                    <button id="save-question-btn" class="btn">Salvar Alterações</button>
+                    <button id="cancel-edit-question-btn" class="btn-secondary">Cancelar Edição</button>
+                </div>
+            </div>
+            <button class="btn modal-close-btn" data-close-modal="question-details-modal" style="margin-top: 20px; background-color: var(--caesb-blue-medium-default); width: 100%;">Fechar</button>
+        </div>
+    </div>
+
+    <!-- Adiciona Chart.js CDN -->
+    <script src="js/chart.min.js"></script>
+    <script src="admin/admin.js" type="module"></script>
+</body>
+</html>
