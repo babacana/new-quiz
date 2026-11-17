@@ -23,6 +23,9 @@ export interface EventSettings {
   enableVirtualKeyboard: boolean;
   enableTimeAlertBorderPulse: boolean;
   enableTimeAlertFlash: boolean;
+  enableSoundEffects?: boolean;
+  autoAdvanceSeconds?: number;
+  lgpdNoticeText?: string;
   requireManualPrizeConfirmation: boolean;
   prizeStockLimit: number | null;
 }

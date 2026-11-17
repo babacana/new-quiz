@@ -627,6 +627,43 @@ export function AdminSettingsTab({
               />
               Flash visual crítico de tempo
             </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={formState.settings.enableSoundEffects ?? true}
+                onChange={(e) =>
+                  updateSettingsField('enableSoundEffects', e.target.checked)
+                }
+                className="h-4 w-4 rounded border-input"
+              />
+              Efeitos sonoros no Totem
+            </label>
+          </div>
+          <div className="grid gap-4 pt-2 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="setting-auto-advance">Avanço automático após resposta (s)</Label>
+              <Input
+                id="setting-auto-advance"
+                type="number"
+                min={0}
+                max={15}
+                value={formState.settings.autoAdvanceSeconds ?? 0}
+                onChange={(e) =>
+                  updateSettingsField('autoAdvanceSeconds', Math.max(0, Number(e.target.value) || 0))
+                }
+              />
+              <p className="text-xs text-muted-foreground">0 = avanço manual pelo Participante.</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="setting-lgpd-notice">Aviso opcional de privacidade / LGPD</Label>
+              <Input
+                id="setting-lgpd-notice"
+                type="text"
+                placeholder="Ex.: Seus dados são usados apenas para o ranking e entrega do brinde."
+                value={formState.settings.lgpdNoticeText ?? ''}
+                onChange={(e) => updateSettingsField('lgpdNoticeText', e.target.value)}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
