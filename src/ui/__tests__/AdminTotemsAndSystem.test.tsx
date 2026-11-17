@@ -230,4 +230,82 @@ describe('Issue #15 — Totens, Equipe & Sistema', () => {
     await user.click(within(simDialog).getByRole('button', { name: 'Fechar Simulador' }));
     expect(document.getElementById('dev-simulator-window')).not.toBeInTheDocument();
   }, 15000);
+
+  it('permite excluir um Totem individualmente com confirmação explícita e removê-lo da listagem', async () => {
+    const { controller } = createHarness();
+    await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+    await controller.authorizeTotemPairing({
+      pairingCode: 'DELIND1',
+      name: 'Totem Para Excluir',
+      pinCode: '1234',
+      eventId: DEFAULT_EVENT_ID,
+    });
+    await controller.logout();
+
+    const user = userEvent.setup({ delay: null });
+    window.location.hash = '#admin/totens';
+    render(<AdminApp controller={controller} />);
+    await signInAdmin(user);
+
+    const desktopTable = await screen.findByTestId('totems-desktop-table');
+    expect(within(desktopTable).getByText('Totem Para Excluir')).toBeInTheDocument();
+
+    await user.click(within(desktopTable).getByRole('button', { name: 'Excluir Totem Para Excluir' }));
+
+    const confirmDialog = await screen.findByRole('dialog');
+    expect(
+      within(confirmDialog).getByRole('heading', { name: /Confirmar Exclusão/i }),
+    ).toBeInTheDocument();
+
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Confirmar Exclusão' }));
+
+    expect(await screen.findByText(/Totem "Totem Para Excluir" excluído/i)).toBeInTheDocument();
+    expect(screen.queryByText('Totem Para Excluir')).not.toBeInTheDocument();
+  }, 15000);
+
+  it('permite selecionar múltiplos Totens e excluí-los em lote com confirmação explícita', async () => {
+    const { controller } = createHarness();
+    await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+    await controller.authorizeTotemPairing({
+      pairingCode: 'BATCH1',
+      name: 'Totem Lote A',
+      pinCode: '1111',
+      eventId: DEFAULT_EVENT_ID,
+    });
+    await controller.authorizeTotemPairing({
+      pairingCode: 'BATCH2',
+      name: 'Totem Lote B',
+      pinCode: '2222',
+      eventId: DEFAULT_EVENT_ID,
+    });
+    await controller.authorizeTotemPairing({
+      pairingCode: 'BATCH3',
+      name: 'Totem Mantido C',
+      pinCode: '3333',
+      eventId: DEFAULT_EVENT_ID,
+    });
+    await controller.logout();
+
+    const user = userEvent.setup({ delay: null });
+    window.location.hash = '#admin/totens';
+    render(<AdminApp controller={controller} />);
+    await signInAdmin(user);
+
+    const desktopTable = await screen.findByTestId('totems-desktop-table');
+    await user.click(within(desktopTable).getByRole('checkbox', { name: 'Selecionar Totem Lote A' }));
+    await user.click(within(desktopTable).getByRole('checkbox', { name: 'Selecionar Totem Lote B' }));
+
+    await user.click(screen.getByRole('button', { name: 'Excluir Selecionados (2)' }));
+
+    const confirmDialog = await screen.findByRole('dialog');
+    expect(
+      within(confirmDialog).getByRole('heading', { name: /Confirmar Exclusão/i }),
+    ).toBeInTheDocument();
+    await user.click(within(confirmDialog).getByRole('button', { name: 'Confirmar Exclusão' }));
+
+    expect(await screen.findByText(/2 Totem\(ns\) excluído\(s\)/i)).toBeInTheDocument();
+    expect(screen.queryByText('Totem Lote A')).not.toBeInTheDocument();
+    expect(screen.queryByText('Totem Lote B')).not.toBeInTheDocument();
+    expect(within(desktopTable).getByText('Totem Mantido C')).toBeInTheDocument();
+  }, 15000);
 });

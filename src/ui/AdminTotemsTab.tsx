@@ -8,6 +8,7 @@ import {
   RefreshCw,
   RotateCcw,
   Send,
+  Trash2,
   Wifi,
   WifiOff,
 } from 'lucide-react';
@@ -77,6 +78,12 @@ export function AdminTotemsTab({
     Record<string, ReloadTargetScreen>
   >({});
   const [mobileCommandTotem, setMobileCommandTotem] = useState<TotemRecord | null>(null);
+  const [selectedTotemIds, setSelectedTotemIds] = useState<string[]>([]);
+  const [pendingDeleteTarget, setPendingDeleteTarget] = useState<{
+    ids: string[];
+    description: string;
+    successMessage: string;
+  } | null>(null);
 
   useEffect(() => {
     if (events.length === 0) {
@@ -91,6 +98,8 @@ export function AdminTotemsTab({
     try {
       const list = await controller.listTotems();
       setTotems(list);
+      const validIds = new Set(list.map((t) => t.id));
+      setSelectedTotemIds((prev) => prev.filter((id) => validIds.has(id)));
       setRowEventSelection((prev) => {
         const next: Record<string, string> = { ...prev };
         for (const totem of list) {
@@ -201,6 +210,35 @@ export function AdminTotemsTab({
       () => controller.reloadTotemScreen({ eventId: cmd.targetEventId }, cmd.screen),
       'Comando RELOAD_SCREEN enviado para os Totens do Evento.',
     );
+  };
+
+  const toggleTotemSelection = (totemId: string) => {
+    setSelectedTotemIds((prev) =>
+      prev.includes(totemId) ? prev.filter((id) => id !== totemId) : [...prev, totemId],
+    );
+  };
+
+  const allTotemsSelected = totems.length > 0 && selectedTotemIds.length === totems.length;
+
+  const toggleSelectAllTotems = () => {
+    setSelectedTotemIds(allTotemsSelected ? [] : totems.map((t) => t.id));
+  };
+
+  const requestDeleteSingleTotem = (totem: TotemRecord) => {
+    setPendingDeleteTarget({
+      ids: [totem.id],
+      description: `Deseja realmente excluir o Totem "${totem.name}"? O histórico de Partidas já sincronizadas será preservado.`,
+      successMessage: `Totem "${totem.name}" excluído. Partidas já registradas foram preservadas.`,
+    });
+  };
+
+  const requestDeleteSelectedTotems = () => {
+    if (selectedTotemIds.length === 0) return;
+    setPendingDeleteTarget({
+      ids: [...selectedTotemIds],
+      description: `Deseja realmente excluir ${selectedTotemIds.length} Totem(ns) selecionado(s)? O histórico de Partidas já sincronizadas será preservado.`,
+      successMessage: `${selectedTotemIds.length} Totem(ns) excluído(s). Partidas já registradas foram preservadas.`,
+    });
   };
 
   const eventNameById = new Map(events.map((ev) => [ev.id, ev.name]));
@@ -370,6 +408,33 @@ export function AdminTotemsTab({
         </Card>
       ) : (
         <>
+          {selectedTotemIds.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card px-4 py-2.5">
+              <span className="text-sm font-medium text-foreground">
+                {selectedTotemIds.length} Totem(ns) selecionado(s)
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setSelectedTotemIds([])}
+                >
+                  Limpar seleção
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={requestDeleteSelectedTotems}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Excluir Selecionados ({selectedTotemIds.length})
+                </Button>
+              </div>
+            </div>
+          )}
+
           <Card data-testid="totems-desktop-table" className="hidden md:block">
             <CardHeader className="pb-3">
               <CardTitle className="text-base">
@@ -384,6 +449,15 @@ export function AdminTotemsTab({
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr className="border-y border-border bg-muted/40 text-left text-xs font-medium text-muted-foreground uppercase">
+                      <th className="w-10 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          aria-label="Selecionar todos os Totens"
+                          checked={allTotemsSelected}
+                          onChange={toggleSelectAllTotems}
+                          className="h-4 w-4 rounded border-input accent-primary"
+                        />
+                      </th>
                       <th className="px-4 py-3">Totem</th>
                       <th className="px-4 py-3">Status</th>
                       <th className="px-4 py-3">Tela / Telemetria</th>
@@ -398,6 +472,15 @@ export function AdminTotemsTab({
                       const targetReloadScreen = rowReloadSelection[totem.id] ?? 'initial-screen';
                       return (
                         <tr key={totem.id} className="transition-colors hover:bg-muted/30">
+                          <td className="px-4 py-3 align-top">
+                            <input
+                              type="checkbox"
+                              aria-label={`Selecionar ${totem.name}`}
+                              checked={selectedTotemIds.includes(totem.id)}
+                              onChange={() => toggleTotemSelection(totem.id)}
+                              className="h-4 w-4 rounded border-input accent-primary"
+                            />
+                          </td>
                           <td className="px-4 py-3 align-top">
                             <div className="font-medium text-foreground">{totem.name}</div>
                             <div className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -505,12 +588,34 @@ export function AdminTotemsTab({
                                   >
                                     Reiniciar Tela
                                   </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="destructive"
+                                    aria-label={`Excluir ${totem.name}`}
+                                    onClick={() => requestDeleteSingleTotem(totem)}
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                    Excluir
+                                  </Button>
                                 </div>
                               </div>
                             ) : (
-                              <span className="block text-right text-xs text-muted-foreground">
-                                Aguardando pareamento
-                              </span>
+                              <div className="flex items-center justify-end gap-2">
+                                <span className="text-xs text-muted-foreground">
+                                  Aguardando pareamento
+                                </span>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="destructive"
+                                  aria-label={`Excluir ${totem.name}`}
+                                  onClick={() => requestDeleteSingleTotem(totem)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                  Excluir
+                                </Button>
+                              </div>
                             )}
                           </td>
                         </tr>
@@ -527,11 +632,20 @@ export function AdminTotemsTab({
               <Card key={totem.id}>
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <CardTitle className="truncate text-base">{totem.name}</CardTitle>
-                      <CardDescription className="text-xs">
-                        <code>{totem.pairingCode}</code> · v{totem.configVersion}
-                      </CardDescription>
+                    <div className="flex min-w-0 items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Selecionar ${totem.name} (mobile)`}
+                        checked={selectedTotemIds.includes(totem.id)}
+                        onChange={() => toggleTotemSelection(totem.id)}
+                        className="mt-1 h-4 w-4 shrink-0 rounded border-input accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <CardTitle className="truncate text-base">{totem.name}</CardTitle>
+                        <CardDescription className="text-xs">
+                          <code>{totem.pairingCode}</code> · v{totem.configVersion}
+                        </CardDescription>
+                      </div>
                     </div>
                     {renderStatusBadges(totem)}
                   </div>
@@ -557,18 +671,31 @@ export function AdminTotemsTab({
                       {formatLastSeenPtBr(totem.lastSeenAt)}
                     </div>
                   </div>
-                  {totem.isPaired && (
+                  <div className="flex flex-col gap-2">
+                    {totem.isPaired && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="w-full"
+                        onClick={() => setMobileCommandTotem(totem)}
+                      >
+                        <Send className="h-3.5 w-3.5" />
+                        Comandos Remotos
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="sm"
-                      variant="outline"
+                      variant="destructive"
                       className="w-full"
-                      onClick={() => setMobileCommandTotem(totem)}
+                      aria-label={`Excluir ${totem.name}`}
+                      onClick={() => requestDeleteSingleTotem(totem)}
                     >
-                      <Send className="h-3.5 w-3.5" />
-                      Comandos Remotos
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Excluir
                     </Button>
-                  )}
+                  </div>
                 </CardContent>
               </Card>
             ))}
@@ -845,6 +972,49 @@ export function AdminTotemsTab({
             </Button>
             <Button type="button" onClick={() => void handleConfirmBatchCommand()}>
               Confirmar Envio
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmação de Exclusão de Totem (Individual ou em Lote) */}
+      <Dialog
+        open={Boolean(pendingDeleteTarget)}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteTarget(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirmar Exclusão</DialogTitle>
+            <DialogDescription>{pendingDeleteTarget?.description}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPendingDeleteTarget(null)}>
+              Cancelar
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => {
+                if (!pendingDeleteTarget) return;
+                const target = pendingDeleteTarget;
+                setPendingDeleteTarget(null);
+                void (async () => {
+                  try {
+                    await controller.deleteTotemsInBatch(target.ids);
+                    await refreshTotems();
+                    onStatusMessage('success', target.successMessage);
+                  } catch (error) {
+                    onStatusMessage(
+                      'error',
+                      error instanceof Error ? error.message : 'Erro ao excluir Totem(ns).',
+                    );
+                  }
+                })();
+              }}
+            >
+              Confirmar Exclusão
             </Button>
           </DialogFooter>
         </DialogContent>

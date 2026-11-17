@@ -595,6 +595,19 @@ export class InMemoryCloudGateway implements CloudGateway {
       .map((totem) => structuredClone(totem));
   }
 
+  async deleteTotems(totemIds: string[]): Promise<string[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para excluir Totens.');
+    }
+    const deleted: string[] = [];
+    for (const id of new Set(totemIds)) {
+      if (this.totemsById.delete(id)) {
+        deleted.push(id);
+      }
+    }
+    return deleted;
+  }
+
   async publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null> {
     if (payload.onlineStatus === 'online' && !this.online) {
       throw new Error('Sem conectividade com a nuvem para publicar telemetria.');

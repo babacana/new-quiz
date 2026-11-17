@@ -859,6 +859,83 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       expect(lockoutsEventA.some((l) => l.participantPhone === '(61) 95555-8899')).toBe(true);
       expect(lockoutsEventB).toHaveLength(0);
     });
+
+    it('permite ao Administrador excluir um Totem preservando Partidas já sincronizadas e bloqueia Operador', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const event = await controller.updateEvent(DEFAULT_EVENT_ID, {
+        settings: { numberOfQuestions: 1, minScoreForPrize: 1 },
+      });
+
+      const totemEngine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+      });
+      const pending = await totemEngine.initialize();
+      const totem = await controller.authorizeTotemPairing({
+        pairingCode: pending.pairing.pairingCode!,
+        name: 'Totem Descartável 01',
+        pinCode: '1234',
+        eventId: event.id,
+      });
+
+      // Registra uma Partida no Totem antes de excluí-lo
+      await totemEngine.startMatch('CARLOS', '(61) 99999-0001');
+      const q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
+      totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+      await totemEngine.advanceAfterAnswer();
+
+      // Operador não tem permissão para excluir Totem
+      await controller.logout();
+      await controller.login('operador@caesb.df.gov.br', 'OPERADOR2025!');
+      await expect(controller.deleteTotem(totem.id)).rejects.toThrow();
+
+      // Administrador exclui o Totem e preserva a Partida registrada
+      await controller.logout();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+      await controller.deleteTotem(totem.id);
+
+      const remainingTotems = await controller.listTotems();
+      expect(remainingTotems.some((t) => t.id === totem.id)).toBe(false);
+      expect(cloudGateway.getSyncedMatches(DEFAULT_EVENT_ID)).toHaveLength(1);
+    });
+
+    it('permite ao Administrador excluir múltiplos Totens em lote e valida lista vazia', async () => {
+      const { controller } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const t1 = await controller.authorizeTotemPairing({
+        pairingCode: 'PAIRB1',
+        name: 'Totem Lote 01',
+        pinCode: '1111',
+        eventId: DEFAULT_EVENT_ID,
+      });
+      const t2 = await controller.authorizeTotemPairing({
+        pairingCode: 'PAIRB2',
+        name: 'Totem Lote 02',
+        pinCode: '2222',
+        eventId: DEFAULT_EVENT_ID,
+      });
+      const t3 = await controller.authorizeTotemPairing({
+        pairingCode: 'PAIRB3',
+        name: 'Totem Lote 03',
+        pinCode: '3333',
+        eventId: DEFAULT_EVENT_ID,
+      });
+
+      await expect(controller.deleteTotemsInBatch([])).rejects.toThrow();
+
+      const deletedIds = await controller.deleteTotemsInBatch([t1.id, t3.id]);
+      expect(deletedIds).toEqual(expect.arrayContaining([t1.id, t3.id]));
+      expect(deletedIds).toHaveLength(2);
+
+      const remaining = await controller.listTotems();
+      expect(remaining.map((t) => t.id)).toEqual([t2.id]);
+    });
   });
 
   describe('T6 - Slice 1: Operador de Estande, Entregas, Conflitos Offline, Despremiar, Destravar e Excluir', () => {

@@ -111,6 +111,7 @@ export interface CloudGateway {
   authorizeTotemPairing(input: TotemPairingAuthorizationPayload): Promise<TotemRecord>;
   claimTotemPairing(pairingCode: string): Promise<TotemRecord | null>;
   listTotems(): Promise<TotemRecord[]>;
+  deleteTotems(totemIds: string[]): Promise<string[]>;
   publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null>;
   dispatchRemoteCommand(command: RemoteCommandPayload): Promise<RemoteCommandPayload>;
   subscribeTotemChannel(
