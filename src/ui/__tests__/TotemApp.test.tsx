@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
@@ -680,7 +680,7 @@ describe('TotemApp (Interface do Totem)', () => {
     // Abre Ranking a partir da tela de resultado
     await user.click(screen.getByRole('button', { name: 'Ver Ranking' }));
     expect(document.getElementById('ranking-screen')).toHaveClass('active');
-    expect(screen.getByText('HELENA')).toBeInTheDocument();
+    expect(within(document.getElementById('ranking-screen')!).getByText('HELENA')).toBeInTheDocument();
     expect(screen.getByText('1 Acertos')).toBeInTheDocument();
   });
 
@@ -925,5 +925,97 @@ describe('TotemApp (Interface do Totem)', () => {
     await user.click(await screen.findByRole('button', { name: 'OK!' }));
     await user.click(screen.getByRole('button', { name: 'Jogar Novamente' }));
     expect(screen.getByText('Título Pós-Partida v2')).toBeInTheDocument();
+  });
+
+  it('exibe badges A/B/C/D, aviso LGPD, avanço automático, proteção de zoom e Tela de Descanso dinâmica', async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine } = createUiTestRig({
+        settingsOverrides: {
+          numberOfQuestions: 2,
+          autoAdvanceSeconds: 2,
+          lgpdNoticeText: 'Dados usados apenas para o ranking e entrega do brinde.',
+        },
+      });
+
+      render(<TotemApp engine={engine} />);
+
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Aviso LGPD na tela inicial
+      expect(
+        screen.getByText('Dados usados apenas para o ranking e entrega do brinde.'),
+      ).toBeInTheDocument();
+
+      // Proteção contra zoom via Ctrl+wheel e atalho Ctrl++
+      const wheelEvent = new WheelEvent('wheel', { ctrlKey: true, cancelable: true });
+      document.dispatchEvent(wheelEvent);
+      expect(wheelEvent.defaultPrevented).toBe(true);
+
+      const zoomKeyEvent = new KeyboardEvent('keydown', {
+        key: '+',
+        ctrlKey: true,
+        cancelable: true,
+      });
+      document.dispatchEvent(zoomKeyEvent);
+      expect(zoomKeyEvent.defaultPrevented).toBe(true);
+
+      // Entra na Tela de Descanso após inatividade e verifica slides rotativos dinâmicos
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+        await Promise.resolve();
+      });
+      expect(document.getElementById('idle-screen')).toHaveClass('active');
+      expect(screen.getByTestId('idle-slide-podium')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.getByTestId('idle-slide-challenge')).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(screen.getByTestId('idle-slide-stats')).toBeInTheDocument();
+
+      // Desperta e verifica proteção contra toque fantasma + inicia partida
+      fireEvent.click(document.getElementById('idle-screen')!);
+      expect(document.getElementById('initial-screen')).toHaveClass('active');
+
+      // Avança 400ms para passar a janela de guarda de toque fantasma
+      act(() => {
+        vi.advanceTimersByTime(400);
+      });
+
+      fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'ANA' } });
+      fireEvent.change(screen.getByLabelText('Telefone'), { target: { value: '61991112222' } });
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+        await Promise.resolve();
+      });
+
+      // Badges A/B/C/D visíveis nas alternativas
+      const optionLetters = Array.from(document.querySelectorAll('.option-letter')).map(
+        (el) => el.textContent,
+      );
+      expect(optionLetters).toEqual(['A', 'B', 'C', 'D']);
+
+      // Responde e aguarda avanço automático (2s)
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'CAESB' }));
+      });
+      expect(screen.getByRole('button', { name: /Próxima Pergunta \(2s\)/i })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+        await Promise.resolve();
+      });
+
+      expect(screen.getByText(/2\/2/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -223,7 +223,7 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(await screen.findByText(/Importação concluída: 1 questão\(ões\) processadas/i)).toBeInTheDocument();
   });
 
-  it('separa rotas do Totem público, #admin e #operador sem expor atalho administrativo no Totem', () => {
+  it('separa rotas do Totem público, #admin e #operador sem expor atalho administrativo no Totem', async () => {
     window.location.hash = '';
     const { unmount } = render(<AppRouter />);
     expect(screen.queryByRole('button', { name: /Painel Admin/i })).not.toBeInTheDocument();
@@ -231,12 +231,16 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
 
     window.location.hash = '#operador';
     const { unmount: unmountOp } = render(<AppRouter />);
-    expect(screen.getByRole('heading', { name: 'Operação do Estande' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Operação do Estande' }),
+    ).toBeInTheDocument();
     unmountOp();
 
     window.location.hash = '#admin';
     render(<AppRouter />);
-    expect(screen.getByRole('heading', { name: 'Painel Administrativo do Quiz' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: 'Painel Administrativo do Quiz' }),
+    ).toBeInTheDocument();
     window.location.hash = '';
   });
 

@@ -19,6 +19,9 @@ export const DEFAULT_SETTINGS: EventSettings = {
   enableVirtualKeyboard: true,
   enableTimeAlertBorderPulse: true,
   enableTimeAlertFlash: true,
+  enableSoundEffects: true,
+  autoAdvanceSeconds: 0,
+  lgpdNoticeText: '',
   requireManualPrizeConfirmation: false,
   prizeStockLimit: null,
 };

@@ -24,8 +24,13 @@ import {
   formatTimeMMSS,
 } from './formatters';
 import { EventLogoImage } from './EventLogoImage';
+import { playTotemSound } from './soundEffects';
 import { buildThemeCssVariables } from './themeCss';
 import './styles.css';
+
+const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
+const IDLE_SLIDE_INTERVAL_MS = 5_000;
+const GHOST_TOUCH_GUARD_MS = 350;
 
 type ActiveTotemModal =
   | { type: 'alert'; message: string }
@@ -105,11 +110,16 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const [activationInput, setActivationInput] = useState('');
   const [diagnosticsSyncMessage, setDiagnosticsSyncMessage] = useState<string | null>(null);
   const [isForcingSync, setIsForcingSync] = useState(false);
+  const [localSoundMuted, setLocalSoundMuted] = useState(false);
+  const [idleSlideIndex, setIdleSlideIndex] = useState(0);
+  const [autoAdvanceRemaining, setAutoAdvanceRemaining] = useState<number | null>(null);
 
   const questionStartMsRef = useRef<number>(engine.getNowMs());
   const timeoutHandledForIndexRef = useRef<number | null>(null);
   const fadeOutTimerRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
+  const lastTickSecondRef = useRef<number | null>(null);
+  const ghostTouchUntilRef = useRef<number>(0);
   const isResizingKeyboardRef = useRef(false);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const phoneInputRef = useRef<HTMLInputElement | null>(null);
@@ -441,20 +451,87 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
       event.preventDefault();
     };
 
+    const handleTouchMove = (event: TouchEvent) => {
+      if (event.touches.length > 1) {
+        event.preventDefault();
+      }
+    };
+
+    const handleGestureStart = (event: Event) => {
+      event.preventDefault();
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+    };
+
+    const handleZoomKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && ['+', '-', '=', '0'].includes(event.key)) {
+        event.preventDefault();
+      }
+    };
+
     for (const eventName of INTERACTION_EVENTS) {
       document.addEventListener(eventName, handleDocumentInteraction, { passive: true });
     }
     document.addEventListener('contextmenu', handleContextMenu);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('gesturestart', handleGestureStart);
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    document.addEventListener('keydown', handleZoomKeyDown);
 
     return () => {
       for (const eventName of INTERACTION_EVENTS) {
         document.removeEventListener(eventName, handleDocumentInteraction);
       }
       document.removeEventListener('contextmenu', handleContextMenu);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('gesturestart', handleGestureStart);
+      document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('keydown', handleZoomKeyDown);
     };
   }, [resetIdleTimer]);
 
+  const isSoundEnabled = (snapshot.event.settings.enableSoundEffects ?? true) && !localSoundMuted;
+  const autoAdvanceSeconds = snapshot.event.settings.autoAdvanceSeconds ?? 0;
+
+  // Toca tick sonoro discreto nos últimos 5 segundos de uma questão em aberto.
+  useEffect(() => {
+    const currentQ = snapshot.activeMatch?.currentQuestion;
+    if (snapshot.screen !== 'quiz-screen' || !currentQ || currentQ.hasAnswered) {
+      lastTickSecondRef.current = null;
+      return;
+    }
+    const remainingSec = Math.ceil(questionRemainingMs / 1000);
+    if (remainingSec <= 5 && remainingSec >= 1 && lastTickSecondRef.current !== remainingSec) {
+      lastTickSecondRef.current = remainingSec;
+      playTotemSound('tick', isSoundEnabled);
+    }
+  }, [snapshot.screen, snapshot.activeMatch?.currentQuestion, questionRemainingMs, isSoundEnabled]);
+
+  // Alterna os destaques dinâmicos da Tela de Descanso enquanto o Evento estiver ativo.
+  useEffect(() => {
+    if (snapshot.screen !== 'idle-screen' || snapshot.eventWindow.isBlocked) {
+      setIdleSlideIndex(0);
+      return;
+    }
+    const timer = window.setInterval(() => {
+      setIdleSlideIndex((prev) => (prev + 1) % 3);
+    }, IDLE_SLIDE_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [snapshot.screen, snapshot.eventWindow.isBlocked]);
+
+  const isGhostTouchActive = () => Date.now() < ghostTouchUntilRef.current;
+
   const handleStartQuiz = async () => {
+    if (isGhostTouchActive()) {
+      return;
+    }
+    playTotemSound('click', isSoundEnabled);
     setActiveVirtualField(null);
     resetIdleTimer();
     const result = await engine.startMatch(nameInput, phoneInput);
@@ -470,24 +547,74 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     resetIdleTimer();
     const outcome = engine.submitAnswer(optionIndex);
     setSnapshot(outcome.snapshot);
+    const answered = outcome.snapshot.activeMatch?.currentQuestion;
+    if (answered?.hasAnswered) {
+      const chosen = answered.question.shuffledOptions[optionIndex];
+      playTotemSound(chosen?.isCorrect ? 'correct' : 'incorrect', isSoundEnabled);
+    }
   };
 
-  const handleAdvanceQuestion = async () => {
+  const handleAdvanceQuestion = useCallback(async () => {
     if (isAdvancing) {
       return;
     }
+    playTotemSound('click', isSoundEnabled);
+    setAutoAdvanceRemaining(null);
     resetIdleTimer();
     setIsAdvancing(true);
     try {
       const nextSnapshot = await engine.advanceAfterAnswer();
       setSnapshot(nextSnapshot);
-      if (nextSnapshot.screen === 'result-screen' && nextSnapshot.lastResult?.isTop3) {
-        setActiveModal({ type: 'top3' });
+      if (nextSnapshot.screen === 'result-screen') {
+        if (nextSnapshot.lastResult?.wonPrize || nextSnapshot.lastResult?.isTop3) {
+          playTotemSound('victory', isSoundEnabled);
+        }
+        if (nextSnapshot.lastResult?.isTop3) {
+          setActiveModal({ type: 'top3' });
+        }
       }
     } finally {
       setIsAdvancing(false);
     }
-  };
+  }, [engine, isAdvancing, isSoundEnabled, resetIdleTimer]);
+
+  // Avança automaticamente após responder/timeout quando autoAdvanceSeconds > 0.
+  useEffect(() => {
+    const currentQ = snapshot.activeMatch?.currentQuestion;
+    if (
+      snapshot.screen !== 'quiz-screen' ||
+      !currentQ ||
+      !currentQ.hasAnswered ||
+      autoAdvanceSeconds <= 0
+    ) {
+      setAutoAdvanceRemaining(null);
+      return;
+    }
+
+    const totalSec = Math.max(1, Math.round(autoAdvanceSeconds));
+    setAutoAdvanceRemaining(totalSec);
+
+    const interval = window.setInterval(() => {
+      setAutoAdvanceRemaining((prev) => {
+        if (prev === null) return null;
+        if (prev <= 1) {
+          window.clearInterval(interval);
+          void handleAdvanceQuestion();
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [
+    snapshot.screen,
+    snapshot.activeMatch?.currentQuestion,
+    autoAdvanceSeconds,
+    handleAdvanceQuestion,
+  ]);
 
   const handleOpenRanking = async () => {
     resetTransientUiState(false);
@@ -522,6 +649,8 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     if (engine.getSnapshot().screen !== 'idle-screen') {
       return;
     }
+    ghostTouchUntilRef.current = Date.now() + GHOST_TOUCH_GUARD_MS;
+    playTotemSound('click', isSoundEnabled);
     const nextSnapshot = engine.wakeFromIdleScreen();
     resetTransientUiState(true);
     setSnapshot(nextSnapshot);
@@ -712,6 +841,12 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
             />
           </div>
 
+          {snapshot.event.settings.lgpdNoticeText?.trim() && (
+            <p id="lgpd-notice-text" className="lgpd-notice-text">
+              {snapshot.event.settings.lgpdNoticeText.trim()}
+            </p>
+          )}
+
           <button
             id="start-quiz-btn"
             type="button"
@@ -809,7 +944,10 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
                         disabled={currentQuestion.hasAnswered}
                         onClick={() => handleSelectOption(idx)}
                       >
-                        {option.text}
+                        <span className="option-letter" aria-hidden="true">
+                          {OPTION_LETTERS[idx] ?? idx + 1}
+                        </span>
+                        <span className="option-label">{option.text}</span>
                       </button>
                     );
                   })}
@@ -837,9 +975,11 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
                       type="button"
                       className="btn"
                       disabled={isAdvancing}
-                      onClick={handleAdvanceQuestion}
+                      onClick={() => void handleAdvanceQuestion()}
                     >
-                      {currentQuestion.advanceButtonLabel}
+                      {autoAdvanceRemaining !== null
+                        ? `${currentQuestion.advanceButtonLabel} (${autoAdvanceRemaining}s)`
+                        : currentQuestion.advanceButtonLabel}
                     </button>
                   </div>
                 )}
@@ -990,10 +1130,92 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         onClick={handleWakeFromIdle}
         onTouchStart={handleWakeFromIdle}
       >
+        {!eventWindow.isBlocked && (
+          <div className="idle-ambient-bg" aria-hidden="true">
+            <span className="idle-orb idle-orb-1" />
+            <span className="idle-orb idle-orb-2" />
+            <span className="idle-orb idle-orb-3" />
+          </div>
+        )}
+
         <div className="screen-content">
           <EventLogoImage src={logoSrc} />
           <p className="slogan">{texts.initialScreenSlogan}</p>
-          <h2 id="idle-call-to-action">
+
+          {!eventWindow.isBlocked && (
+            <div className="idle-showcase-card" aria-live="off">
+              {idleSlideIndex === 0 && (
+                <div className="idle-showcase-slide" data-testid="idle-slide-podium">
+                  <span className="idle-showcase-kicker">Pódio ao Vivo · Top 3</span>
+                  {snapshot.ranking.length > 0 ? (
+                    <ol className="idle-podium-list">
+                      {snapshot.ranking.slice(0, 3).map((entry, idx) => (
+                        <li key={entry.matchId} className={`idle-podium-item rank-${idx + 1}`}>
+                          <span className="idle-podium-medal" aria-hidden="true">
+                            {idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}
+                          </span>
+                          <span className="idle-podium-name">{entry.participantName}</span>
+                          <span className="idle-podium-score">
+                            {entry.score}/{entry.totalQuestions} · {formatTimeMMSS(entry.timeSeconds)}
+                          </span>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="idle-showcase-highlight">
+                      Ninguém no pódio ainda — seja o 1º a liderar o ranking! 🏆
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {idleSlideIndex === 1 && (
+                <div className="idle-showcase-slide" data-testid="idle-slide-challenge">
+                  <span className="idle-showcase-kicker">Desafio do Estande</span>
+                  <p className="idle-showcase-big-number">
+                    {snapshot.ranking.length}{' '}
+                    <span>
+                      {snapshot.ranking.length === 1 ? 'participação' : 'participações'} no ranking
+                    </span>
+                  </p>
+                  <p className="idle-showcase-sub">
+                    Acerte a partir de {snapshot.event.settings.minScoreForPrize} questões e conquiste seu brinde!
+                  </p>
+                </div>
+              )}
+
+              {idleSlideIndex === 2 && (
+                <div className="idle-showcase-slide" data-testid="idle-slide-stats">
+                  <span className="idle-showcase-kicker">Como Funciona</span>
+                  <div className="idle-stats-pills">
+                    <span className="idle-stat-pill">
+                      <strong>{snapshot.event.settings.numberOfQuestions}</strong> perguntas
+                    </span>
+                    <span className="idle-stat-pill">
+                      <strong>{snapshot.event.settings.timePerQuestion}s</strong> por questão
+                    </span>
+                  </div>
+                  <p className="idle-showcase-sub">
+                    Quanto mais rápido e preciso, melhor sua posição no pódio!
+                  </p>
+                </div>
+              )}
+
+              <div className="idle-showcase-dots" aria-hidden="true">
+                {[0, 1, 2].map((dot) => (
+                  <span
+                    key={dot}
+                    className={dot === idleSlideIndex ? 'idle-dot active' : 'idle-dot'}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <h2
+            id="idle-call-to-action"
+            className={!eventWindow.isBlocked ? 'idle-cta-animated' : undefined}
+          >
             {eventWindow.idleCallToActionTitle}
             {eventWindow.idleCallToActionSubtitle && (
               <small>{eventWindow.idleCallToActionSubtitle}</small>
@@ -1358,6 +1580,14 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
             )}
 
             <div className="modal-actions">
+              <button
+                id="diagnostics-toggle-sound-btn"
+                type="button"
+                className="btn-secondary"
+                onClick={() => setLocalSoundMuted((prev) => !prev)}
+              >
+                {localSoundMuted ? 'Ativar Som Local' : 'Silenciar Som Local'}
+              </button>
               <button
                 id="diagnostics-force-sync-btn"
                 type="button"

@@ -48,7 +48,7 @@ function createHarness() {
 }
 
 async function signInAdmin(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText('E-mail'), 'admin@caesb.df.gov.br');
+  await user.type(await screen.findByLabelText('E-mail'), 'admin@caesb.df.gov.br');
   await user.type(screen.getByLabelText('Senha'), 'CAESB2025!');
   await user.click(screen.getByRole('button', { name: 'Entrar' }));
 }

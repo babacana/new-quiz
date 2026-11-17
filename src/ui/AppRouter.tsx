@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
 import { EventAdminController } from '../domain/eventAdminController';
 import type { CloudGateway } from '../domain/ports';
 import { TotemSessionEngine } from '../domain/totemSessionEngine';
-import { AdminApp } from './AdminApp';
 import { TotemApp } from './TotemApp';
+
+const AdminApp = lazy(() => import('./AdminApp').then((mod) => ({ default: mod.AdminApp })));
 import {
   getHashForAdminTab,
   resolveAdminTabFromHash,
@@ -171,21 +172,37 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
 
   if (routeMode === 'admin' || routeMode === 'operator') {
     return (
-      <AdminApp
-        controller={sharedServices.adminController}
-        routeMode={routeMode}
-        activeTab={adminTab}
-        onAdminTabChange={handleAdminTabChange}
-        onOpenTotem={() => navigateToRoute('totem', '')}
-        onSwitchPanelRoute={(nextPanel) => navigateToRoute(nextPanel)}
-        externalRouteRequest={externalNavRequest}
-        onResolveExternalRoute={(confirm, req) => {
-          setExternalNavRequest(null);
-          if (confirm) {
-            navigateToRoute(req.targetRoute, req.targetHash, req.targetAdminTab);
-          }
-        }}
-      />
+      <Suspense
+        fallback={
+          <div
+            style={{
+              minHeight: '100dvh',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontFamily: 'system-ui, sans-serif',
+            }}
+          >
+            Carregando painel...
+          </div>
+        }
+      >
+        <AdminApp
+          controller={sharedServices.adminController}
+          routeMode={routeMode}
+          activeTab={adminTab}
+          onAdminTabChange={handleAdminTabChange}
+          onOpenTotem={() => navigateToRoute('totem', '')}
+          onSwitchPanelRoute={(nextPanel) => navigateToRoute(nextPanel)}
+          externalRouteRequest={externalNavRequest}
+          onResolveExternalRoute={(confirm, req) => {
+            setExternalNavRequest(null);
+            if (confirm) {
+              navigateToRoute(req.targetRoute, req.targetHash, req.targetAdminTab);
+            }
+          }}
+        />
+      </Suspense>
     );
   }
 

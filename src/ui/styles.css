@@ -70,6 +70,14 @@ body.totem-fullscreen-mode {
   flex-direction: column;
   transition: opacity 0.5s ease-in-out;
   position: relative;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.quiz-container input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Efeito de esmaecimento gradual antes da transição para a Tela de Descanso */
@@ -2070,4 +2078,255 @@ body.totem-fullscreen-mode {
 
 .analytics-clickable-row:hover {
   background-color: rgba(102, 187, 255, 0.12);
+}
+
+/* Badges A/B/C/D nas alternativas do quiz e aviso LGPD na tela inicial */
+.quiz-container #options-container .option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  text-align: left;
+}
+
+.quiz-container .option-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 50%;
+  background-color: var(--quiz-secondary-button-bg);
+  color: var(--quiz-secondary-button-text);
+  font-weight: 700;
+  font-size: 0.95em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+
+.quiz-container .option-label {
+  flex: 1;
+}
+
+.quiz-container .lgpd-notice-text {
+  margin: 4px auto 12px;
+  max-width: 480px;
+  font-size: 0.78em;
+  line-height: 1.4;
+  opacity: 0.8;
+}
+
+/* Tela de Descanso Dinâmica e Animada */
+.quiz-container #idle-screen {
+  overflow: hidden;
+}
+
+.quiz-container .idle-ambient-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.quiz-container .idle-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(60px);
+  opacity: 0.24;
+  background: var(--quiz-highlight-color);
+  animation: idleOrbFloat 14s ease-in-out infinite alternate;
+}
+
+.quiz-container .idle-orb-1 {
+  width: 360px;
+  height: 360px;
+  top: -80px;
+  left: -80px;
+}
+
+.quiz-container .idle-orb-2 {
+  width: 420px;
+  height: 420px;
+  bottom: -120px;
+  right: -100px;
+  animation-delay: -5s;
+}
+
+.quiz-container .idle-orb-3 {
+  width: 260px;
+  height: 260px;
+  top: 40%;
+  left: 55%;
+  opacity: 0.16;
+  animation-delay: -9s;
+}
+
+@keyframes idleOrbFloat {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    transform: translate(35px, -28px) scale(1.14);
+  }
+}
+
+.quiz-container #idle-screen .screen-content {
+  position: relative;
+  z-index: 1;
+}
+
+.quiz-container .idle-showcase-card {
+  width: min(92vw, 620px);
+  margin: 18px auto 22px;
+  padding: 20px 24px 14px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+
+.quiz-container .idle-showcase-slide {
+  animation: idleSlideFadeIn 0.45s ease-out;
+}
+
+@keyframes idleSlideFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.quiz-container .idle-showcase-kicker {
+  display: inline-block;
+  font-size: 0.78em;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--quiz-highlight-color);
+  margin-bottom: 10px;
+}
+
+.quiz-container .idle-podium-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quiz-container .idle-podium-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.24);
+  font-size: 0.95em;
+}
+
+.quiz-container .idle-podium-medal {
+  font-size: 1.2em;
+}
+
+.quiz-container .idle-podium-name {
+  flex: 1;
+  text-align: left;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quiz-container .idle-podium-score {
+  font-weight: 600;
+  color: var(--quiz-highlight-color);
+  white-space: nowrap;
+}
+
+.quiz-container .idle-showcase-highlight {
+  margin: 8px 0;
+  font-size: 1.08em;
+  font-weight: 600;
+}
+
+.quiz-container .idle-showcase-big-number {
+  margin: 4px 0 6px;
+  font-size: 2.1em;
+  font-weight: 800;
+  color: var(--quiz-highlight-color);
+  line-height: 1.1;
+}
+
+.quiz-container .idle-showcase-big-number span {
+  display: block;
+  font-size: 0.44em;
+  font-weight: 600;
+  color: var(--quiz-main-text-color);
+  margin-top: 4px;
+}
+
+.quiz-container .idle-showcase-sub {
+  margin: 6px 0 0;
+  font-size: 0.92em;
+  opacity: 0.9;
+}
+
+.quiz-container .idle-stats-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  margin: 6px 0 8px;
+}
+
+.quiz-container .idle-stat-pill {
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.26);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 0.95em;
+}
+
+.quiz-container .idle-showcase-dots {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.quiz-container .idle-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.3);
+  transition: width 0.25s ease, background-color 0.25s ease;
+}
+
+.quiz-container .idle-dot.active {
+  width: 22px;
+  border-radius: 999px;
+  background: var(--quiz-highlight-color);
+}
+
+.quiz-container #idle-call-to-action.idle-cta-animated {
+  animation: idleCtaPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes idleCtaPulse {
+  0%,
+  100% {
+    transform: scale(1);
+    text-shadow: 0 0 18px rgba(97, 218, 251, 0.35);
+  }
+  50% {
+    transform: scale(1.03);
+    text-shadow: 0 0 30px rgba(97, 218, 251, 0.75);
+  }
 }
