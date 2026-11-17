@@ -214,6 +214,18 @@ export class TotemSessionEngine {
       this.customizationTexts.idleScreenCallToAction ||
       DEFAULT_CUSTOMIZATIONS.texts.idleScreenCallToAction;
 
+    const eventName = event.name.trim() || 'especial';
+
+    if (!event.isActive) {
+      return {
+        status: 'after',
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ ENCERRADO',
+        idleCallToActionSubtitle: 'Obrigado por participar!',
+        initialScreenMessage: `O quiz "${eventName}" foi encerrado. Obrigado pela participação!`,
+      };
+    }
+
     let status: EventWindowStatus = 'no_event';
     let startMs = Number.NaN;
     let endMs = Number.NaN;
@@ -232,8 +244,6 @@ export class TotemSessionEngine {
         }
       }
     }
-
-    const eventName = event.name.trim() || 'especial';
 
     if (event.enableOutOfPeriodMessage && status === 'before') {
       const formattedStart = this.formatEventDateTimePtBr(startMs);

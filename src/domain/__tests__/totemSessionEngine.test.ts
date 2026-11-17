@@ -869,6 +869,37 @@ describe('TotemSessionEngine', () => {
       const allowed = await unblockedHarness.engine.startMatch('LUCAS', '(61) 99876-5432');
       expect(allowed.started).toBe(true);
     });
+
+    it('bloqueia o Totem como QUIZ ENCERRADO quando event.isActive é false mesmo dentro do período ou com enableOutOfPeriodMessage desabilitado', async () => {
+      const closedEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        name: 'FITABES 2026',
+        isActive: false,
+        startTime: '2026-11-16T08:00:00',
+        endTime: '2026-11-16T22:00:00',
+        enableOutOfPeriodMessage: false,
+      };
+      const harness = createHarness({
+        event: closedEvent,
+      });
+      await harness.engine.initialize();
+
+      const windowState = harness.engine.getEventWindowState();
+      expect(windowState).toEqual({
+        status: 'after',
+        isBlocked: true,
+        idleCallToActionTitle: 'QUIZ ENCERRADO',
+        idleCallToActionSubtitle: 'Obrigado por participar!',
+        initialScreenMessage: 'O quiz "FITABES 2026" foi encerrado. Obrigado pela participação!',
+      });
+
+      const attempt = await harness.engine.startMatch('CARLA', '(61) 99876-5432');
+      expect(attempt.started).toBe(false);
+      expect(attempt.errorMessage).toBe(
+        'O quiz "FITABES 2026" foi encerrado. Obrigado pela participação!',
+      );
+      expect(attempt.snapshot.activeMatch).toBeNull();
+    });
   });
 
   describe('Fatia 9: Configuração de inatividade e transições da Tela de Descanso', () => {
