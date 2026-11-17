@@ -1469,6 +1469,23 @@ export class EventAdminController {
     return this.cloudGateway.subscribeTotemChannel(listener);
   }
 
+  /** Exclui múltiplos Totens cadastrados em lote, preservando Partidas já registradas. */
+  async deleteTotemsInBatch(totemIds: string[]): Promise<string[]> {
+    this.requireAdmin();
+    const normalizedIds = Array.from(
+      new Set(totemIds.map((id) => id.trim()).filter(Boolean)),
+    );
+    if (normalizedIds.length === 0) {
+      throw new Error('Selecione ao menos um Totem para exclusão.');
+    }
+    return this.cloudGateway.deleteTotems(normalizedIds);
+  }
+
+  /** Exclui um Totem cadastrado preservando o histórico de Partidas. */
+  async deleteTotem(totemId: string): Promise<void> {
+    await this.deleteTotemsInBatch([totemId]);
+  }
+
   async dispatchRemoteCommand(input: DispatchRemoteCommandInput): Promise<RemoteCommandPayload> {
     this.requireAdmin();
 

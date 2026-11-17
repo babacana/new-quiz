@@ -964,6 +964,29 @@ export class SupabaseCloudGateway implements CloudGateway {
     return ((data ?? []) as SupabaseTotemRow[]).map((row) => this.mapTotemRow(row));
   }
 
+  async deleteTotems(totemIds: string[]): Promise<string[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para excluir Totens.');
+    }
+
+    const uniqueIds = Array.from(new Set(totemIds));
+    if (uniqueIds.length === 0) {
+      return [];
+    }
+
+    const { data, error } = await this.client
+      .from('quiz_totems')
+      .delete()
+      .in('id', uniqueIds)
+      .select('id');
+
+    if (error) {
+      throw new Error(`Erro ao excluir Totens no Supabase: ${error.message}`);
+    }
+
+    return ((data ?? []) as Array<{ id: string }>).map((row) => row.id);
+  }
+
   async publishTotemHeartbeat(payload: TotemHeartbeatPayload): Promise<TotemRecord | null> {
     if (!this.isOnline()) {
       return null;
