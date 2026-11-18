@@ -8,7 +8,10 @@ const MIN_KEY_FONT_SIZE_PX = 14;
 const MAX_KEY_FONT_SIZE_PX = 32;
 const KEY_FONT_HEIGHT_RATIO = 0.08;
 
-export const FONT_SIZES_PX: readonly number[] = [10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30];
+// Multiplicadores relativos aplicados sobre o palco proporcional 9:16 via --totem-a11y-scale.
+export const FONT_SCALE_STEPS: readonly number[] = [
+  0.75, 0.82, 0.88, 0.94, 1.0, 1.08, 1.15, 1.22, 1.3, 1.38, 1.45,
+];
 export const DEFAULT_FONT_STEP_INDEX = 4;
 
 // Limita a altura do teclado virtual ao intervalo permitido de 20vh a 60vh.

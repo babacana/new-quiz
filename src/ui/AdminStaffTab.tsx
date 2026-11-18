@@ -14,6 +14,7 @@ import {
 } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import { cn } from './lib/utils';
 
 export interface AdminStaffTabProps {
@@ -25,9 +26,6 @@ const ROLE_LABELS: Record<UserRole, string> = {
   admin: 'Administrador',
   operator: 'Operador',
 };
-
-const SELECT_CLASSES =
-  'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 // Aba administrativa para cadastro, alteração de perfil e revogação de contas da Equipe do Estande.
 export function AdminStaffTab({ controller, onStatusMessage }: AdminStaffTabProps) {
@@ -161,9 +159,9 @@ export function AdminStaffTab({ controller, onStatusMessage }: AdminStaffTabProp
                       </td>
                       <td className="px-4 py-3 text-muted-foreground">{member.email}</td>
                       <td className="px-4 py-3">
-                        <select
+                        <Select
                           aria-label={`Perfil de ${member.email}`}
-                          className="h-8 w-40 rounded-md border border-input bg-background px-2 text-xs text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                          className="h-8 w-40 px-2 text-xs"
                           value={member.role}
                           disabled={isCurrentSession}
                           onChange={(e) =>
@@ -172,7 +170,7 @@ export function AdminStaffTab({ controller, onStatusMessage }: AdminStaffTabProp
                         >
                           <option value="operator">Operador</option>
                           <option value="admin">Administrador</option>
-                        </select>
+                        </Select>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Button
@@ -227,17 +225,16 @@ export function AdminStaffTab({ controller, onStatusMessage }: AdminStaffTabProp
                 )}
                 <div className="space-y-1.5">
                   <Label htmlFor={`staff-role-mobile-${member.id}`}>Perfil do Membro</Label>
-                  <select
+                  <Select
                     id={`staff-role-mobile-${member.id}`}
                     aria-label={`Perfil mobile de ${member.email}`}
-                    className={SELECT_CLASSES}
                     value={member.role}
                     disabled={isCurrentSession}
                     onChange={(e) => void handleRoleChange(member, e.target.value as UserRole)}
                   >
                     <option value="operator">Operador</option>
                     <option value="admin">Administrador</option>
-                  </select>
+                  </Select>
                 </div>
                 <Button
                   type="button"
@@ -307,15 +304,14 @@ export function AdminStaffTab({ controller, onStatusMessage }: AdminStaffTabProp
 
               <div className="space-y-1.5">
                 <Label htmlFor="staff-role-select">Perfil de Acesso</Label>
-                <select
+                <Select
                   id="staff-role-select"
-                  className={SELECT_CLASSES}
                   value={role}
                   onChange={(e) => setRole(e.target.value as UserRole)}
                 >
                   <option value="operator">Operador</option>
                   <option value="admin">Administrador</option>
-                </select>
+                </Select>
               </div>
             </div>
 

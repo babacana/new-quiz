@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { DEFAULT_FONT_STEP_INDEX, FONT_SIZES_PX } from './accessibilityConstants';
+import { DEFAULT_FONT_STEP_INDEX, FONT_SCALE_STEPS } from './accessibilityConstants';
 
-export { DEFAULT_FONT_STEP_INDEX, FONT_SIZES_PX };
+export { DEFAULT_FONT_STEP_INDEX, FONT_SCALE_STEPS };
 
 export interface AccessibilityControlsProps {
   hiddenOnIdle: boolean;
@@ -9,7 +9,7 @@ export interface AccessibilityControlsProps {
   onOpenDiagnostics?: () => void;
 }
 
-// Controles flutuantes de acessibilidade (A-/A+) e botão discreto ⚙️ de diagnóstico local.
+// Controles flutuantes de acessibilidade (A-/A+ em escala relativa) e diagnóstico local (⚙️).
 export function AccessibilityControls({
   hiddenOnIdle,
   onInteraction,
@@ -17,10 +17,13 @@ export function AccessibilityControls({
 }: AccessibilityControlsProps) {
   const [fontStepIndex, setFontStepIndex] = useState<number>(DEFAULT_FONT_STEP_INDEX);
 
-  // Sincroniza o tamanho de fonte selecionado no elemento raiz do documento.
+  // Sincroniza o multiplicador proporcional --totem-a11y-scale no palco sem vazar para o Admin.
   useEffect(() => {
-    const targetFontSizePx = FONT_SIZES_PX[fontStepIndex] ?? FONT_SIZES_PX[DEFAULT_FONT_STEP_INDEX];
-    document.documentElement.style.fontSize = `${targetFontSizePx}px`;
+    const scale = FONT_SCALE_STEPS[fontStepIndex] ?? FONT_SCALE_STEPS[DEFAULT_FONT_STEP_INDEX];
+    document.documentElement.style.setProperty('--totem-a11y-scale', String(scale));
+    return () => {
+      document.documentElement.style.removeProperty('--totem-a11y-scale');
+    };
   }, [fontStepIndex]);
 
   const handleDecreaseFont = () => {
@@ -30,7 +33,7 @@ export function AccessibilityControls({
 
   const handleIncreaseFont = () => {
     setFontStepIndex((currentIndex) =>
-      currentIndex < FONT_SIZES_PX.length - 1 ? currentIndex + 1 : currentIndex,
+      currentIndex < FONT_SCALE_STEPS.length - 1 ? currentIndex + 1 : currentIndex,
     );
     onInteraction?.();
   };
@@ -59,7 +62,7 @@ export function AccessibilityControls({
         type="button"
         title="Aumentar fonte"
         aria-label="Aumentar tamanho da fonte"
-        disabled={fontStepIndex === FONT_SIZES_PX.length - 1}
+        disabled={fontStepIndex === FONT_SCALE_STEPS.length - 1}
         onClick={handleIncreaseFont}
       >
         A+

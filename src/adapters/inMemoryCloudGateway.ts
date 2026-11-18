@@ -1,12 +1,19 @@
 import { DEFAULT_EVENT_CONFIG, DEFAULT_QUIZ_QUESTIONS } from '../domain/defaults';
 import {
   computeExpiredLockoutIso,
+  isActivePrizeClaim,
   selectDeliverableClaimIds,
   toEventPhoneKey,
 } from '../domain/operationalRules';
 import { normalizePairingCode } from '../domain/pairingUtils';
-import { bytesToDataUrl, sanitizeAssetFileName } from '../domain/visualAssetUtils';
-import type { CloudEventSnapshot, CloudGateway, PushMatchResponse } from '../domain/ports';
+import { hashEventPhone } from '../domain/phoneHash';
+import type {
+  CloudEventSnapshot,
+  CloudGateway,
+  ListMatchesQueryOptions,
+  PushMatchResponse,
+  TotemAuthContext,
+} from '../domain/ports';
 import type {
   AuthSession,
   CreateStaffAccountInput,
@@ -19,11 +26,15 @@ import type {
   RemoteCommandPayload,
   TotemChannelEvent,
   TotemHeartbeatPayload,
+  TotemLockoutRecord,
   TotemPairingAuthorizationPayload,
   TotemPairingRequestInput,
+  TotemPrizeLockRecord,
+  TotemRankingMatch,
   TotemRecord,
   UserProfile,
 } from '../domain/types';
+import { bytesToDataUrl, sanitizeAssetFileName } from '../domain/visualAssetUtils';
 
 export interface InMemoryCloudGatewayOptions {
   online?: boolean;
@@ -42,11 +53,7 @@ interface StoredStaffCredential {
   password: string;
 }
 
-function isActivePrizeClaim(claim: PrizeClaimRecord): boolean {
-  return claim.status === 'delivered' || claim.status === 'awaiting_pickup';
-}
-
-// Gateway em memória que simula a retaguarda em nuvem, queda de rede, idempotência, RBAC e Banco de Questões.
+// Gateway em memória compartilhado entre Totem e Painel de Gestão em testes integrados.
 export class InMemoryCloudGateway implements CloudGateway {
   private online: boolean;
   private readonly nowIso: () => string;
@@ -137,10 +144,25 @@ export class InMemoryCloudGateway implements CloudGateway {
     );
   }
 
-  async pullEventSnapshot(eventId: string): Promise<CloudEventSnapshot | null> {
+  private assertTotemTokenIfPaired(auth?: TotemAuthContext): void {
+    if (!auth?.totemId) {
+      return;
+    }
+    const existing = this.totemsById.get(auth.totemId);
+    if (existing?.isPaired && existing.deviceToken && existing.deviceToken !== auth.deviceToken) {
+      throw new Error('Totem não autorizado ou device_token inválido.');
+    }
+  }
+
+  async pullEventSnapshot(
+    eventId: string,
+    auth?: TotemAuthContext,
+  ): Promise<CloudEventSnapshot | null> {
     if (!this.online) {
       throw new Error('Totem sem conectividade com a nuvem.');
     }
+    this.assertTotemTokenIfPaired(auth);
+
     const event = this.events.get(eventId);
     if (!event) {
       return null;
@@ -154,12 +176,59 @@ export class InMemoryCloudGateway implements CloudGateway {
             .filter((q): q is Question => Boolean(q))
         : Array.from(this.centralQuestions.values()).sort((a, b) => a.id - b.id);
 
+    // Retorna projeção segura para LGPD no Totem: Ranking sem telefone/respostas e travas hasheadas.
+    const rankingMatches: TotemRankingMatch[] = this.getSyncedMatches(eventId).map((match) => ({
+      id: match.id,
+      eventId: match.eventId,
+      totemId: match.totemId,
+      participantName: match.participantName,
+      score: match.score,
+      totalQuestions: match.totalQuestions,
+      timeSeconds: match.timeSeconds,
+      playedAt: match.playedAt,
+      syncedAt: match.syncedAt,
+    }));
+
+    const prizeLocks: TotemPrizeLockRecord[] = this.getPrizeClaims(eventId).map((claim) => ({
+      id: claim.id,
+      eventId: claim.eventId,
+      matchId: claim.matchId,
+      phoneHash: hashEventPhone(claim.eventId, claim.participantPhone),
+      status: claim.status,
+      awardedAt: claim.awardedAt,
+      deliveredAt: claim.deliveredAt,
+    }));
+
+    const hashedLockouts: TotemLockoutRecord[] = this.getLockouts(eventId).map((lockout) => ({
+      id: lockout.id,
+      eventId: lockout.eventId,
+      phoneHash: hashEventPhone(lockout.eventId, lockout.participantPhone),
+      lockedAt: lockout.lockedAt,
+      expiresAt: lockout.expiresAt,
+    }));
+
+    const commandsSince = auth?.commandsSince;
+    const pendingCommands = commandsSince
+      ? this.remoteCommands
+          .filter((cmd) => {
+            if (cmd.issuedAt < commandsSince) {
+              return false;
+            }
+            if (cmd.targetTotemId) {
+              return auth?.totemId ? cmd.targetTotemId === auth.totemId : false;
+            }
+            return cmd.targetEventId === eventId;
+          })
+          .sort((a, b) => a.issuedAt.localeCompare(b.issuedAt))
+      : [];
+
     return {
       event: structuredClone(event),
       questions: structuredClone(questions),
-      matches: this.getSyncedMatches(eventId),
-      prizeClaims: this.getPrizeClaims(eventId),
-      lockouts: this.getLockouts(eventId),
+      rankingMatches,
+      prizeLocks,
+      hashedLockouts,
+      pendingCommands: structuredClone(pendingCommands),
     };
   }
 
@@ -315,7 +384,6 @@ export class InMemoryCloudGateway implements CloudGateway {
         deletedCount += 1;
       }
     }
-    // Remove referências nos vínculos de Eventos para evitar IDs órfãos.
     for (const [eventId, linked] of this.eventQuestionIds.entries()) {
       const remaining = linked.filter((id) => !idSet.has(id));
       if (remaining.length === 0) {
@@ -358,12 +426,13 @@ export class InMemoryCloudGateway implements CloudGateway {
     idempotencyKey: string;
     match: MatchRecord;
     prizeClaim?: PrizeClaimRecord | null;
+    auth?: TotemAuthContext;
   }): Promise<PushMatchResponse> {
     if (!this.online) {
       throw new Error('Falha de rede ao sincronizar Partida com a nuvem.');
     }
+    this.assertTotemTokenIfPaired(payload.auth);
 
-    // Garante idempotência: reenvios da mesma chave retornam o resultado original sem duplicar.
     const existing = this.syncedMatchesByIdempotencyKey.get(payload.idempotencyKey);
     if (existing) {
       return {
@@ -389,11 +458,12 @@ export class InMemoryCloudGateway implements CloudGateway {
           claim.participantPhone === payload.prizeClaim!.participantPhone &&
           isActivePrizeClaim(claim),
       );
+      const phoneHash = hashEventPhone(persistedMatch.eventId, payload.prizeClaim.participantPhone);
 
       if (activeForPhone) {
-        // Segundo Totem offline premiou o mesmo telefone: preserva Partida e sinaliza conflito.
         resolvedPrizeClaim = {
           ...structuredClone(payload.prizeClaim),
+          phoneHash,
           status: 'offline_duplicate_conflict',
           deliveredAt: null,
         };
@@ -404,11 +474,15 @@ export class InMemoryCloudGateway implements CloudGateway {
       ) {
         resolvedPrizeClaim = {
           ...structuredClone(payload.prizeClaim),
+          phoneHash,
           status: 'revoked',
           deliveredAt: null,
         };
       } else {
-        resolvedPrizeClaim = structuredClone(payload.prizeClaim);
+        resolvedPrizeClaim = {
+          ...structuredClone(payload.prizeClaim),
+          phoneHash,
+        };
         if (event && event.prizeStockRemaining !== null && event.prizeStockRemaining > 0) {
           event.prizeStockRemaining -= 1;
         }
@@ -441,13 +515,19 @@ export class InMemoryCloudGateway implements CloudGateway {
   async pushGiveUpLockout(payload: {
     idempotencyKey: string;
     lockout: GiveUpLockoutRecord;
+    auth?: TotemAuthContext;
   }): Promise<{ syncedAt: string }> {
     if (!this.online) {
       throw new Error('Falha de rede ao sincronizar Bloqueio por Desistência.');
     }
+    this.assertTotemTokenIfPaired(payload.auth);
 
     if (!this.lockoutsByIdempotencyKey.has(payload.idempotencyKey)) {
-      this.lockoutsByIdempotencyKey.set(payload.idempotencyKey, structuredClone(payload.lockout));
+      const enriched: GiveUpLockoutRecord = {
+        ...structuredClone(payload.lockout),
+        phoneHash: hashEventPhone(payload.lockout.eventId, payload.lockout.participantPhone),
+      };
+      this.lockoutsByIdempotencyKey.set(payload.idempotencyKey, enriched);
       await this.emitChannelEvent({
         type: 'OPERATIONAL_DATA_UPDATED',
         eventId: payload.lockout.eventId,
@@ -601,7 +681,11 @@ export class InMemoryCloudGateway implements CloudGateway {
     }
     const deleted: string[] = [];
     for (const id of new Set(totemIds)) {
+      const existing = this.totemsById.get(id);
       if (this.totemsById.delete(id)) {
+        if (existing) {
+          this.totemIdByPairingCode.delete(existing.pairingCode);
+        }
         deleted.push(id);
       }
     }
@@ -682,11 +766,39 @@ export class InMemoryCloudGateway implements CloudGateway {
     };
   }
 
-  async listMatches(eventId?: string): Promise<MatchRecord[]> {
+  async listMatches(
+    eventId?: string,
+    options: ListMatchesQueryOptions = {},
+  ): Promise<MatchRecord[]> {
     if (!this.online) {
       throw new Error('Sem conectividade com a nuvem para listar Partidas.');
     }
-    return this.getSyncedMatches(eventId);
+    const includeAnswers = options.includeAnswers ?? true;
+    const matches = this.getSyncedMatches(eventId);
+    if (includeAnswers) {
+      return matches;
+    }
+    return matches.map((match) => ({ ...match, answers: [] }));
+  }
+
+  async getMatchById(matchId: string): Promise<MatchRecord | null> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para consultar Partida.');
+    }
+    const found = Array.from(this.syncedMatchesByIdempotencyKey.values()).find(
+      (entry) => entry.match.id === matchId,
+    );
+    return found ? structuredClone(found.match) : null;
+  }
+
+  async listMatchesByIds(matchIds: string[]): Promise<MatchRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para consultar Partidas.');
+    }
+    const idSet = new Set(matchIds);
+    return Array.from(this.syncedMatchesByIdempotencyKey.values())
+      .filter((entry) => idSet.has(entry.match.id))
+      .map((entry) => ({ ...structuredClone(entry.match), answers: [] }));
   }
 
   async listPrizeClaims(eventId?: string): Promise<PrizeClaimRecord[]> {
@@ -694,6 +806,14 @@ export class InMemoryCloudGateway implements CloudGateway {
       throw new Error('Sem conectividade com a nuvem para listar Brindes.');
     }
     return this.getPrizeClaims(eventId);
+  }
+
+  async listPrizeClaimsByIds(claimIds: string[]): Promise<PrizeClaimRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para consultar Brindes.');
+    }
+    const idSet = new Set(claimIds);
+    return this.getPrizeClaims().filter((claim) => idSet.has(claim.id));
   }
 
   async listGiveUpLockouts(eventId?: string): Promise<GiveUpLockoutRecord[]> {

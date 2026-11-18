@@ -8,6 +8,7 @@ import {
   DEFAULT_QUIZ_QUESTIONS,
   TIMEOUT_OPTION_TEXT,
 } from '../defaults';
+import { hashEventPhone } from '../phoneHash';
 import type { Clock, RandomSource } from '../ports';
 import {
   TotemSessionEngine,
@@ -608,9 +609,12 @@ describe('TotemSessionEngine', () => {
       await engine.startMatch('VISITANTE ONLINE', '(61) 98888-0002');
       const q1 = engine.getSnapshot().activeMatch!.currentQuestion!;
       engine.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
-      const snapshot = await engine.advanceAfterAnswer();
+      const optimisticSnapshot = await engine.advanceAfterAnswer();
+      expect(optimisticSnapshot.screen).toBe('result-screen');
 
-      expect(snapshot.pendingSyncCount).toBe(0);
+      await engine.waitForBackgroundSync();
+      const syncedSnapshot = engine.getSnapshot();
+      expect(syncedSnapshot.pendingSyncCount).toBe(0);
       expect(await localStore.getSyncQueue()).toHaveLength(0);
       expect(cloudGateway.getSyncedMatches(DEFAULT_EVENT_ID)).toHaveLength(1);
     });
@@ -655,6 +659,8 @@ describe('TotemSessionEngine', () => {
       engine1.submitAnswer(q1.question.shuffledOptions.findIndex((o) => o.isCorrect));
       const snap1 = await engine1.advanceAfterAnswer();
       expect(snap1.pendingSyncCount).toBe(1);
+      await engine1.waitForBackgroundSync();
+      engine1.dispose();
       await dexieStore1.close();
 
       // Nova instância após reinicialização do navegador com internet restaurada
@@ -670,6 +676,8 @@ describe('TotemSessionEngine', () => {
 
       expect(snap2.pendingSyncCount).toBe(0);
       expect(cloudGateway.getSyncedMatches(event1Q.id)).toHaveLength(1);
+      await engine2.waitForBackgroundSync();
+      engine2.dispose();
       await dexieStore2.close();
     });
 
@@ -1519,8 +1527,9 @@ describe('TotemSessionEngine', () => {
       );
       const snapA = await totemA.advanceAfterAnswer();
       expect(snapA.lastResult?.rankingPosition).toBe(1);
+      await totemA.waitForBackgroundSync();
 
-      // Totem B conclui Partida online mais lenta (12s) -> deve ver 2º lugar na nuvem (não 1º local!)
+      // Totem B conclui Partida online mais lenta (12s) -> deve ver 2º lugar na nuvem após sincronização em segundo plano
       await totemB.startMatch('SEGUNDA', '(61) 92222-0002');
       clock.advanceMs(12_000);
       totemB.submitAnswer(
@@ -1528,7 +1537,9 @@ describe('TotemSessionEngine', () => {
           (o) => o.isCorrect,
         ),
       );
-      const snapB = await totemB.advanceAfterAnswer();
+      await totemB.advanceAfterAnswer();
+      await totemB.waitForBackgroundSync();
+      const snapB = totemB.getSnapshot();
       expect(snapB.lastResult?.rankingPosition).toBe(2);
       expect(snapB.event.prizeStockRemaining).toBe(3);
 
@@ -1874,6 +1885,250 @@ describe('TotemSessionEngine', () => {
       const snap = await engine.initialize();
       expect(snap.resolvedAssets.logoSrc).toBe('/assets/logo.png');
       expect(snap.resolvedAssets.backgroundSrc).toBeNull();
+    });
+  });
+
+  describe('Fatia 17: Finalização otimista, proteção LGPD por phoneHash, comandos perdidos e totalMatchesCount', () => {
+    it('finaliza Partida otimisticamente em result-screen antes de pushMatch concluir e concilia ranking após sincronizar', async () => {
+      const clock = new FakeClock('2026-11-18T14:00:00.000Z');
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      const event: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: DEFAULT_EVENT_ID,
+        settings: { ...DEFAULT_EVENT_CONFIG.settings, numberOfQuestions: 1 },
+      };
+      cloudGateway.seedEvent(event, buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 }));
+
+      // Atrasa propositalmente pushMatch para provar transição otimista imediata.
+      let releasePush: (() => void) | null = null;
+      const originalPushMatch = cloudGateway.pushMatch.bind(cloudGateway);
+      let shouldDelay = true;
+      cloudGateway.pushMatch = async (payload) => {
+        if (shouldDelay) {
+          shouldDelay = false;
+          await new Promise<void>((resolve) => {
+            releasePush = resolve;
+          });
+        }
+        return originalPushMatch(payload);
+      };
+
+      const engine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource(),
+        requirePairing: false,
+      });
+
+      await engine.initialize();
+      await engine.startMatch('OTIMISTA', '(61) 99111-2233');
+      clock.advanceMs(15_000);
+      const q = engine.getSnapshot().activeMatch!.currentQuestion!;
+      engine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
+
+      const immediateSnap = await engine.advanceAfterAnswer();
+      expect(immediateSnap.screen).toBe('result-screen');
+      expect(immediateSnap.lastResult?.rankingPosition).toBe(1);
+      expect(immediateSnap.pendingSyncCount).toBe(1);
+
+      // Enquanto pushMatch aguarda, outro Totem registra tempo mais rápido na nuvem (5s).
+      await originalPushMatch({
+        idempotencyKey: 'rival-fast-match',
+        match: {
+          id: 'rival-fast-match',
+          eventId: event.id,
+          totemId: null,
+          participantName: 'VELOZ',
+          participantPhone: '(61) 98222-3344',
+          score: 1,
+          totalQuestions: 1,
+          timeSeconds: 5,
+          answers: [],
+          playedAt: clock.toISOString(),
+          syncedAt: null,
+        },
+      });
+
+      expect(releasePush).not.toBeNull();
+      releasePush!();
+      await engine.waitForBackgroundSync();
+
+      const settledSnap = engine.getSnapshot();
+      expect(settledSnap.pendingSyncCount).toBe(0);
+      expect(settledSnap.lastResult?.rankingPosition).toBe(2);
+      expect(settledSnap.backgroundSyncNotice).toContain('2º lugar');
+    });
+
+    it('aplica Trava de Brinde e Bloqueio por Desistência offline exclusivamente por phoneHash e contabiliza totalMatchesCount', async () => {
+      const clock = new FakeClock('2026-11-18T14:00:00.000Z');
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: false,
+        nowIso: () => clock.toISOString(),
+      });
+      const event: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000702',
+        settings: {
+          ...DEFAULT_EVENT_CONFIG.settings,
+          numberOfQuestions: 1,
+          minScoreForPrize: 1,
+          enablePrizeLock: true,
+          giveUpLockoutMinutes: 15,
+        },
+      };
+      cloudGateway.seedEvent(event, buildQuestionPool({ facil: 1, moderado: 0, dificil: 0 }));
+
+      // Semeia 6 partidas (incluindo uma premiada) e 1 bloqueio por desistência na nuvem.
+      for (let i = 1; i <= 6; i += 1) {
+        const phone = `(61) 99000-000${i}`;
+        await cloudGateway.pushMatch({
+          idempotencyKey: `match-hash-${i}`,
+          match: {
+            id: `match-hash-${i}`,
+            eventId: event.id,
+            totemId: null,
+            participantName: `PESSOA ${i}`,
+            participantPhone: phone,
+            score: i === 1 ? 1 : 0,
+            totalQuestions: 1,
+            timeSeconds: 10 + i,
+            answers: [],
+            playedAt: clock.toISOString(),
+            syncedAt: null,
+          },
+          prizeClaim:
+            i === 1
+              ? {
+                  id: 'claim-hash-1',
+                  eventId: event.id,
+                  matchId: 'match-hash-1',
+                  totemId: null,
+                  participantName: 'PESSOA 1',
+                  participantPhone: phone,
+                  status: 'delivered',
+                  awardedAt: clock.toISOString(),
+                  deliveredAt: clock.toISOString(),
+                }
+              : null,
+        });
+      }
+
+      await cloudGateway.pushGiveUpLockout({
+        idempotencyKey: 'lockout-hash-1',
+        lockout: {
+          id: 'lockout-hash-1',
+          eventId: event.id,
+          totemId: null,
+          participantPhone: '(61) 99777-8888',
+          lockedAt: clock.toISOString(),
+          expiresAt: new Date(clock.now() + 15 * 60_000).toISOString(),
+        },
+      });
+
+      const localStore = new InMemoryLocalStore();
+      const engine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource(),
+        requirePairing: true,
+      });
+
+      const pending = await engine.initialize();
+      const totem = await cloudGateway.authorizeTotemPairing({
+        id: 'totem-hash-lgpd-1',
+        pairingCode: pending.pairing.pairingCode!,
+        deviceToken: 'tok-hash-lgpd-1',
+        name: 'Totem Hash LGPD',
+        pinCode: '1234',
+        eventId: event.id,
+      });
+      await engine.refreshPairingRegistration();
+      expect(totem.id).toBeTruthy();
+
+      const snapOnline = engine.getSnapshot();
+      expect(snapOnline.totalMatchesCount).toBe(6);
+
+      // Garante que nenhuma Trava ou Bloqueio armazenado localmente expõe o telefone em claro.
+      const localClaims = await localStore.getPrizeClaims(event.id);
+      const localLockouts = await localStore.getLockouts(event.id);
+      expect(localClaims.every((c) => c.participantPhone === '')).toBe(true);
+      expect(localClaims[0]?.phoneHash).toBe(hashEventPhone(event.id, '61990000001'));
+      expect(localLockouts.every((l) => l.participantPhone === '')).toBe(true);
+      expect(localLockouts[0]?.phoneHash).toBe(hashEventPhone(event.id, '61997778888'));
+
+      // Fica offline e valida bloqueio e trava de brinde via hash.
+      await engine.setDeviceOnline(false);
+
+      const blockedAttempt = await engine.startMatch('BLOQUEADO', '(61) 99777-8888');
+      expect(blockedAttempt.started).toBe(false);
+      expect(blockedAttempt.lockoutRemainingMinutes).toBeGreaterThan(0);
+
+      const winnerAttempt = await engine.startMatch('PESSOA 1 REPETIDA', '(61) 99000-0001');
+      expect(winnerAttempt.started).toBe(false);
+      expect(winnerAttempt.alreadyWonPrizeAt).toBeDefined();
+    });
+
+    it('recupera comandos remotos perdidos (pendingCommands) via pullEventSnapshot sem Broadcast', async () => {
+      const clock = new FakeClock('2026-11-18T14:00:00.000Z');
+      const cloudGateway = new InMemoryCloudGateway({
+        online: true,
+        seedDefaultEvent: true,
+        nowIso: () => clock.toISOString(),
+      });
+
+      const engine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random: new DeterministicRandomSource(),
+        requirePairing: true,
+      });
+
+      const pending = await engine.initialize();
+      const totem = await cloudGateway.authorizeTotemPairing({
+        id: 'totem-recovery-1',
+        pairingCode: pending.pairing.pairingCode!,
+        deviceToken: 'tok-recovery-1',
+        name: 'Totem Recovery',
+        pinCode: '5678',
+        eventId: DEFAULT_EVENT_ID,
+      });
+      await engine.refreshPairingRegistration();
+
+      await engine.openRankingScreen();
+      await engine.waitForBackgroundSync();
+      expect(engine.getScreen()).toBe('ranking-screen');
+
+      // Simula retorno do servidor contendo comando perdido entregue apenas via pullEventSnapshot.
+      const originalPull = cloudGateway.pullEventSnapshot.bind(cloudGateway);
+      let injected = false;
+      cloudGateway.pullEventSnapshot = async (eventId, auth) => {
+        const snap = await originalPull(eventId, auth);
+        if (snap && !injected) {
+          injected = true;
+          snap.pendingCommands = [
+            {
+              id: 'missed-cmd-pull-1',
+              type: 'RELOAD_SCREEN',
+              targetTotemId: totem.id,
+              targetEventId: DEFAULT_EVENT_ID,
+              targetScreen: 'idle-screen',
+              issuedAt: clock.toISOString(),
+            },
+          ];
+        }
+        return snap;
+      };
+
+      await engine.forceSync();
+      expect(engine.getScreen()).toBe('idle-screen');
     });
   });
 });

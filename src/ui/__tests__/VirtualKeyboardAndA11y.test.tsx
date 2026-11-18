@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AccessibilityControls,
   DEFAULT_FONT_STEP_INDEX,
-  FONT_SIZES_PX,
+  FONT_SCALE_STEPS,
 } from '../AccessibilityControls';
 import {
   DEFAULT_KEYBOARD_HEIGHT_VH,
@@ -138,30 +138,30 @@ describe('VirtualKeyboard e helpers de dimensionamento', () => {
       'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P',
       'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', 'Ç',
       'Z', 'X', 'C', 'V', 'B', 'N', 'M', 'APAGAR',
-      'ESPAÇO', 'OK',
+      'ESPAÇO', 'PRÓXIMO',
     ]);
 
     const backspaceBtn = screen.getByRole('button', { name: 'APAGAR' });
     const spaceBtn = screen.getByRole('button', { name: 'ESPAÇO' });
-    const okBtn = screen.getByRole('button', { name: 'OK' });
+    const nextBtn = screen.getByRole('button', { name: 'PRÓXIMO' });
 
     expect(backspaceBtn.style.gridColumn).toBe('span 3');
     expect(spaceBtn.style.gridColumn).toBe('span 7');
-    expect(okBtn.style.gridColumn).toBe('span 3');
-    expect(okBtn).toHaveClass('ok-key-highlight');
+    expect(nextBtn.style.gridColumn).toBe('span 3');
+    expect(nextBtn).toHaveClass('ok-key-highlight');
 
     await user.click(screen.getByRole('button', { name: 'A' }));
     await user.click(screen.getByRole('button', { name: 'Ç' }));
     await user.click(backspaceBtn);
     await user.click(spaceBtn);
-    await user.click(okBtn);
+    await user.click(nextBtn);
 
     expect(onKeyPress.mock.calls.map((call) => call[0])).toEqual([
       'A',
       'Ç',
       'Backspace',
       'Space',
-      'OK',
+      'NEXT',
     ]);
   });
 
@@ -188,22 +188,22 @@ describe('VirtualKeyboard e helpers de dimensionamento', () => {
       '1', '2', '3',
       '4', '5', '6',
       '7', '8', '9',
-      'APAGAR', '0', 'OK',
+      'APAGAR', '0', 'JOGAR',
     ]);
 
-    const okBtn = screen.getByRole('button', { name: 'OK' });
-    expect(okBtn).toHaveClass('ok-key-highlight');
+    const submitBtn = screen.getByRole('button', { name: 'JOGAR' });
+    expect(submitBtn).toHaveClass('ok-key-highlight');
 
     await user.click(screen.getByRole('button', { name: '1' }));
     await user.click(screen.getByRole('button', { name: '0' }));
     await user.click(screen.getByRole('button', { name: 'APAGAR' }));
-    await user.click(okBtn);
+    await user.click(submitBtn);
 
     expect(onKeyPress.mock.calls.map((call) => call[0])).toEqual([
       '1',
       '0',
       'Backspace',
-      'OK',
+      'SUBMIT',
     ]);
   });
 
@@ -332,17 +332,19 @@ describe('VirtualKeyboard e helpers de dimensionamento', () => {
 
 describe('AccessibilityControls', () => {
   beforeEach(() => {
-    document.documentElement.style.fontSize = '';
+    document.documentElement.style.removeProperty('--totem-a11y-scale');
   });
 
   afterEach(() => {
-    document.documentElement.style.fontSize = '';
+    document.documentElement.style.removeProperty('--totem-a11y-scale');
   });
 
-  it('expõe escala de fontes de 10px a 30px com índice padrão 4 (18px)', () => {
-    expect(FONT_SIZES_PX).toEqual([10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30]);
+  it('expõe escala relativa de 0.75 a 1.45 com índice padrão 4 (1.0)', () => {
+    expect(FONT_SCALE_STEPS).toEqual([
+      0.75, 0.82, 0.88, 0.94, 1.0, 1.08, 1.15, 1.22, 1.3, 1.38, 1.45,
+    ]);
     expect(DEFAULT_FONT_STEP_INDEX).toBe(4);
-    expect(FONT_SIZES_PX[DEFAULT_FONT_STEP_INDEX]).toBe(18);
+    expect(FONT_SCALE_STEPS[DEFAULT_FONT_STEP_INDEX]).toBe(1.0);
   });
 
   it('aplica classe hidden-on-idle conforme prop hiddenOnIdle', () => {
@@ -357,7 +359,7 @@ describe('AccessibilityControls', () => {
     expect(container).toHaveClass('accessibility-controls-container', 'hidden-on-idle');
   });
 
-  it('ajusta tamanho da fonte entre 10px e 30px, desabilita nos extremos e dispara onInteraction', async () => {
+  it('ajusta escala relativa entre 0.75 e 1.45, desabilita nos extremos e dispara onInteraction', async () => {
     const user = userEvent.setup();
     const onInteraction = vi.fn();
 
@@ -371,25 +373,29 @@ describe('AccessibilityControls', () => {
     expect(increaseBtn).toHaveAttribute('id', 'increase-font');
     expect(increaseBtn).toHaveTextContent('A+');
 
-    // Estado inicial em 18px
-    expect(document.documentElement.style.fontSize).toBe('18px');
+    // Estado inicial em escala 1
+    expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe('1');
     expect(decreaseBtn).toBeEnabled();
     expect(increaseBtn).toBeEnabled();
 
-    // Aumenta até 30px (6 passos a partir do índice 4)
-    for (const expectedPx of [20, 22, 24, 26, 28, 30]) {
+    // Aumenta até 1.45 (6 passos a partir do índice 4)
+    for (const expectedScale of [1.08, 1.15, 1.22, 1.3, 1.38, 1.45]) {
       await user.click(increaseBtn);
-      expect(document.documentElement.style.fontSize).toBe(`${expectedPx}px`);
+      expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe(
+        String(expectedScale),
+      );
     }
 
     expect(increaseBtn).toBeDisabled();
     expect(decreaseBtn).toBeEnabled();
     expect(onInteraction).toHaveBeenCalledTimes(6);
 
-    // Diminui de 30px até 10px (10 passos)
-    for (const expectedPx of [28, 26, 24, 22, 20, 18, 16, 14, 12, 10]) {
+    // Diminui de 1.45 até 0.75 (10 passos)
+    for (const expectedScale of [1.38, 1.3, 1.22, 1.15, 1.08, 1, 0.94, 0.88, 0.82, 0.75]) {
       await user.click(decreaseBtn);
-      expect(document.documentElement.style.fontSize).toBe(`${expectedPx}px`);
+      expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe(
+        String(expectedScale),
+      );
     }
 
     expect(decreaseBtn).toBeDisabled();

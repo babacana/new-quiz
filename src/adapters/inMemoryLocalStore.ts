@@ -1,4 +1,9 @@
-import type { LocalStore } from '../domain/ports';
+import { resolveLockoutPhoneHash, resolvePrizeClaimPhoneHash } from '../domain/phoneHash';
+import type {
+  ApplyCloudEventSnapshotInput,
+  CommitMatchLocallyInput,
+  LocalStore,
+} from '../domain/ports';
 import type {
   CachedVisualAsset,
   GiveUpLockoutRecord,
@@ -52,7 +57,11 @@ export class InMemoryLocalStore implements LocalStore {
   }
 
   async savePrizeClaim(claim: PrizeClaimRecord): Promise<void> {
-    this.upsertRecord(this.prizeClaimsByEvent, claim.eventId, claim);
+    const enriched: PrizeClaimRecord = {
+      ...structuredClone(claim),
+      phoneHash: resolvePrizeClaimPhoneHash(claim),
+    };
+    this.upsertRecord(this.prizeClaimsByEvent, claim.eventId, enriched);
   }
 
   async deletePrizeClaim(claimId: string): Promise<void> {
@@ -64,7 +73,11 @@ export class InMemoryLocalStore implements LocalStore {
   }
 
   async saveLockout(lockout: GiveUpLockoutRecord): Promise<void> {
-    this.upsertRecord(this.lockoutsByEvent, lockout.eventId, lockout);
+    const enriched: GiveUpLockoutRecord = {
+      ...structuredClone(lockout),
+      phoneHash: resolveLockoutPhoneHash(lockout),
+    };
+    this.upsertRecord(this.lockoutsByEvent, lockout.eventId, enriched);
   }
 
   private upsertRecord<T extends { id: string }>(
@@ -127,5 +140,39 @@ export class InMemoryLocalStore implements LocalStore {
 
   async saveVisualAsset(asset: CachedVisualAsset): Promise<void> {
     this.visualAssetsByUrl.set(asset.url, structuredClone(asset));
+  }
+
+  async commitMatchLocally(input: CommitMatchLocallyInput): Promise<void> {
+    if (input.updatedTotemConfig) {
+      this.totemConfig = structuredClone(input.updatedTotemConfig);
+    }
+    this.upsertRecord(this.matchesByEvent, input.sanitizedMatch.eventId, input.sanitizedMatch);
+    if (input.sanitizedPrizeClaim) {
+      await this.savePrizeClaim(input.sanitizedPrizeClaim);
+    }
+    if (!this.syncQueue.has(input.syncItem.idempotencyKey)) {
+      this.syncQueue.set(input.syncItem.idempotencyKey, structuredClone(input.syncItem));
+    }
+  }
+
+  async applyCloudEventSnapshot(input: ApplyCloudEventSnapshotInput): Promise<void> {
+    this.totemConfig = structuredClone(input.totemConfig);
+    this.questionsByEvent.set(input.eventId, structuredClone(input.questions));
+
+    for (const deletedId of input.matchIdsToDelete ?? []) {
+      this.deleteRecord(this.matchesByEvent, deletedId);
+    }
+    for (const match of input.matchesToPut ?? []) {
+      this.upsertRecord(this.matchesByEvent, match.eventId, match);
+    }
+    for (const deletedClaimId of input.prizeClaimIdsToDelete ?? []) {
+      this.deleteRecord(this.prizeClaimsByEvent, deletedClaimId);
+    }
+    for (const claim of input.prizeClaimsToPut ?? []) {
+      await this.savePrizeClaim(claim);
+    }
+    for (const lockout of input.lockoutsToPut ?? []) {
+      await this.saveLockout(lockout);
+    }
   }
 }

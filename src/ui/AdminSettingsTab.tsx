@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, RotateCcw, Save } from 'lucide-react';
 import { DEFAULT_SETTINGS } from '../domain/defaults';
 import type { EventAdminController } from '../domain/eventAdminController';
@@ -8,9 +8,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './com
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { cn } from './lib/utils';
+import type { UnsavedNavigationGuard } from './navigationGuard';
 
 export interface AdminSettingsTabProps {
   controller: EventAdminController;
+  navigationGuard: UnsavedNavigationGuard;
   selectedEvent: EventConfig | null;
   allQuestions: Question[];
   onEventsChanged: (preferredSelectedId?: string) => Promise<void>;
@@ -91,6 +93,7 @@ function buildEmptySettingsFormState(): SettingsFormState {
 // Tela de Regras & Configurações do Evento selecionado, organizada em 4 sub-seções com sticky action bar.
 export function AdminSettingsTab({
   controller,
+  navigationGuard,
   selectedEvent,
   allQuestions,
   onEventsChanged,
@@ -109,16 +112,18 @@ export function AdminSettingsTab({
       setLoadedLinkedIds(ids);
       setFormState(buildFormStateFromEvent(event, ids));
       setIsDirty(false);
-      controller.clearDirty('event');
-      controller.clearDirty('settings');
+      navigationGuard.clearDirty('event');
+      navigationGuard.clearDirty('settings');
     },
-    [controller],
+    [navigationGuard],
   );
 
   useEffect(() => {
     let cancelled = false;
     if (!selectedEvent) {
       setIsDirty(false);
+      navigationGuard.clearDirty('event');
+      navigationGuard.clearDirty('settings');
       return;
     }
 
@@ -138,7 +143,7 @@ export function AdminSettingsTab({
     return () => {
       cancelled = true;
     };
-  }, [controller, resetFromSelectedEvent, selectedEvent]);
+  }, [controller, navigationGuard, resetFromSelectedEvent, selectedEvent]);
 
   const handleSaveCurrent = async () => {
     if (!selectedEvent) {
@@ -164,6 +169,8 @@ export function AdminSettingsTab({
       });
 
       setIsDirty(false);
+      navigationGuard.clearDirty('event');
+      navigationGuard.clearDirty('settings');
       await onEventsChanged(updated.id);
       onStatusMessage('success', `Evento "${updated.name}" salvo (v${updated.configVersion}).`);
     } catch (error) {
@@ -177,15 +184,19 @@ export function AdminSettingsTab({
     }
   };
 
+  // Mantém referência atualizada sem recriar o callback a cada renderização.
+  const handleSaveRef = useRef(handleSaveCurrent);
+  handleSaveRef.current = handleSaveCurrent;
+
   useEffect(() => {
-    onRegisterSaveHandler(() => handleSaveCurrent());
+    onRegisterSaveHandler(() => handleSaveRef.current());
     return () => onRegisterSaveHandler(null);
-  });
+  }, [onRegisterSaveHandler]);
 
   const markEventAndSettingsDirty = () => {
     setIsDirty(true);
-    controller.markDirty('event');
-    controller.markDirty('settings');
+    navigationGuard.markDirty('event');
+    navigationGuard.markDirty('settings');
   };
 
   const updateSettingsField = <K extends keyof EventSettings>(

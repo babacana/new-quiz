@@ -583,6 +583,7 @@ describe('TotemApp (Interface do Totem)', () => {
     fireEvent.focus(nameField);
     expect(document.getElementById('virtual-keyboard')).not.toBeNull();
 
+    // Atualiza assinatura do teste de teclado ágil: PRÓXIMO avança para Telefone.
     await user.click(screen.getByRole('button', { name: 'A' }));
     await user.click(screen.getByRole('button', { name: 'N' }));
     await user.click(screen.getByRole('button', { name: 'A' }));
@@ -592,23 +593,20 @@ describe('TotemApp (Interface do Totem)', () => {
     await user.click(screen.getByRole('button', { name: 'P' }));
     expect(nameField).toHaveValue('ANA P');
 
-    // Focar Telefone alterna para layout numérico 3x4.
-    fireEvent.focus(phoneField);
+    // Tecla PRÓXIMO alterna para o campo Telefone mantendo o teclado numérico 3x4 aberto.
+    await user.click(screen.getByRole('button', { name: 'PRÓXIMO' }));
+    expect(document.getElementById('virtual-keyboard')).not.toBeNull();
     for (const digit of ['6', '1', '9', '8', '7', '6', '5', '4', '3', '2', '1']) {
       await user.click(screen.getByRole('button', { name: digit }));
     }
     expect(phoneField).toHaveValue('(61) 98765-4321');
     await user.click(screen.getByRole('button', { name: 'APAGAR' }));
     expect(phoneField).toHaveValue('(61) 9876-5432');
+    await user.click(screen.getByRole('button', { name: '1' }));
+    expect(phoneField).toHaveValue('(61) 98765-4321');
 
-    // Tecla OK fecha o teclado virtual.
-    await user.click(screen.getByRole('button', { name: 'OK' }));
-    expect(document.getElementById('virtual-keyboard')).toBeNull();
-
-    // Reabre no foco e fecha automaticamente ao sair da initial-screen.
-    fireEvent.focus(nameField);
-    expect(document.getElementById('virtual-keyboard')).not.toBeNull();
-    await user.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+    // Tecla JOGAR fecha o teclado virtual e inicia a Partida diretamente.
+    await user.click(screen.getByRole('button', { name: 'JOGAR' }));
     expect(await screen.findByText('Qual a sigla da companhia de saneamento do DF?')).toBeInTheDocument();
     expect(document.getElementById('virtual-keyboard')).toBeNull();
   });
@@ -627,12 +625,12 @@ describe('TotemApp (Interface do Totem)', () => {
     fireEvent.focus(nameField);
     expect(document.getElementById('virtual-keyboard')).toBeNull();
 
-    // Controles de acessibilidade integrados no Totem.
-    expect(document.documentElement.style.fontSize).toBe('18px');
+    // Controles de acessibilidade integrados no Totem (--totem-a11y-scale).
+    expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe('1');
     await user.click(screen.getByRole('button', { name: 'Aumentar tamanho da fonte' }));
-    expect(document.documentElement.style.fontSize).toBe('20px');
+    expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe('1.08');
     await user.click(screen.getByRole('button', { name: 'Diminuir tamanho da fonte' }));
-    expect(document.documentElement.style.fontSize).toBe('18px');
+    expect(document.documentElement.style.getPropertyValue('--totem-a11y-scale')).toBe('1');
 
     // Bloqueio do menu de contexto nativo (clique direito / toque longo).
     const contextMenuEvent = new MouseEvent('contextmenu', {
@@ -1014,6 +1012,119 @@ describe('TotemApp (Interface do Totem)', () => {
       });
 
       expect(screen.getByText(/2\/2/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exibe #timer crescente e #question-time-countdown regressivo juntos e mantém autoAdvanceSeconds estável durante heartbeat', async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine } = createUiTestRig({
+        numberOfQuestions: 2,
+        nowIso: '2026-11-16T12:00:00.000Z',
+        settingsOverrides: {
+          timePerQuestion: 30,
+          autoAdvanceSeconds: 3,
+          enableVirtualKeyboard: false,
+        },
+      });
+
+      render(<TotemApp engine={engine} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      fireEvent.change(screen.getByLabelText('Nome'), { target: { value: 'LUCAS' } });
+      fireEvent.change(screen.getByLabelText('Telefone'), { target: { value: '61991234567' } });
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Iniciar Quiz' }));
+        await Promise.resolve();
+      });
+
+      expect(document.getElementById('timer')).toHaveTextContent('00:00');
+      expect(document.getElementById('question-time-countdown')).toHaveTextContent('30s');
+
+      // Avança 2s: tempo total sobe para 00:02 enquanto tempo restante da questão cai para 28s.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(document.getElementById('timer')).toHaveTextContent('00:02');
+      expect(document.getElementById('question-time-countdown')).toHaveTextContent('28s');
+
+      // Responde e inicia contagem regressiva de 3s para auto-avanço.
+      act(() => {
+        fireEvent.click(screen.getByRole('button', { name: 'CAESB' }));
+      });
+      expect(screen.getByRole('button', { name: /Próxima Pergunta \(3s\)/i })).toBeInTheDocument();
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(screen.getByRole('button', { name: /Próxima Pergunta \(2s\)/i })).toBeInTheDocument();
+
+      // Heartbeat intermediário emite novo snapshot, mas não reinicia autoAdvanceSeconds para 3s.
+      await act(async () => {
+        await engine.sendHeartbeat();
+      });
+      expect(screen.getByRole('button', { name: /Próxima Pergunta \(2s\)/i })).toBeInTheDocument();
+
+      await act(async () => {
+        vi.advanceTimersByTime(2100);
+        await Promise.resolve();
+      });
+      expect(screen.getByText(/2\/2/)).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('exibe totalMatchesCount completo no Slide 2 da Tela de Descanso mesmo além do Top 3', async () => {
+    vi.useFakeTimers();
+    try {
+      const { engine, cloudGateway } = createUiTestRig({
+        nowIso: '2026-11-16T12:00:00.000Z',
+        settingsOverrides: {
+          enableVirtualKeyboard: false,
+        },
+      });
+
+      for (let i = 1; i <= 12; i += 1) {
+        await cloudGateway.pushMatch({
+          idempotencyKey: `seed-idle-${i}`,
+          match: {
+            id: `seed-idle-${i}`,
+            eventId: '00000000-0000-4000-8000-000000000001',
+            totemId: null,
+            participantName: `VISITANTE ${i}`,
+            participantPhone: `(61) 99000-${String(i).padStart(4, '0')}`,
+            score: 2,
+            totalQuestions: 2,
+            timeSeconds: 10 + i,
+            answers: [],
+            playedAt: `2026-11-16T11:${String(i).padStart(2, '0')}:00.000Z`,
+            syncedAt: '2026-11-16T11:30:00.000Z',
+          },
+        });
+      }
+
+      render(<TotemApp engine={engine} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000);
+      });
+      expect(document.getElementById('idle-screen')).toHaveClass('active');
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+
+      const challengeSlide = screen.getByTestId('idle-slide-challenge');
+      expect(challengeSlide).toHaveTextContent('12 participações no ranking');
     } finally {
       vi.useRealTimers();
     }

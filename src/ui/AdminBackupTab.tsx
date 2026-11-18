@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Archive, CheckCircle2, Cpu, Download, Upload } from 'lucide-react';
 import type { EventAdminController } from '../domain/eventAdminController';
 import type { BackupRestoreResult, EventConfig } from '../domain/types';
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from './components/ui/dialog';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import { triggerFileDownload } from './formatters';
 
 export interface AdminBackupTabProps {
@@ -22,9 +23,6 @@ export interface AdminBackupTabProps {
   onOpenDevSimulator?: () => void;
   onStatusMessage: (type: 'success' | 'error', message: string) => void;
 }
-
-const SELECT_CLASSES =
-  'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 // Aba de Backup Completo (JSON), Migração Nativa de Backups Legados (quiz-offline) e Simulador do Sistema.
 export function AdminBackupTab({
@@ -42,6 +40,16 @@ export function AdminBackupTab({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [lastResult, setLastResult] = useState<BackupRestoreResult | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // Sincroniza o Evento de destino quando a lista de Eventos muda ou é carregada após a montagem.
+  useEffect(() => {
+    setTargetEventId((prev) => {
+      if (prev && events.some((ev) => ev.id === prev)) {
+        return prev;
+      }
+      return events.find((ev) => ev.isActive)?.id ?? events[0]?.id ?? '';
+    });
+  }, [events]);
 
   const handleExportBackup = async () => {
     setBusy(true);
@@ -187,9 +195,8 @@ export function AdminBackupTab({
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="backup-target-event">Evento de Destino (para backup legado)</Label>
-              <select
+              <Select
                 id="backup-target-event"
-                className={SELECT_CLASSES}
                 value={targetEventId}
                 onChange={(e) => setTargetEventId(e.target.value)}
               >
@@ -198,7 +205,7 @@ export function AdminBackupTab({
                     {ev.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">

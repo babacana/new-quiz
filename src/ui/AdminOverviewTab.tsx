@@ -10,6 +10,7 @@ import {
   Users,
 } from 'lucide-react';
 import type { EventAdminController } from '../domain/eventAdminController';
+import { normalizePhoneDigits } from '../domain/operationalRules';
 import type { EventConfig, OperatorEventSnapshot, TotemRecord } from '../domain/types';
 import type { AdminTabId } from './adminRoutes';
 import { Button } from './components/ui/button';
@@ -66,13 +67,43 @@ export function AdminOverviewTab({
     }
   }, [controller, onStatusMessage, selectedEvent]);
 
+  const selectedEventId = selectedEvent?.id ?? null;
+
   useEffect(() => {
     void loadOverviewData();
-    const unsubscribe = controller.subscribeTotemUpdates(() => {
-      void loadOverviewData();
+    let reloadTimer: number | null = null;
+    const unsubscribe = controller.subscribeTotemUpdates((event) => {
+      if (event.type === 'TELEMETRY_UPDATED' || event.type === 'PAIRING_AUTHORIZED') {
+        const updatedTotem = event.totem;
+        setLinkedTotems((prev) => {
+          const belongsToSelected = selectedEventId !== null && updatedTotem.eventId === selectedEventId;
+          const withoutCurrent = prev.filter((item) => item.id !== updatedTotem.id);
+          return belongsToSelected ? [...withoutCurrent, updatedTotem] : withoutCurrent;
+        });
+        return;
+      }
+
+      if (event.type === 'OPERATIONAL_DATA_UPDATED') {
+        if (event.eventId && selectedEventId && event.eventId !== selectedEventId) {
+          return;
+        }
+        if (reloadTimer !== null) {
+          window.clearTimeout(reloadTimer);
+        }
+        reloadTimer = window.setTimeout(() => {
+          reloadTimer = null;
+          void loadOverviewData();
+        }, 300);
+      }
     });
-    return () => unsubscribe();
-  }, [controller, loadOverviewData]);
+
+    return () => {
+      unsubscribe();
+      if (reloadTimer !== null) {
+        window.clearTimeout(reloadTimer);
+      }
+    };
+  }, [controller, loadOverviewData, selectedEventId]);
 
   const handleConfirmDelivery = async (claimId: string, participantName: string) => {
     try {
@@ -135,9 +166,13 @@ export function AdminOverviewTab({
     );
   }
 
-  const totalMatches = snapshot?.recentParticipants.length ?? 0;
+  const recentParticipants = snapshot?.recentParticipants ?? [];
+  const totalMatches = recentParticipants.length;
+  const uniqueParticipantsCount = new Set(
+    recentParticipants.map((p) => normalizePhoneDigits(p.participantPhone) || p.matchId),
+  ).size;
   const deliveredPrizes =
-    snapshot?.recentParticipants.filter((p) => p.prizeStatus === 'delivered').length ?? 0;
+    recentParticipants.filter((p) => p.prizeStatus === 'delivered').length;
   const awaitingCount = snapshot?.awaitingPickupQueue.length ?? 0;
   const onlineTotemsCount = linkedTotems.filter((t) => t.onlineStatus === 'online').length;
   const conflicts = snapshot?.offlineConflicts ?? [];
@@ -193,7 +228,7 @@ export function AdminOverviewTab({
           <CardContent>
             <div className="text-2xl font-bold">{totalMatches}</div>
             <p className="text-xs text-muted-foreground">
-              {snapshot?.ranking.length ?? 0} participante(s) único(s)
+              {uniqueParticipantsCount} participante(s) único(s)
             </p>
           </CardContent>
         </Card>

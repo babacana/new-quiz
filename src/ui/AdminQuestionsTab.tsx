@@ -31,11 +31,14 @@ import {
 } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import { DIFFICULTY_LABELS, triggerFileDownload } from './formatters';
 import { cn } from './lib/utils';
+import type { UnsavedNavigationGuard } from './navigationGuard';
 
 export interface AdminQuestionsTabProps {
   controller: EventAdminController;
+  navigationGuard: UnsavedNavigationGuard;
   onRequestGuardedAction: (proceed: () => void) => void;
   onQuestionsChanged: () => Promise<void>;
   onRegisterSaveHandler: (handler: (() => Promise<void>) | null) => void;
@@ -64,24 +67,35 @@ function buildEmptyQuestionEditor(): QuestionEditorState {
   };
 }
 
-const SELECT_CLASS =
-  'h-9 rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
-
 // Aba administrativa do Banco de Questões Central (tabela desktop / cards mobile, CRUD, lote, preview e CSV/JSON).
 export function AdminQuestionsTab({
   controller,
+  navigationGuard,
   onRequestGuardedAction,
   onQuestionsChanged,
   onRegisterSaveHandler,
   onStatusMessage,
 }: AdminQuestionsTabProps) {
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState<'all' | DifficultyLevel>('all');
   const [statusFilter, setStatusFilter] = useState<QuestionStatusFilter>('all');
   const [sortBy, setSortBy] = useState<QuestionSortField>('id');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
+
+  // Aplica debounce de 300ms na busca textual para evitar reconsultas por tecla digitada.
+  useEffect(() => {
+    if (search === debouncedSearch) {
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timerId);
+  }, [search, debouncedSearch]);
 
   const [queryResult, setQueryResult] = useState<PaginatedQuestionsResult>({
     items: [],
@@ -111,7 +125,7 @@ export function AdminQuestionsTab({
   const refreshList = useCallback(async () => {
     try {
       const result = await controller.queryQuestions({
-        search,
+        search: debouncedSearch,
         difficulties: difficultyFilter === 'all' ? undefined : [difficultyFilter],
         status: statusFilter,
         sortBy,
@@ -132,7 +146,7 @@ export function AdminQuestionsTab({
     onStatusMessage,
     page,
     pageSize,
-    search,
+    debouncedSearch,
     sortBy,
     sortDirection,
     statusFilter,
@@ -171,6 +185,7 @@ export function AdminQuestionsTab({
         onStatusMessage('success', `Questão #${created.id} adicionada ao Banco de Questões.`);
       }
 
+      navigationGuard.clearDirty('question');
       setIsEditorOpen(false);
       await refreshList();
       await onQuestionsChanged();
@@ -181,7 +196,7 @@ export function AdminQuestionsTab({
       );
       throw error;
     }
-  }, [controller, editorState, onQuestionsChanged, onStatusMessage, refreshList]);
+  }, [controller, editorState, navigationGuard, onQuestionsChanged, onStatusMessage, refreshList]);
 
   useEffect(() => {
     if (!isEditorOpen) {
@@ -298,7 +313,7 @@ export function AdminQuestionsTab({
       await controller.deleteQuestions([questionId]);
       setSelectedIds((prev) => prev.filter((id) => id !== questionId));
       if (isEditorOpen && editorState.editingId === questionId) {
-        controller.clearDirty('question');
+        navigationGuard.clearDirty('question');
         setIsEditorOpen(false);
       }
       await refreshList();
@@ -459,17 +474,13 @@ export function AdminQuestionsTab({
                 className="pl-8"
                 placeholder="Buscar por enunciado, tag ou ID..."
                 value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(1);
-                }}
+                onChange={(e) => setSearch(e.target.value)}
               />
             </div>
 
-            <select
+            <Select
               id="question-difficulty-filter"
               aria-label="Filtrar por dificuldade"
-              className={SELECT_CLASS}
               value={difficultyFilter}
               onChange={(e) => {
                 setDifficultyFilter(e.target.value as 'all' | DifficultyLevel);
@@ -480,12 +491,11 @@ export function AdminQuestionsTab({
               <option value="facil">Fácil</option>
               <option value="moderado">Moderado</option>
               <option value="dificil">Difícil</option>
-            </select>
+            </Select>
 
-            <select
+            <Select
               id="question-status-filter"
               aria-label="Filtrar por status"
-              className={SELECT_CLASS}
               value={statusFilter}
               onChange={(e) => {
                 setStatusFilter(e.target.value as QuestionStatusFilter);
@@ -495,11 +505,10 @@ export function AdminQuestionsTab({
               <option value="all">Todos os Status</option>
               <option value="active">Somente Ativas</option>
               <option value="disabled">Somente Desabilitadas</option>
-            </select>
+            </Select>
 
-            <select
+            <Select
               aria-label="Ordenar questões por"
-              className={SELECT_CLASS}
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value as QuestionSortField)}
             >
@@ -507,17 +516,16 @@ export function AdminQuestionsTab({
               <option value="text">Ordenar por Enunciado</option>
               <option value="difficulty">Ordenar por Dificuldade</option>
               <option value="status">Ordenar por Status</option>
-            </select>
+            </Select>
 
-            <select
+            <Select
               aria-label="Direção da ordenação"
-              className={SELECT_CLASS}
               value={sortDirection}
               onChange={(e) => setSortDirection(e.target.value as SortDirection)}
             >
               <option value="asc">Crescente</option>
               <option value="desc">Decrescente</option>
-            </select>
+            </Select>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-3">
@@ -721,7 +729,7 @@ export function AdminQuestionsTab({
                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   value={editorState.text}
                   onChange={(e) => {
-                    controller.markDirty('question');
+                    navigationGuard.markDirty('question');
                     setEditorState((prev) => ({ ...prev, text: e.target.value }));
                   }}
                   required
@@ -739,7 +747,7 @@ export function AdminQuestionsTab({
                       type="text"
                       value={editorState.options[optIdx]}
                       onChange={(e) => {
-                        controller.markDirty('question');
+                        navigationGuard.markDirty('question');
                         const nextOpts: [string, string, string, string] = [
                           ...editorState.options,
                         ];
@@ -755,12 +763,11 @@ export function AdminQuestionsTab({
               <div className="grid gap-3 sm:grid-cols-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="question-correct-select">Alternativa Correta</Label>
-                  <select
+                  <Select
                     id="question-correct-select"
-                    className={cn(SELECT_CLASS, 'w-full')}
                     value={editorState.correctIndex}
                     onChange={(e) => {
-                      controller.markDirty('question');
+                      navigationGuard.markDirty('question');
                       setEditorState((prev) => ({
                         ...prev,
                         correctIndex: Number(e.target.value),
@@ -771,17 +778,16 @@ export function AdminQuestionsTab({
                     <option value={1}>Alternativa B</option>
                     <option value={2}>Alternativa C</option>
                     <option value={3}>Alternativa D</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div className="space-y-1.5">
                   <Label htmlFor="question-difficulty-select">Dificuldade</Label>
-                  <select
+                  <Select
                     id="question-difficulty-select"
-                    className={cn(SELECT_CLASS, 'w-full')}
                     value={editorState.difficulty}
                     onChange={(e) => {
-                      controller.markDirty('question');
+                      navigationGuard.markDirty('question');
                       setEditorState((prev) => ({
                         ...prev,
                         difficulty: e.target.value as DifficultyLevel,
@@ -791,7 +797,7 @@ export function AdminQuestionsTab({
                     <option value="facil">Fácil</option>
                     <option value="moderado">Moderado</option>
                     <option value="dificil">Difícil</option>
-                  </select>
+                  </Select>
                 </div>
 
                 <div className="space-y-1.5">
@@ -801,7 +807,7 @@ export function AdminQuestionsTab({
                     type="text"
                     value={editorState.tagsInput}
                     onChange={(e) => {
-                      controller.markDirty('question');
+                      navigationGuard.markDirty('question');
                       setEditorState((prev) => ({ ...prev, tagsInput: e.target.value }));
                     }}
                   />
@@ -813,7 +819,7 @@ export function AdminQuestionsTab({
                   type="checkbox"
                   checked={editorState.isDisabled}
                   onChange={(e) => {
-                    controller.markDirty('question');
+                    navigationGuard.markDirty('question');
                     setEditorState((prev) => ({ ...prev, isDisabled: e.target.checked }));
                   }}
                   className="h-4 w-4 rounded border-input"
@@ -892,27 +898,25 @@ export function AdminQuestionsTab({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="import-format-select">Formato do Arquivo</Label>
-                <select
+                <Select
                   id="import-format-select"
-                  className={cn(SELECT_CLASS, 'w-full')}
                   value={importFormat}
                   onChange={(e) => setImportFormat(e.target.value as 'json' | 'csv')}
                 >
                   <option value="json">JSON</option>
                   <option value="csv">CSV</option>
-                </select>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="import-mode-select">Modo de Importação</Label>
-                <select
+                <Select
                   id="import-mode-select"
-                  className={cn(SELECT_CLASS, 'w-full')}
                   value={importMode}
                   onChange={(e) => setImportMode(e.target.value as QuestionsImportMode)}
                 >
                   <option value="merge">Adicionar / Mesclar ao acervo atual</option>
                   <option value="replace">Substituir todo o Banco de Questões</option>
-                </select>
+                </Select>
               </div>
             </div>
 

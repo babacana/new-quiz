@@ -73,8 +73,21 @@ export function OperatorPanel({
 
   useEffect(() => {
     void loadDashboard();
-    const unsubscribe = controller.subscribeTotemUpdates(() => {
-      void loadDashboard();
+    let reloadTimer: number | null = null;
+    const unsubscribe = controller.subscribeTotemUpdates((event) => {
+      if (event.type !== 'OPERATIONAL_DATA_UPDATED') {
+        return;
+      }
+      if (event.eventId && effectiveEventId && event.eventId !== effectiveEventId) {
+        return;
+      }
+      if (reloadTimer !== null) {
+        window.clearTimeout(reloadTimer);
+      }
+      reloadTimer = window.setTimeout(() => {
+        reloadTimer = null;
+        void loadDashboard();
+      }, 300);
     });
     const timerId = window.setInterval(() => {
       void loadDashboard();
@@ -82,9 +95,12 @@ export function OperatorPanel({
 
     return () => {
       unsubscribe();
+      if (reloadTimer !== null) {
+        window.clearTimeout(reloadTimer);
+      }
       window.clearInterval(timerId);
     };
-  }, [controller, loadDashboard]);
+  }, [controller, effectiveEventId, loadDashboard]);
 
   const handleConfirmDelivery = async (claimId: string, participantName: string) => {
     try {

@@ -29,6 +29,7 @@ import {
 } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import { DIFFICULTY_LABELS, formatTimeMMSS } from './formatters';
 import { cn } from './lib/utils';
 
@@ -56,9 +57,6 @@ const METRIC_OPTIONS: Array<{ value: QuestionAnalysisMetric; label: string }> = 
   { value: 'most_answered', label: 'Mais Respondidas' },
   { value: 'least_answered', label: 'Menos Respondidas' },
 ];
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function ResponsiveBarChart({
   title,
@@ -294,9 +292,8 @@ export function AdminAnalyticsTab({
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="analytics-event-filter">Evento</Label>
-              <select
+              <Select
                 id="analytics-event-filter"
-                className={SELECT_CLASS}
                 value={eventId}
                 onChange={(e) => {
                   setEventId(e.target.value);
@@ -309,14 +306,13 @@ export function AdminAnalyticsTab({
                     {ev.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="analytics-period-filter">Período</Label>
-              <select
+              <Select
                 id="analytics-period-filter"
-                className={SELECT_CLASS}
                 value={period}
                 onChange={(e) => {
                   setPeriod(e.target.value as AnalyticsPeriodPreset);
@@ -328,7 +324,7 @@ export function AdminAnalyticsTab({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             {period === 'custom' && (
@@ -356,9 +352,8 @@ export function AdminAnalyticsTab({
 
             <div className="space-y-1.5">
               <Label htmlFor="analytics-question-metric">Ranking de Questões</Label>
-              <select
+              <Select
                 id="analytics-question-metric"
-                className={SELECT_CLASS}
                 value={questionMetric}
                 onChange={(e) => {
                   setQuestionMetric(e.target.value as QuestionAnalysisMetric);
@@ -370,7 +365,7 @@ export function AdminAnalyticsTab({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
           </div>
         </CardContent>

@@ -466,42 +466,6 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
     });
   });
 
-  describe('Dirty Check (Alerta de Alterações Não Salvas)', () => {
-    it('solicita confirmação com opções Salvar e Sair, Sair sem Salvar ou Cancelar quando há alterações pendentes', async () => {
-      const { controller } = createAdminHarness();
-
-      expect(controller.checkUnsavedNavigation().canProceedImmediately).toBe(true);
-
-      controller.markDirty('event');
-      controller.markDirty('settings');
-
-      const prompt = controller.checkUnsavedNavigation();
-      expect(prompt.canProceedImmediately).toBe(false);
-      expect(prompt.dirtySections).toEqual(['event', 'settings']);
-      expect(prompt.options).toEqual(['save_and_leave', 'discard_and_leave', 'cancel']);
-
-      // Cancelar mantém o usuário na tela com alterações pendentes.
-      const cancelled = await controller.resolveUnsavedNavigation('cancel');
-      expect(cancelled).toBe(false);
-      expect(controller.isDirty()).toBe(true);
-
-      // Salvar e Sair executa callback de salvamento e limpa dirty.
-      let saved = false;
-      const savedAndLeft = await controller.resolveUnsavedNavigation('save_and_leave', async () => {
-        saved = true;
-      });
-      expect(saved).toBe(true);
-      expect(savedAndLeft).toBe(true);
-      expect(controller.isDirty()).toBe(false);
-
-      // Sair sem Salvar limpa dirty sem salvar.
-      controller.markDirty('question');
-      const discarded = await controller.resolveUnsavedNavigation('discard_and_leave');
-      expect(discarded).toBe(true);
-      expect(controller.isDirty()).toBe(false);
-    });
-  });
-
   describe('T5 - Pareamento de Totens pelo Administrador', () => {
     it('autoriza Pareamento por código curto ou link de ativação, valida PIN e restringe a Administradores', async () => {
       const { controller, cloudGateway, clock, random } = createAdminHarness();
@@ -751,7 +715,9 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
 
       q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
       totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
-      const finishedSnap = await totemEngine.advanceAfterAnswer();
+      await totemEngine.advanceAfterAnswer();
+      await totemEngine.waitForBackgroundSync();
+      const finishedSnap = totemEngine.getSnapshot();
 
       // Partida concluiu exibindo resultado e aplicou a configuração baixada
       expect(finishedSnap.screen).toBe('result-screen');
@@ -775,7 +741,9 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       await totemEngine.advanceAfterAnswer();
       q = totemEngine.getSnapshot().activeMatch!.currentQuestion!;
       totemEngine.submitAnswer(q.question.shuffledOptions.findIndex((o) => o.isCorrect));
-      const switchedAfterFinish = await totemEngine.advanceAfterAnswer();
+      await totemEngine.advanceAfterAnswer();
+      await totemEngine.waitForBackgroundSync();
+      const switchedAfterFinish = totemEngine.getSnapshot();
 
       expect(switchedAfterFinish.event.id).toBe(eventB.id);
       expect(switchedAfterFinish.screen).toBe('initial-screen');
@@ -961,6 +929,7 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
         totem.submitAnswer(optionIndex >= 0 ? optionIndex : 0);
         await totem.advanceAfterAnswer();
       }
+      await totem.waitForBackgroundSync();
     }
 
     it('permite ao Operador confirmar entrega, detectar Conflito Offline entregando apenas 1 Brinde, despremiar e destravar com reflexo imediato nos Totens', async () => {

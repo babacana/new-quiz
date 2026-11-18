@@ -23,6 +23,73 @@ export function toEventPhoneKey(eventId: string, participantPhone: string): stri
   return `${eventId}::${participantPhone}`;
 }
 
+// Verifica se um registro de Brinde representa premiação ativa (entregue ou aguardando retirada).
+export function isActivePrizeClaim(claim: { status: PrizeClaimStatus }): boolean {
+  return claim.status === 'delivered' || claim.status === 'awaiting_pickup';
+}
+
+// Ordena Partidas para Ranking: maior pontuação, menor tempo gasto e desempate cronológico.
+export function sortRankingMatches<
+  T extends { score: number; timeSeconds: number; playedAt: string },
+>(matches: readonly T[]): T[] {
+  return [...matches].sort(
+    (a, b) =>
+      b.score - a.score ||
+      a.timeSeconds - b.timeSeconds ||
+      a.playedAt.localeCompare(b.playedAt),
+  );
+}
+
+// Converte string YYYY-MM-DD ou ISO em timestamp de início/fim de dia para filtros de período.
+export function parseDateBoundary(
+  dateStr: string | undefined,
+  bound: 'start' | 'end',
+): number | null {
+  if (!dateStr) {
+    return null;
+  }
+  if (dateStr.includes('T')) {
+    const parsed = Date.parse(dateStr);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr.trim());
+  if (!match) {
+    const fallback = Date.parse(dateStr);
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+  const [, year, month, day] = match;
+  return bound === 'start'
+    ? new Date(Number(year), Number(month) - 1, Number(day), 0, 0, 0, 0).getTime()
+    : new Date(Number(year), Number(month) - 1, Number(day), 23, 59, 59, 999).getTime();
+}
+
+// Pagina listas em memória preservando limites seguros de página e tamanho.
+export function paginateItems<T>(
+  items: readonly T[],
+  requestedPage = 1,
+  requestedPageSize = 20,
+): {
+  items: T[];
+  totalItems: number;
+  totalPages: number;
+  currentPage: number;
+  pageSize: number;
+} {
+  const pageSize = Math.max(1, Math.floor(requestedPageSize));
+  const totalItems = items.length;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  const currentPage = Math.min(Math.max(1, Math.floor(requestedPage)), totalPages);
+  const startIndex = (currentPage - 1) * pageSize;
+
+  return {
+    items: items.slice(startIndex, startIndex + pageSize),
+    totalItems,
+    totalPages,
+    currentPage,
+    pageSize,
+  };
+}
+
 // Calcula o novo expiresAt ISO para encerrar um bloqueio por desistência considerando skew de relógio.
 export function computeExpiredLockoutIso(
   lockedAt: string,

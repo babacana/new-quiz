@@ -32,6 +32,7 @@ import {
 } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import {
   PRIZE_STATUS_LABELS,
   formatDateTimePtBr,
@@ -57,9 +58,6 @@ const PRIZE_FILTER_OPTIONS: Array<{ value: ParticipantPrizeFilter; label: string
   { value: 'revoked', label: 'Revogado / Despremiado' },
   { value: 'offline_conflict', label: 'Conflito Offline' },
 ];
-
-const SELECT_CLASS =
-  'h-9 w-full rounded-md border border-input bg-background px-2.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 function computeResponsivePageSize(): number {
   if (typeof window === 'undefined') {
@@ -91,6 +89,7 @@ export function AdminReportsTab({
     }
   }, [selectedEventId]);
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [prizeFilter, setPrizeFilter] = useState<ParticipantPrizeFilter>('all');
@@ -102,6 +101,18 @@ export function AdminReportsTab({
   const [manualPageSize, setManualPageSize] = useState<number | null>(null);
   const [viewportPageSize, setViewportPageSize] = useState<number>(computeResponsivePageSize);
   const pageSize = manualPageSize ?? viewportPageSize;
+
+  // Aplica debounce na busca textual antes de consultar relatórios.
+  useEffect(() => {
+    if (search === debouncedSearch) {
+      return;
+    }
+    const timerId = window.setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => window.clearTimeout(timerId);
+  }, [search, debouncedSearch]);
 
   const [report, setReport] = useState<PaginatedParticipantReportResult>({
     items: [],
@@ -130,7 +141,7 @@ export function AdminReportsTab({
     const parsedScore = exactScoreInput.trim() !== '' ? Number(exactScoreInput.trim()) : null;
     return {
       eventId: eventIdFilter === 'all' ? undefined : eventIdFilter,
-      search: search.trim() || undefined,
+      search: debouncedSearch.trim() || undefined,
       startDate: startDate || undefined,
       endDate: endDate || undefined,
       prizeFilter,
@@ -143,7 +154,7 @@ export function AdminReportsTab({
     };
   }, [
     eventIdFilter,
-    search,
+    debouncedSearch,
     startDate,
     endDate,
     prizeFilter,
@@ -458,9 +469,8 @@ export function AdminReportsTab({
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1.5">
               <Label htmlFor="report-filter-event">Evento</Label>
-              <select
+              <Select
                 id="report-filter-event"
-                className={SELECT_CLASS}
                 value={eventIdFilter}
                 onChange={(e) => {
                   setEventIdFilter(e.target.value);
@@ -473,7 +483,7 @@ export function AdminReportsTab({
                     {ev.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
@@ -486,10 +496,7 @@ export function AdminReportsTab({
                   className="pl-8"
                   value={search}
                   placeholder="Nome ou telefone..."
-                  onChange={(e) => {
-                    setSearch(e.target.value);
-                    setPage(1);
-                  }}
+                  onChange={(e) => setSearch(e.target.value)}
                 />
               </div>
             </div>
@@ -522,9 +529,8 @@ export function AdminReportsTab({
 
             <div className="space-y-1.5">
               <Label htmlFor="report-filter-prize">Status do Brinde</Label>
-              <select
+              <Select
                 id="report-filter-prize"
-                className={SELECT_CLASS}
                 value={prizeFilter}
                 onChange={(e) => {
                   setPrizeFilter(e.target.value as ParticipantPrizeFilter);
@@ -536,7 +542,7 @@ export function AdminReportsTab({
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
@@ -556,9 +562,8 @@ export function AdminReportsTab({
 
             <div className="space-y-1.5">
               <Label htmlFor="report-page-size">Itens por página</Label>
-              <select
+              <Select
                 id="report-page-size"
-                className={SELECT_CLASS}
                 value={pageSize}
                 onChange={(e) => {
                   setManualPageSize(Number(e.target.value));
@@ -569,7 +574,7 @@ export function AdminReportsTab({
                 <option value={8}>8</option>
                 <option value={10}>10</option>
                 <option value={25}>25</option>
-              </select>
+              </Select>
             </div>
 
             <div className="flex items-end gap-2">
