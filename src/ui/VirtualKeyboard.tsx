@@ -46,7 +46,7 @@ const NAME_KEYS: readonly KeyboardKeyDescriptor[] = [
   })),
   { key: 'Backspace', label: 'APAGAR', className: 'key-backspace', gridColumn: 'span 3' },
   { key: 'Space', label: 'ESPAÇO', className: 'key-space', gridColumn: 'span 7' },
-  { key: 'OK', label: 'OK', className: 'ok-key-highlight', gridColumn: 'span 3' },
+  { key: 'NEXT', label: 'PRÓXIMO', className: 'ok-key-highlight', gridColumn: 'span 3' },
 ];
 
 const PHONE_KEYS: readonly KeyboardKeyDescriptor[] = [
@@ -56,7 +56,7 @@ const PHONE_KEYS: readonly KeyboardKeyDescriptor[] = [
   })),
   { key: 'Backspace', label: 'APAGAR', className: 'key-backspace' },
   { key: '0', label: '0' },
-  { key: 'OK', label: 'OK', className: 'ok-key-highlight' },
+  { key: 'SUBMIT', label: 'JOGAR', className: 'ok-key-highlight' },
 ];
 
 const LAYOUT_CONFIG: Record<

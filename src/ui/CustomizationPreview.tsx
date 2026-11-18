@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { EventCustomizations } from '../domain/types';
 import { EventLogoImage } from './EventLogoImage';
+import { cn } from './lib/utils';
 import { buildThemeCssVariables, resolvePreviewVisualAssets } from './themeCss';
 
 export interface CustomizationPreviewProps {
@@ -8,6 +9,12 @@ export interface CustomizationPreviewProps {
 }
 
 type PreviewScreenTab = 'initial' | 'quiz' | 'result';
+
+const PREVIEW_TABS: readonly { id: PreviewScreenTab; label: string }[] = [
+  { id: 'initial', label: 'Tela Inicial' },
+  { id: 'quiz', label: 'Tela de Quiz' },
+  { id: 'result', label: 'Tela de Resultado' },
+];
 
 // Pré-visualização interativa ao vivo das alterações de textos, cores, fontes, logotipo e fundo.
 export function CustomizationPreview({ customizations }: CustomizationPreviewProps) {
@@ -17,45 +24,46 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
   const { texts, colors, visualIdentity } = customizations;
 
   return (
-    <div className="customization-preview-wrapper">
-      <div className="customization-preview-toolbar" role="tablist" aria-label="Telas de pré-visualização">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={previewScreen === 'initial'}
-          className={`admin-tab-btn ${previewScreen === 'initial' ? 'active' : ''}`}
-          onClick={() => setPreviewScreen('initial')}
-        >
-          Tela Inicial
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={previewScreen === 'quiz'}
-          className={`admin-tab-btn ${previewScreen === 'quiz' ? 'active' : ''}`}
-          onClick={() => setPreviewScreen('quiz')}
-        >
-          Tela de Quiz
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={previewScreen === 'result'}
-          className={`admin-tab-btn ${previewScreen === 'result' ? 'active' : ''}`}
-          onClick={() => setPreviewScreen('result')}
-        >
-          Tela de Resultado
-        </button>
+    <div className="space-y-3">
+      <div
+        className="flex flex-wrap gap-1.5 rounded-lg border border-border bg-muted/60 p-1"
+        role="tablist"
+        aria-label="Telas de pré-visualização"
+      >
+        {PREVIEW_TABS.map((tab) => {
+          const isSelected = previewScreen === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isSelected}
+              className={cn(
+                'flex-1 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                isSelected
+                  ? 'bg-primary text-primary-foreground shadow-xs'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              )}
+              onClick={() => setPreviewScreen(tab.id)}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       <div
         id="customization-live-preview"
-        className="customization-live-preview-stage"
-        style={themeStyle}
+        className="relative min-h-[320px] overflow-hidden rounded-xl border border-border p-5 shadow-xs"
+        style={{
+          ...themeStyle,
+          backgroundImage: 'linear-gradient(165deg, var(--quiz-bg-start), var(--quiz-bg-end))',
+          color: colors.quizMainTextColor,
+        }}
       >
         {backgroundSrc && (
           <div
-            className="quiz-custom-background-layer"
+            className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
             style={{
               backgroundImage: `url(${backgroundSrc})`,
               opacity: visualIdentity.customBackgroundOpacity,
@@ -64,15 +72,15 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
           />
         )}
 
-        <div className="customization-preview-inner">
+        <div className="relative z-10 flex flex-col items-center gap-3 text-center">
           <EventLogoImage
             src={logoSrc}
             alt="Pré-visualização do logotipo"
-            className="customization-preview-logo"
+            className="max-h-14 w-auto object-contain"
           />
 
           {previewScreen === 'initial' && (
-            <div className="customization-preview-screen">
+            <div className="flex w-full flex-col items-center gap-2.5">
               <h4 style={{ color: colors.quizHighlightColor }}>{texts.initialScreenTitle}</h4>
               <p
                 style={{
@@ -87,14 +95,16 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
                 readOnly
                 value=""
                 placeholder={texts.inputNamePlaceholder}
+                className="w-full max-w-xs rounded-md border bg-background/10 px-3 py-1.5 text-center text-sm"
                 style={{
                   borderColor: colors.quizInputBorder,
                   color: colors.quizMainTextColor,
                 }}
               />
-              <div className="customization-preview-buttons">
+              <div className="flex flex-wrap justify-center gap-2">
                 <button
                   type="button"
+                  className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizPrimaryButtonBg,
                     color: colors.quizPrimaryButtonText,
@@ -105,6 +115,7 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
                 </button>
                 <button
                   type="button"
+                  className="rounded-lg border px-3.5 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizSecondaryButtonBg,
                     borderColor: colors.quizSecondaryButtonBorder,
@@ -119,7 +130,7 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
           )}
 
           {previewScreen === 'quiz' && (
-            <div className="customization-preview-screen">
+            <div className="flex w-full flex-col items-center gap-2.5">
               <p
                 style={{
                   fontSize: customizations.fontSizes.questionTextFontSize,
@@ -129,9 +140,9 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
               >
                 Qual é o principal serviço prestado pela CAESB no DF?
               </p>
-              <div className="customization-preview-options">
+              <div className="flex w-full flex-col gap-2 text-left text-sm">
                 <div
-                  className="customization-preview-option"
+                  className="rounded-lg px-3 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizOptionCorrectBg,
                     color: '#ffffff',
@@ -140,7 +151,7 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
                   A) Saneamento básico e água tratada
                 </div>
                 <div
-                  className="customization-preview-option"
+                  className="rounded-lg px-3 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizOptionBg,
                     color: colors.quizOptionText,
@@ -151,6 +162,7 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
               </div>
               <button
                 type="button"
+                className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
                 style={{
                   backgroundColor: colors.quizPrimaryButtonBg,
                   color: colors.quizPrimaryButtonText,
@@ -163,15 +175,16 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
           )}
 
           {previewScreen === 'result' && (
-            <div className="customization-preview-screen">
+            <div className="flex w-full flex-col items-center gap-2.5">
               <h4 style={{ color: colors.quizHighlightColor }}>MARIA CLARA,</h4>
               <p style={{ color: colors.quizOptionCorrectBg, fontWeight: 700 }}>
                 {texts.resultScreenPrizeWon}
               </p>
               <p style={{ color: colors.quizMainTextColor }}>{texts.resultScreenAllCorrect}</p>
-              <div className="customization-preview-buttons">
+              <div className="flex flex-wrap justify-center gap-2">
                 <button
                   type="button"
+                  className="rounded-lg border px-3.5 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizSecondaryButtonBg,
                     borderColor: colors.quizSecondaryButtonBorder,
@@ -182,6 +195,7 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
                 </button>
                 <button
                   type="button"
+                  className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
                   style={{
                     backgroundColor: colors.quizPrimaryButtonBg,
                     color: colors.quizPrimaryButtonText,

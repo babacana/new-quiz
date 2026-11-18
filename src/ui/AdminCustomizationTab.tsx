@@ -23,9 +23,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './com
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
 import { cn } from './lib/utils';
+import type { UnsavedNavigationGuard } from './navigationGuard';
 
 export interface AdminCustomizationTabProps {
   controller: EventAdminController;
+  navigationGuard: UnsavedNavigationGuard;
   events: EventConfig[];
   selectedEventId: string | null;
   onSelectEvent: (eventId: string) => void;
@@ -105,6 +107,7 @@ async function readFileAsBytes(file: File): Promise<Uint8Array> {
 // Aba administrativa de Aparência do Totem: sub-seções SaaS, split-view desktop, alternância Editar/Pré-visualizar mobile e sticky action bar.
 export function AdminCustomizationTab({
   controller,
+  navigationGuard,
   events,
   selectedEventId,
   onEventsChanged,
@@ -128,9 +131,9 @@ export function AdminCustomizationTab({
     (ev: EventConfig) => {
       setDraft(structuredClone(ev.customizations));
       setIsDirty(false);
-      controller.clearDirty('customization');
+      navigationGuard.clearDirty('customization');
     },
-    [controller],
+    [navigationGuard],
   );
 
   useEffect(() => {
@@ -143,9 +146,9 @@ export function AdminCustomizationTab({
     (next: EventCustomizations) => {
       setDraft(next);
       setIsDirty(true);
-      controller.markDirty('customization', true);
+      navigationGuard.markDirty('customization', true);
     },
-    [controller],
+    [navigationGuard],
   );
 
   const handleSave = useCallback(async () => {
@@ -156,6 +159,7 @@ export function AdminCustomizationTab({
     try {
       const saved = await controller.saveEventCustomizations(targetEvent.id, draft);
       setIsDirty(false);
+      navigationGuard.clearDirty('customization');
       onStatusMessage(
         'success',
         `Personalização visual salva para "${saved.name}" (versão ${saved.configVersion}).`,
@@ -169,7 +173,7 @@ export function AdminCustomizationTab({
     } finally {
       setSaving(false);
     }
-  }, [controller, draft, onEventsChanged, onStatusMessage, targetEvent]);
+  }, [controller, draft, navigationGuard, onEventsChanged, onStatusMessage, targetEvent]);
 
   useEffect(() => {
     onRegisterSaveHandler(handleSave);

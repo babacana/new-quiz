@@ -5,20 +5,27 @@ import {
   DEFAULT_SETTINGS,
   TIMEOUT_OPTION_TEXT,
 } from './defaults';
+import { isActivePrizeClaim } from './operationalRules';
 import {
   buildTotemActivationLink,
   extractPairingCodeFromInput,
   generateShortPairingCode,
 } from './pairingUtils';
-import type { Clock, CloudEventSnapshot, CloudGateway, LocalStore, RandomSource } from './ports';
-import { resolveVisualAssetPaths } from './visualAssetUtils';
+import { hashEventPhone } from './phoneHash';
+import type {
+  Clock,
+  CloudEventSnapshot,
+  LocalStore,
+  RandomSource,
+  TotemCloudPort,
+} from './ports';
+import { TotemSyncManager } from './totemSyncManager';
 import type {
   ActiveQuestionState,
   AnswerOutcome,
   BorderPulseState,
   DifficultyLevel,
   DifficultyPercentages,
-  EventConfig,
   EventCustomizationTexts,
   EventSettings,
   EventWindowState,
@@ -46,6 +53,7 @@ import type {
   TotemScreenId,
   TotemSessionSnapshot,
 } from './types';
+import { resolveVisualAssetPaths } from './visualAssetUtils';
 
 const BRAZIL_PHONE_REGEX = /^\(\d{2}\)\s\d{4,5}-\d{4}$/;
 const MIN_IDLE_TIMEOUT_SECONDS = 15;
@@ -82,13 +90,9 @@ export function isValidBrazilPhone(phone: string): boolean {
   return BRAZIL_PHONE_REGEX.test(phone.trim());
 }
 
-function isActivePrizeClaim(claim: PrizeClaimRecord): boolean {
-  return claim.status === 'delivered' || claim.status === 'awaiting_pickup';
-}
-
 export interface TotemSessionEngineDependencies {
   localStore: LocalStore;
-  cloudGateway: CloudGateway;
+  cloudGateway: TotemCloudPort;
   clock: Clock;
   random: RandomSource;
   requirePairing?: boolean;
@@ -111,12 +115,14 @@ interface ActiveMatchInternal {
 // Motor de sessão Offline-First do Totem, desacoplado da camada visual e de infraestrutura.
 export class TotemSessionEngine {
   private readonly localStore: LocalStore;
-  private readonly cloudGateway: CloudGateway;
+  private readonly cloudGateway: TotemCloudPort;
   private readonly clock: Clock;
   private readonly random: RandomSource;
   private readonly requirePairing: boolean;
+  private readonly syncManager: TotemSyncManager;
 
   private initialized = false;
+  private disposed = false;
   private screen: TotemScreenId = 'initial-screen';
   private totemConfig: TotemConfigSnapshot = {
     totemId: null,
@@ -130,10 +136,12 @@ export class TotemSessionEngine {
   private activeMatch: ActiveMatchInternal | null = null;
   private lastResult: MatchResultSummary | null = null;
   private rankingCache: RankingEntry[] = [];
+  private totalMatchesCount = 0;
+  private backgroundSyncNotice: string | null = null;
   private alreadyWonModal: { participantPhone: string; awardedAt: string } | null = null;
   private pendingSyncCount = 0;
   private lastValidationError: string | null = null;
-  private syncInFlight: Promise<{ synced: number; failed: number; pending: number }> | null = null;
+  private backgroundSyncPromise: Promise<void> | null = null;
   private pairingStatus: TotemPairingStatus = 'unpaired';
   private deviceOnlineOverride: boolean | null = null;
   private deferredCommands: RemoteCommandPayload[] = [];
@@ -151,6 +159,11 @@ export class TotemSessionEngine {
     this.clock = deps.clock;
     this.random = deps.random;
     this.requirePairing = deps.requirePairing ?? false;
+    this.syncManager = new TotemSyncManager({
+      localStore: deps.localStore,
+      cloudGateway: deps.cloudGateway,
+      clock: deps.clock,
+    });
     this.channelUnsubscribe = this.cloudGateway.subscribeTotemChannel((event) =>
       this.handleChannelEvent(event),
     );
@@ -164,17 +177,29 @@ export class TotemSessionEngine {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.channelUnsubscribe();
     this.snapshotListeners.clear();
   }
 
+  /** Aguarda tarefas assíncronas de sincronização em segundo plano (útil em testes). */
+  async waitForBackgroundSync(): Promise<void> {
+    if (this.backgroundSyncPromise) {
+      await this.backgroundSyncPromise;
+    }
+  }
+
   private notifySubscribers(): void {
-    if (this.snapshotListeners.size === 0) {
+    if (this.disposed || this.snapshotListeners.size === 0) {
       return;
     }
     const snap = this.getSnapshot();
+    const listenerCount = this.snapshotListeners.size;
+    let index = 0;
     for (const listener of this.snapshotListeners) {
-      listener(structuredClone(snap));
+      index += 1;
+      // Passa a própria cópia recém-construída para o último assinante evitando structuredClone duplicado.
+      listener(index === listenerCount ? snap : structuredClone(snap));
     }
   }
 
@@ -184,6 +209,19 @@ export class TotemSessionEngine {
 
   private get customizationTexts(): EventCustomizationTexts {
     return this.totemConfig.event.customizations.texts;
+  }
+
+  // Leitores leves para o hot path de UI evitando clonar o snapshot completo em eventos frequentes.
+  getScreen(): TotemScreenId {
+    return this.screen;
+  }
+
+  getPairingStatus(): TotemPairingStatus {
+    return this.pairingStatus;
+  }
+
+  hasActiveMatch(): boolean {
+    return this.activeMatch !== null;
   }
 
   getNowMs(): number {
@@ -347,8 +385,14 @@ export class TotemSessionEngine {
 
     await this.syncPendingQueue();
     await this.pullAndMergeCloudSnapshot();
-    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
+    const assets = await this.syncManager.resolveAndCacheVisualAssets(this.totemConfig.event, () =>
+      this.isEffectiveOnline(),
+    );
+    this.cachedLogoDataUrl = assets.logoDataUrl ?? this.cachedLogoDataUrl;
+    this.cachedBackgroundDataUrl = assets.backgroundDataUrl;
     await this.refreshRankingCache();
+    this.syncManager.advanceCommandCursor(this.clock.toISOString());
+
     this.initialized = true;
     this.screen = 'initial-screen';
     this.lastValidationError = preservedError;
@@ -366,6 +410,10 @@ export class TotemSessionEngine {
   async setDeviceOnline(online: boolean): Promise<TotemSessionSnapshot> {
     this.deviceOnlineOverride = online;
     await this.sendHeartbeat();
+    if (online && this.activeMatch === null && this.pairingStatus === 'paired') {
+      await this.pullAndMergeCloudSnapshot();
+      await this.refreshRankingCache();
+    }
     this.notifySubscribers();
     return this.getSnapshot();
   }
@@ -482,6 +530,7 @@ export class TotemSessionEngine {
     };
     this.pairingStatus = 'paired';
     this.lastValidationError = null;
+    this.syncManager.advanceCommandCursor(this.clock.toISOString());
     await this.localStore.saveTotemConfig(this.totemConfig);
 
     await this.pullAndMergeCloudSnapshot();
@@ -517,15 +566,17 @@ export class TotemSessionEngine {
       return this.getSnapshot();
     } catch (error) {
       this.lastValidationError =
-        error instanceof Error
-          ? error.message
-          : 'Erro ao ativar Pareamento do Totem.';
+        error instanceof Error ? error.message : 'Erro ao ativar Pareamento do Totem.';
       this.notifySubscribers();
       return this.getSnapshot();
     }
   }
 
   private async handleChannelEvent(event: TotemChannelEvent): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
+
     if (event.type === 'PAIRING_AUTHORIZED') {
       const matchesCode = Boolean(
         this.totemConfig.pairingCode && event.totem.pairingCode === this.totemConfig.pairingCode,
@@ -587,12 +638,9 @@ export class TotemSessionEngine {
     return this.getSnapshot();
   }
 
-  async receiveRemoteCommand(command: RemoteCommandPayload): Promise<TotemSessionSnapshot> {
-    if (!this.commandAppliesToThisTotem(command)) {
-      return this.getSnapshot();
-    }
+  private markCommandProcessed(command: RemoteCommandPayload): boolean {
     if (this.processedCommandIds.has(command.id)) {
-      return this.getSnapshot();
+      return false;
     }
     this.processedCommandIds.add(command.id);
     if (this.processedCommandIds.size > 200) {
@@ -601,6 +649,17 @@ export class TotemSessionEngine {
         this.processedCommandIds.delete(oldest);
       }
     }
+    this.syncManager.advanceCommandCursor(command.issuedAt);
+    return true;
+  }
+
+  async receiveRemoteCommand(command: RemoteCommandPayload): Promise<TotemSessionSnapshot> {
+    if (!this.commandAppliesToThisTotem(command)) {
+      return this.getSnapshot();
+    }
+    if (!this.markCommandProcessed(command)) {
+      return this.getSnapshot();
+    }
 
     if (this.activeMatch !== null) {
       if (command.type === 'CONFIG_UPDATED' || command.type === 'SWITCH_EVENT') {
@@ -608,7 +667,10 @@ export class TotemSessionEngine {
           command.type === 'SWITCH_EVENT' ? command.eventId : this.totemConfig.event.id;
         if (targetEventId && this.isEffectiveOnline()) {
           try {
-            const downloaded = await this.cloudGateway.pullEventSnapshot(targetEventId);
+            const downloaded = await this.cloudGateway.pullEventSnapshot(
+              targetEventId,
+              this.syncManager.buildAuthContext(this.totemConfig),
+            );
             if (downloaded) {
               this.stagedSnapshotsByEventId.set(targetEventId, downloaded);
             }
@@ -692,105 +754,50 @@ export class TotemSessionEngine {
   }
 
   private async applyCloudSnapshotData(cloudSnapshot: CloudEventSnapshot): Promise<void> {
-    // Preserva débitos de estoque pendentes na fila local caso algum item ainda aguarde envio.
-    const pendingQueue = await this.localStore.getSyncQueue();
-    const pendingPrizesCount = pendingQueue.filter(
-      (item) =>
-        item.type === 'match_completed' &&
-        item.eventId === cloudSnapshot.event.id &&
-        item.prizeClaim !== undefined &&
-        item.prizeClaim !== null,
-    ).length;
-
-    const mergedEvent: EventConfig = {
-      ...cloudSnapshot.event,
-      prizeStockRemaining:
-        cloudSnapshot.event.prizeStockRemaining !== null
-          ? Math.max(0, cloudSnapshot.event.prizeStockRemaining - pendingPrizesCount)
-          : null,
-    };
-
-    this.totemConfig = {
-      ...this.totemConfig,
-      event: mergedEvent,
-    };
-    this.questions = cloudSnapshot.questions;
-    await this.localStore.saveTotemConfig(this.totemConfig);
-    await this.localStore.saveQuestions(this.totemConfig.event.id, this.questions);
-    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
-
-    if (cloudSnapshot.matches !== undefined) {
-      const cloudMatchIds = new Set(cloudSnapshot.matches.map((match) => match.id));
-      const localMatches = await this.localStore.getMatches(this.totemConfig.event.id);
-      const deletedMatchIds = new Set<string>();
-
-      for (const localMatch of localMatches) {
-        if (Boolean(localMatch.syncedAt) && !cloudMatchIds.has(localMatch.id)) {
-          deletedMatchIds.add(localMatch.id);
-          await this.localStore.deleteMatch(localMatch.id);
-        }
-      }
-
-      if (deletedMatchIds.size > 0) {
-        const localClaims = await this.localStore.getPrizeClaims(this.totemConfig.event.id);
-        for (const claim of localClaims) {
-          if (deletedMatchIds.has(claim.matchId)) {
-            await this.localStore.deletePrizeClaim(claim.id);
-          }
-        }
-      }
-
-      for (const cloudMatch of cloudSnapshot.matches) {
-        await this.localStore.saveMatch(cloudMatch);
-      }
+    const outcome = await this.syncManager.pullAndApplySnapshot(
+      this.totemConfig,
+      () => this.isEffectiveOnline(),
+      cloudSnapshot,
+    );
+    if (!outcome) {
+      return;
     }
-    for (const cloudClaim of cloudSnapshot.prizeClaims ?? []) {
-      await this.localStore.savePrizeClaim(cloudClaim);
-    }
-    for (const cloudLockout of cloudSnapshot.lockouts ?? []) {
-      await this.localStore.saveLockout(cloudLockout);
-    }
+    this.applyOutcomeState(outcome);
+    await this.processPendingCommandsFromPull(outcome.pendingCommands, cloudSnapshot.event.id);
   }
 
-  private async resolveAndCacheVisualAssets(event: EventConfig): Promise<void> {
-    const visual = event.customizations.visualIdentity;
-    this.cachedLogoDataUrl = await this.loadOrCacheVisualAsset(event.id, visual.logoUrl, 'logo');
-    this.cachedBackgroundDataUrl = visual.enableCustomBackground
-      ? await this.loadOrCacheVisualAsset(event.id, visual.customBackgroundUrl, 'background')
-      : null;
+  private applyOutcomeState(outcome: {
+    totemConfig: TotemConfigSnapshot;
+    questions: Question[];
+    logoDataUrl: string | null;
+    backgroundDataUrl: string | null;
+  }): void {
+    this.totemConfig = outcome.totemConfig;
+    this.questions = outcome.questions;
+    this.cachedLogoDataUrl = outcome.logoDataUrl;
+    this.cachedBackgroundDataUrl = outcome.backgroundDataUrl;
   }
 
-  private async loadOrCacheVisualAsset(
-    eventId: string,
-    url: string | null | undefined,
-    kind: 'logo' | 'background',
-  ): Promise<string | null> {
-    if (!url) {
-      return null;
-    }
-
-    const cached = await this.localStore.getVisualAsset(url);
-    if (cached) {
-      return cached.dataUrl;
-    }
-
-    if (!this.isEffectiveOnline()) {
-      return null;
-    }
-
-    try {
-      const downloaded = await this.cloudGateway.downloadVisualAsset(url);
-      await this.localStore.saveVisualAsset({
-        url,
-        eventId,
-        kind,
-        dataUrl: downloaded.dataUrl,
-        mimeType: downloaded.mimeType,
-        cachedAt: this.clock.toISOString(),
-      });
-      return downloaded.dataUrl;
-    } catch {
-      return null;
+  private async processPendingCommandsFromPull(
+    pendingCommands: RemoteCommandPayload[],
+    justPulledEventId: string,
+  ): Promise<void> {
+    for (const cmd of pendingCommands) {
+      if (!this.commandAppliesToThisTotem(cmd) || !this.markCommandProcessed(cmd)) {
+        continue;
+      }
+      // Snapshot recém-baixado do mesmo Evento já traz a versão atualizada de configuração.
+      if (cmd.type === 'CONFIG_UPDATED' && cmd.targetEventId === justPulledEventId) {
+        continue;
+      }
+      if (this.activeMatch !== null) {
+        this.deferredCommands = [
+          ...this.deferredCommands.filter((existing) => existing.type !== cmd.type),
+          structuredClone(cmd),
+        ];
+      } else {
+        await this.executeRemoteCommandNow(cmd);
+      }
     }
   }
 
@@ -799,55 +806,53 @@ export class TotemSessionEngine {
       return;
     }
     try {
-      const cloudSnapshot = await this.cloudGateway.pullEventSnapshot(this.totemConfig.event.id);
-      if (!cloudSnapshot) {
+      const outcome = await this.syncManager.pullAndApplySnapshot(this.totemConfig, () =>
+        this.isEffectiveOnline(),
+      );
+      if (!outcome) {
         return;
       }
-      await this.applyCloudSnapshotData(cloudSnapshot);
+      this.applyOutcomeState(outcome);
+      await this.processPendingCommandsFromPull(outcome.pendingCommands, this.totemConfig.event.id);
     } catch {
       // Falha transitória de rede não impede operação offline usando o cache local.
     }
   }
 
-  private computeSortedRanking(matches: MatchRecord[]): RankingEntry[] {
-    const sorted = [...matches].sort(
-      (a, b) =>
-        b.score - a.score ||
-        a.timeSeconds - b.timeSeconds ||
-        a.playedAt.localeCompare(b.playedAt),
-    );
-
-    return sorted.map((match, index) => ({
-      position: index + 1,
-      matchId: match.id,
-      participantName: match.participantName,
-      participantPhone: match.participantPhone,
-      score: match.score,
-      totalQuestions: match.totalQuestions,
-      timeSeconds: match.timeSeconds,
-      playedAt: match.playedAt,
-    }));
-  }
-
   private async refreshRankingCache(): Promise<RankingEntry[]> {
-    const matches = await this.localStore.getMatches(this.totemConfig.event.id);
-    const fullRanking = this.computeSortedRanking(matches);
-    const limit =
-      this.eventSettings.rankingDisplayCount > 0
-        ? this.eventSettings.rankingDisplayCount
-        : DEFAULT_SETTINGS.rankingDisplayCount;
-    this.rankingCache = fullRanking.slice(0, limit);
+    const { fullRanking, visibleRanking, totalMatchesCount } =
+      await this.syncManager.loadRankingProjection(
+        this.totemConfig.event.id,
+        this.eventSettings.rankingDisplayCount,
+      );
+    this.rankingCache = visibleRanking;
+    this.totalMatchesCount = totalMatchesCount;
     return fullRanking;
   }
 
-  // Abre a tela de Ranking Geral do Evento ordenando por maior pontuação e menor tempo.
+  // Abre a tela de Ranking exibindo dados locais de forma imediata e conciliando com a nuvem em segundo plano.
   async openRankingScreen(): Promise<TotemSessionSnapshot> {
-    await this.syncPendingQueue();
-    await this.pullAndMergeCloudSnapshot();
-    await this.resolveAndCacheVisualAssets(this.totemConfig.event);
     await this.refreshRankingCache();
     this.transitionWithCleanState('ranking-screen');
-    await this.sendHeartbeat();
+
+    if (this.isEffectiveOnline()) {
+      this.enqueueBackgroundTask(async () => {
+        await this.syncPendingQueue();
+        if (this.disposed) {
+          return;
+        }
+        await this.pullAndMergeCloudSnapshot();
+        if (this.disposed) {
+          return;
+        }
+        await this.refreshRankingCache();
+        await this.sendHeartbeat();
+        this.notifySubscribers();
+      });
+    } else {
+      await this.sendHeartbeat();
+    }
+
     return this.getSnapshot();
   }
 
@@ -874,11 +879,9 @@ export class TotemSessionEngine {
     }
 
     if (this.eventSettings.enablePrizeLock) {
-      const prizeClaims = await this.localStore.getPrizeClaims(this.totemConfig.event.id);
-      const existingWinner = prizeClaims.find(
-        (claim) =>
-          claim.participantPhone === formattedPhone &&
-          (isActivePrizeClaim(claim) || claim.status === 'offline_duplicate_conflict'),
+      const existingWinner = await this.syncManager.findPrizeLockByPhone(
+        this.totemConfig.event.id,
+        formattedPhone,
       );
       if (existingWinner) {
         this.alreadyWonModal = {
@@ -896,13 +899,12 @@ export class TotemSessionEngine {
     }
 
     if (this.eventSettings.giveUpLockoutMinutes > 0) {
-      const lockouts = await this.localStore.getLockouts(this.totemConfig.event.id);
       const nowMs = this.clock.now();
-      const latestExpiresAtMs = lockouts
-        .filter((lockout) => lockout.participantPhone === formattedPhone)
-        .map((lockout) => new Date(lockout.expiresAt).getTime())
-        .filter((expiresMs) => Number.isFinite(expiresMs) && expiresMs > nowMs)
-        .sort((a, b) => b - a)[0];
+      const latestExpiresAtMs = await this.syncManager.findActiveLockoutExpiryMs(
+        this.totemConfig.event.id,
+        formattedPhone,
+        nowMs,
+      );
 
       if (latestExpiresAtMs !== undefined) {
         const remainingMinutes = Math.ceil((latestExpiresAtMs - nowMs) / (1000 * 60));
@@ -949,6 +951,7 @@ export class TotemSessionEngine {
     };
     this.screen = 'quiz-screen';
     this.lastResult = null;
+    this.backgroundSyncNotice = null;
     this.alreadyWonModal = null;
     this.lastValidationError = null;
     await this.sendHeartbeat();
@@ -970,6 +973,7 @@ export class TotemSessionEngine {
   ): TotemSessionSnapshot {
     this.activeMatch = null;
     this.lastResult = null;
+    this.backgroundSyncNotice = null;
     this.alreadyWonModal = null;
     this.lastValidationError = null;
     this.screen = targetScreen;
@@ -988,12 +992,10 @@ export class TotemSessionEngine {
     return this.transitionWithCleanState('initial-screen');
   }
 
-  // Entra na Tela de Descanso descartando qualquer Partida não finalizada e estado transitório.
   enterIdleScreen(): TotemSessionSnapshot {
     return this.transitionWithCleanState('idle-screen');
   }
 
-  // Desperta da Tela de Descanso para a tela inicial com estado limpo.
   wakeFromIdleScreen(): TotemSessionSnapshot {
     if (this.screen !== 'idle-screen') {
       return this.getSnapshot();
@@ -1001,7 +1003,7 @@ export class TotemSessionEngine {
     return this.transitionWithCleanState('initial-screen');
   }
 
-  // Abandona a Partida atual sem salvá-la e aplica Bloqueio por Desistência se configurado no Evento.
+  // Abandona a Partida atual sem salvá-la e aplica Bloqueio por Desistência via SHA-256 local + fila.
   async giveUpMatch(): Promise<TotemSessionSnapshot> {
     if (!this.activeMatch) {
       return this.getSnapshot();
@@ -1014,16 +1016,18 @@ export class TotemSessionEngine {
     if (lockoutMinutes > 0) {
       const lockedAtMs = this.clock.now();
       const expiresAtMs = lockedAtMs + lockoutMinutes * 60 * 1000;
+      const phoneHash = hashEventPhone(this.totemConfig.event.id, participantPhone);
       const lockout: GiveUpLockoutRecord = {
         id: this.random.uuid(),
         eventId: this.totemConfig.event.id,
         totemId: this.totemConfig.totemId,
         participantPhone,
+        phoneHash,
         lockedAt: this.clock.toISOString(lockedAtMs),
         expiresAt: this.clock.toISOString(expiresAtMs),
       };
 
-      await this.localStore.saveLockout(lockout);
+      await this.localStore.saveLockout(this.syncManager.sanitizeLockoutForLocalCache(lockout));
       await this.localStore.enqueueSyncItem({
         idempotencyKey: lockout.id,
         type: 'give_up_lockout_added',
@@ -1117,84 +1121,51 @@ export class TotemSessionEngine {
   }
 
   async syncPendingQueue(): Promise<{ synced: number; failed: number; pending: number }> {
-    // Evita envios concorrentes quando múltiplos gatilhos (fim da Partida, evento online, timer) disparam juntos.
-    if (this.syncInFlight) {
-      return this.syncInFlight;
+    const outcome = await this.syncManager.syncPendingQueue(this.totemConfig, () =>
+      this.isEffectiveOnline(),
+    );
+
+    if (outcome.latestPrizeStockRemaining !== undefined) {
+      this.totemConfig.event.prizeStockRemaining = outcome.latestPrizeStockRemaining;
+      await this.localStore.saveTotemConfig(this.totemConfig);
     }
 
-    this.syncInFlight = this.runSyncPendingQueue();
-    try {
-      return await this.syncInFlight;
-    } finally {
-      this.syncInFlight = null;
-    }
-  }
-
-  private async runSyncPendingQueue(): Promise<{
-    synced: number;
-    failed: number;
-    pending: number;
-  }> {
-    const queue = await this.localStore.getSyncQueue();
-    if (!this.isEffectiveOnline()) {
-      this.pendingSyncCount = queue.length;
-      return { synced: 0, failed: 0, pending: queue.length };
-    }
-
-    let synced = 0;
-    let failed = 0;
-    let shouldRefreshFromCloud = false;
-
-    for (const item of queue) {
-      try {
-        if (item.type === 'match_completed') {
-          const { syncedAt, resolvedPrizeClaim, prizeStockRemaining } =
-            await this.cloudGateway.pushMatch({
-              idempotencyKey: item.idempotencyKey,
-              match: item.payload,
-              prizeClaim: item.prizeClaim,
-            });
-          await this.localStore.saveMatch({
-            ...item.payload,
-            syncedAt,
-          });
-          if (resolvedPrizeClaim) {
-            await this.localStore.savePrizeClaim(resolvedPrizeClaim);
-            if (resolvedPrizeClaim.status === 'offline_duplicate_conflict') {
-              shouldRefreshFromCloud = true;
-            }
-            if (this.lastResult && this.lastResult.matchId === resolvedPrizeClaim.matchId) {
-              this.lastResult.prizeStatus = resolvedPrizeClaim.status;
-              this.lastResult.wonPrize = isActivePrizeClaim(resolvedPrizeClaim);
-            }
-          }
-          if (prizeStockRemaining !== undefined) {
-            this.totemConfig.event.prizeStockRemaining = prizeStockRemaining;
-            await this.localStore.saveTotemConfig(this.totemConfig);
-          }
-        } else {
-          await this.cloudGateway.pushGiveUpLockout({
-            idempotencyKey: item.idempotencyKey,
-            lockout: item.payload,
-          });
-        }
-        await this.localStore.markSyncItemCompleted(item.idempotencyKey);
-        synced += 1;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Erro desconhecido';
-        await this.localStore.incrementSyncRetry(item.idempotencyKey, errorMessage);
-        failed += 1;
+    for (const [matchId, claim] of outcome.reconciledClaimsByMatchId.entries()) {
+      if (this.lastResult && this.lastResult.matchId === matchId) {
+        this.lastResult.prizeStatus = claim.status;
+        this.lastResult.wonPrize = isActivePrizeClaim(claim);
       }
     }
 
-    if (shouldRefreshFromCloud) {
+    if (outcome.shouldRefreshSnapshot) {
       await this.pullAndMergeCloudSnapshot();
       await this.refreshRankingCache();
     }
 
-    const remainingQueue = await this.localStore.getSyncQueue();
-    this.pendingSyncCount = remainingQueue.length;
-    return { synced, failed, pending: this.pendingSyncCount };
+    this.pendingSyncCount = outcome.pending;
+    return {
+      synced: outcome.synced,
+      failed: outcome.failed,
+      pending: outcome.pending,
+    };
+  }
+
+  private enqueueBackgroundTask(task: () => Promise<void>): void {
+    const previous = this.backgroundSyncPromise ?? Promise.resolve();
+    const run = previous
+      .then(async () => {
+        if (this.disposed) {
+          return;
+        }
+        await task();
+      })
+      .catch(() => undefined);
+    this.backgroundSyncPromise = run;
+    void run.finally(() => {
+      if (this.backgroundSyncPromise === run) {
+        this.backgroundSyncPromise = null;
+      }
+    });
   }
 
   private async finalizeMatch(): Promise<void> {
@@ -1239,6 +1210,7 @@ export class TotemSessionEngine {
     let prizeClaim: PrizeClaimRecord | null = null;
     let prizeStatus: PrizeClaimStatus | null = null;
     const wonPrize = eligibleByScore && hasStock;
+    const phoneHash = hashEventPhone(matchRecord.eventId, match.participantPhone);
 
     if (wonPrize) {
       prizeStatus = this.eventSettings.requireManualPrizeConfirmation
@@ -1246,23 +1218,46 @@ export class TotemSessionEngine {
         : 'delivered';
       prizeClaim = {
         id: this.random.uuid(),
-        eventId: this.totemConfig.event.id,
+        eventId: matchRecord.eventId,
         matchId,
         totemId: this.totemConfig.totemId,
         participantName: match.participantName,
         participantPhone: match.participantPhone,
+        phoneHash,
         status: prizeStatus,
         awardedAt: playedAt,
         deliveredAt: prizeStatus === 'delivered' ? playedAt : null,
       };
       if (currentStock !== null) {
         this.totemConfig.event.prizeStockRemaining = currentStock - 1;
-        await this.localStore.saveTotemConfig(this.totemConfig);
       }
-      await this.localStore.savePrizeClaim(prizeClaim);
     }
 
-    await this.localStore.saveMatch(matchRecord);
+    const sanitizedMatch = this.syncManager.sanitizeMatchForLocalCache(matchRecord);
+    const sanitizedPrizeClaim = prizeClaim
+      ? this.syncManager.sanitizePrizeLockForLocalCache(prizeClaim)
+      : null;
+
+    // 1 única transação atômica local: exibe result-screen em <30ms sem travar aguardando rede.
+    await this.localStore.commitMatchLocally({
+      sanitizedMatch,
+      sanitizedPrizeClaim,
+      updatedTotemConfig:
+        wonPrize && currentStock !== null ? this.totemConfig : undefined,
+      syncItem: {
+        idempotencyKey: matchId,
+        type: 'match_completed',
+        eventId: matchRecord.eventId,
+        payload: matchRecord,
+        prizeClaim,
+        createdAt: playedAt,
+        retryCount: 0,
+      },
+    });
+
+    const queueAfterCommit = await this.localStore.getSyncQueue();
+    this.pendingSyncCount = queueAfterCommit.length;
+
     const fullRanking = await this.refreshRankingCache();
     const rankingPosition =
       fullRanking.find((entry) => entry.matchId === matchId)?.position ?? 0;
@@ -1283,31 +1278,67 @@ export class TotemSessionEngine {
       canShowIncorrectAnswers: incorrectAnswers.length > 0,
       incorrectAnswers,
     };
+    this.backgroundSyncNotice = null;
     this.screen = 'result-screen';
+    this.notifySubscribers();
 
-    await this.localStore.enqueueSyncItem({
-      idempotencyKey: matchId,
-      type: 'match_completed',
-      eventId: matchRecord.eventId,
-      payload: matchRecord,
-      prizeClaim,
-      createdAt: playedAt,
-      retryCount: 0,
-    });
+    const optimisticPosition = rankingPosition;
+    const optimisticPrizeStatus = prizeStatus;
+    if (this.isEffectiveOnline()) {
+      this.enqueueBackgroundTask(async () => {
+        await this.runPostMatchBackgroundSync(
+          matchId,
+          matchRecord.eventId,
+          optimisticPosition,
+          optimisticPrizeStatus,
+        );
+      });
+    } else {
+      await this.flushDeferredCommands();
+      await this.sendHeartbeat();
+      this.notifySubscribers();
+    }
+  }
+
+  private async runPostMatchBackgroundSync(
+    matchId: string,
+    eventId: string,
+    optimisticPosition: number,
+    optimisticPrizeStatus: PrizeClaimStatus | null,
+  ): Promise<void> {
+    if (this.disposed) {
+      return;
+    }
 
     await this.syncPendingQueue();
+    if (this.disposed) {
+      return;
+    }
 
-    // Quando online, consolida Ranking com Partidas de outros Totens após sincronizar a Partida atual.
     if (this.isEffectiveOnline()) {
       await this.pullAndMergeCloudSnapshot();
-      // Evita que CONFIG_UPDATED diferido sobrescreva o snapshot pós-Partida com cache antigo.
-      this.stagedSnapshotsByEventId.delete(matchRecord.eventId);
+      if (this.disposed) {
+        return;
+      }
+      this.stagedSnapshotsByEventId.delete(eventId);
       const cloudRanking = await this.refreshRankingCache();
       const updatedPosition =
-        cloudRanking.find((entry) => entry.matchId === matchId)?.position ?? rankingPosition;
+        cloudRanking.find((entry) => entry.matchId === matchId)?.position ?? optimisticPosition;
+
       if (this.lastResult && this.lastResult.matchId === matchId) {
+        const prevStatus = this.lastResult.prizeStatus;
         this.lastResult.rankingPosition = updatedPosition;
         this.lastResult.isTop3 = updatedPosition > 0 && updatedPosition <= 3;
+
+        if (prevStatus === 'offline_duplicate_conflict') {
+          this.backgroundSyncNotice =
+            'Trava de Brinde aplicada na nuvem: este telefone já conquistou Brinde neste Evento.';
+        } else if (optimisticPrizeStatus !== null && prevStatus === 'revoked') {
+          this.backgroundSyncNotice =
+            'Estoque de Brindes do Evento esgotado durante a sincronização.';
+        } else if (updatedPosition !== optimisticPosition && updatedPosition > 0) {
+          this.backgroundSyncNotice = `Ranking consolidado com outros Totens: posição atual ${updatedPosition}º lugar.`;
+        }
       }
     }
 
@@ -1551,6 +1582,8 @@ export class TotemSessionEngine {
         : null,
       lastResult: this.lastResult ? structuredClone(this.lastResult) : null,
       ranking: structuredClone(this.rankingCache),
+      totalMatchesCount: this.totalMatchesCount,
+      backgroundSyncNotice: this.backgroundSyncNotice,
       alreadyWonModal: this.alreadyWonModal ? structuredClone(this.alreadyWonModal) : null,
       pendingSyncCount: this.pendingSyncCount,
       isOnline: this.isEffectiveOnline(),

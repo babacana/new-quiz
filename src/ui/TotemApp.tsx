@@ -1,46 +1,37 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
+import { extractPairingCodeFromInput } from '../domain/pairingUtils';
 import {
   TotemSessionEngine,
   formatPhoneMask,
   normalizeParticipantName,
 } from '../domain/totemSessionEngine';
-import { extractPairingCodeFromInput } from '../domain/pairingUtils';
 import type { TotemSessionSnapshot } from '../domain/types';
+import {
+  applyPendingServiceWorkerUpdate,
+  subscribeServiceWorkerUpdateReady,
+} from '../pwa/registerServiceWorker';
 import { AccessibilityControls } from './AccessibilityControls';
 import {
   DEFAULT_KEYBOARD_HEIGHT_VH,
-  VirtualKeyboard,
   type VirtualKeyboardField,
 } from './VirtualKeyboard';
-import { createDefaultCloudGateway } from './cloudFactory';
-import {
-  DIFFICULTY_LABELS,
-  PRIZE_STATUS_LABELS,
-  TOTEM_ONLINE_STATUS_LABELS,
-  formatAwardedAtPtBr,
-  formatLastSeenPtBr,
-  formatTimeMMSS,
-} from './formatters';
-import { EventLogoImage } from './EventLogoImage';
+import { createTotemCloudPort } from './cloudFactory';
 import { playTotemSound } from './soundEffects';
 import { buildThemeCssVariables } from './themeCss';
-import './styles.css';
+import type { TimeAlertVisualUpdate } from './totem/QuestionTimerBar';
+import { TotemIdleScreen } from './totem/TotemIdleScreen';
+import { TotemInitialScreen } from './totem/TotemInitialScreen';
+import { type ActiveTotemModal, TotemModals } from './totem/TotemModals';
+import { TotemQuizScreen } from './totem/TotemQuizScreen';
+import { TotemRankingScreen } from './totem/TotemRankingScreen';
+import { TotemResultScreen } from './totem/TotemResultScreen';
+import './totem.css';
 
-const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
 const IDLE_SLIDE_INTERVAL_MS = 5_000;
 const GHOST_TOUCH_GUARD_MS = 350;
-
-type ActiveTotemModal =
-  | { type: 'alert'; message: string }
-  | { type: 'incorrect' }
-  | { type: 'top3' }
-  | { type: 'give-up' }
-  | { type: 'pin-prompt' }
-  | { type: 'diagnostics' }
-  | { type: 'pairing' }
-  | null;
+const MOUSEMOVE_THROTTLE_MS = 500;
 
 function extractInitialActivationCode(): string | undefined {
   if (typeof window === 'undefined') {
@@ -71,15 +62,16 @@ export interface TotemAppProps {
 function createDefaultEngine(): TotemSessionEngine {
   return new TotemSessionEngine({
     localStore: new DexieLocalStore(),
-    cloudGateway: createDefaultCloudGateway(),
+    cloudGateway: createTotemCloudPort(),
     clock: new SystemClock(),
     random: new CryptoRandomSource(),
     requirePairing: true,
   });
 }
 
-// Interface principal do Totem desacoplada da regra de negócio via TotemSessionEngine.
+// Interface principal do Totem com palco responsivo 9:16 desacoplada do EventAdminController.
 export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: TotemAppProps) {
+  const isInSimulator = simulatorModalRequest !== undefined;
   const engine = useMemo(() => injectedEngine ?? createDefaultEngine(), [injectedEngine]);
 
   const [snapshot, setSnapshot] = useState<TotemSessionSnapshot>(() => engine.getSnapshot());
@@ -93,6 +85,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     }
     setActiveModal({ type: simulatorModalRequest.type });
   }, [simulatorModalRequest]);
+
   const [isAdvancing, setIsAdvancing] = useState(false);
   const [isFadingToIdle, setIsFadingToIdle] = useState(false);
   const [activeVirtualField, setActiveVirtualField] = useState<VirtualKeyboardField | null>(null);
@@ -101,9 +94,10 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   );
 
   const [elapsedMatchSeconds, setElapsedMatchSeconds] = useState(0);
-  const [questionRemainingMs, setQuestionRemainingMs] = useState(
-    () => snapshot.event.settings.timePerQuestion * 1000,
-  );
+  const [alertVisual, setAlertVisual] = useState<TimeAlertVisualUpdate>({
+    borderPulseState: 'none',
+    isFlashing: false,
+  });
   const [flashActive, setFlashActive] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
@@ -113,16 +107,20 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const [localSoundMuted, setLocalSoundMuted] = useState(false);
   const [idleSlideIndex, setIdleSlideIndex] = useState(0);
   const [autoAdvanceRemaining, setAutoAdvanceRemaining] = useState<number | null>(null);
+  const [hasSwUpdateReady, setHasSwUpdateReady] = useState(false);
 
-  const questionStartMsRef = useRef<number>(engine.getNowMs());
-  const timeoutHandledForIndexRef = useRef<number | null>(null);
   const fadeOutTimerRef = useRef<number | null>(null);
   const idleTimerRef = useRef<number | null>(null);
-  const lastTickSecondRef = useRef<number | null>(null);
   const ghostTouchUntilRef = useRef<number>(0);
   const isResizingKeyboardRef = useRef(false);
+  const isFadingToIdleRef = useRef(false);
+  const lastMouseMoveResetRef = useRef<number>(0);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const phoneInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    isFadingToIdleRef.current = isFadingToIdle;
+  }, [isFadingToIdle]);
 
   const clearIdleTimers = useCallback(() => {
     if (fadeOutTimerRef.current !== null) {
@@ -139,6 +137,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     setActiveModal(null);
     setActiveVirtualField(null);
     setIsFadingToIdle(false);
+    isFadingToIdleRef.current = false;
     setIsAdvancing(false);
     if (clearFields) {
       setNameInput('');
@@ -146,29 +145,31 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     }
   }, []);
 
-  // Reinicia o temporizador de ociosidade respeitando a configuração do Evento e o arraste do teclado.
+  // Reinicia o temporizador de ociosidade usando getters leves sem clonar o snapshot completo.
   const resetIdleTimer = useCallback(() => {
-    const currentSnap = engine.getSnapshot();
     if (
       isResizingKeyboardRef.current ||
-      currentSnap.screen === 'idle-screen' ||
-      currentSnap.pairing.status === 'awaiting_authorization'
+      engine.getScreen() === 'idle-screen' ||
+      engine.getPairingStatus() === 'awaiting_authorization'
     ) {
       return;
     }
 
     clearIdleTimers();
+    isFadingToIdleRef.current = false;
     setIsFadingToIdle(false);
 
     const { idleTimeoutMs, fadeOutStartMs } = engine.getIdleTimingConfig();
 
     if (fadeOutStartMs > 0 && idleTimeoutMs > fadeOutStartMs) {
       fadeOutTimerRef.current = window.setTimeout(() => {
-        if (engine.getSnapshot().screen !== 'idle-screen') {
+        if (engine.getScreen() !== 'idle-screen') {
+          isFadingToIdleRef.current = true;
           setIsFadingToIdle(true);
         }
       }, fadeOutStartMs);
     } else if (idleTimeoutMs > 0) {
+      isFadingToIdleRef.current = true;
       setIsFadingToIdle(true);
     }
 
@@ -189,18 +190,30 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   }, []);
 
   useEffect(() => {
+    if (isInSimulator) {
+      return;
+    }
     document.documentElement.classList.add('totem-fullscreen-mode');
     document.body.classList.add('totem-fullscreen-mode');
     return () => {
       document.documentElement.classList.remove('totem-fullscreen-mode');
       document.body.classList.remove('totem-fullscreen-mode');
     };
-  }, []);
+  }, [isInSimulator]);
+
+  // Monitora atualizações em espera do Service Worker e aplica apenas em ociosidade com fila zerada.
+  useEffect(() => subscribeServiceWorkerUpdateReady(setHasSwUpdateReady), []);
+
+  useEffect(() => {
+    if (hasSwUpdateReady && snapshot.screen === 'idle-screen' && snapshot.pendingSyncCount === 0) {
+      applyPendingServiceWorkerUpdate();
+    }
+  }, [hasSwUpdateReady, snapshot.screen, snapshot.pendingSyncCount]);
 
   useEffect(() => {
     let cancelled = false;
-    let lastObservedScreen = engine.getSnapshot().screen;
-    let lastObservedEventId = engine.getSnapshot().event.id;
+    let lastObservedScreen = engine.getScreen();
+    let lastObservedEventId = snapshot.event.id;
 
     const unsubscribe = engine.subscribe((nextSnap) => {
       if (!cancelled) {
@@ -239,7 +252,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
       });
 
     const syncQueueAndRefresh = () => {
-      const currentPairingStatus = engine.getSnapshot().pairing.status;
+      const currentPairingStatus = engine.getPairingStatus();
       const pairingRefresh =
         currentPairingStatus === 'awaiting_authorization'
           ? engine.refreshPairingRegistration()
@@ -271,6 +284,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
       window.removeEventListener('online', syncQueueAndRefresh);
       window.removeEventListener('offline', handleOfflineStatus);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
 
   // Publica heartbeat periódico em segundo plano para monitoramento ao vivo no painel administrativo.
@@ -322,68 +336,13 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const currentQuestionHasAnswered = currentQuestion?.hasAnswered ?? false;
   const totalQuestionMs = snapshot.event.settings.timePerQuestion * 1000;
 
-  // Reinicia cronômetro da questão apenas quando uma nova questão ou Partida começa.
-  useEffect(() => {
-    if (snapshot.screen !== 'quiz-screen' || matchStartedAtMs === null || currentQuestionIndex < 0) {
-      return;
-    }
-    questionStartMsRef.current = engine.getNowMs();
-    timeoutHandledForIndexRef.current = null;
-    setQuestionRemainingMs(totalQuestionMs);
-    setFlashActive(false);
-    setIsAdvancing(false);
-  }, [engine, snapshot.screen, matchStartedAtMs, currentQuestionIndex, totalQuestionMs]);
-
-  // Atualiza cronômetro total (via Clock do motor), barra regressiva e timeout da questão.
+  // Controla pulso intermitente de flash nos últimos 5s quando habilitado no Evento.
   useEffect(() => {
     if (
       snapshot.screen !== 'quiz-screen' ||
-      matchStartedAtMs === null ||
-      currentQuestionIndex < 0
+      currentQuestionHasAnswered ||
+      !alertVisual.isFlashing
     ) {
-      setFlashActive(false);
-      return;
-    }
-
-    const updateClockAndBar = () => {
-      setElapsedMatchSeconds(engine.getElapsedMatchSeconds());
-
-      if (currentQuestionHasAnswered) {
-        return;
-      }
-
-      const remaining = Math.max(
-        0,
-        totalQuestionMs - (engine.getNowMs() - questionStartMsRef.current),
-      );
-      setQuestionRemainingMs(remaining);
-
-      if (remaining <= 0 && timeoutHandledForIndexRef.current !== currentQuestionIndex) {
-        timeoutHandledForIndexRef.current = currentQuestionIndex;
-        const outcome = engine.handleQuestionTimeout();
-        setSnapshot(outcome.snapshot);
-      }
-    };
-
-    updateClockAndBar();
-    const intervalId = window.setInterval(updateClockAndBar, 50);
-    return () => window.clearInterval(intervalId);
-  }, [
-    engine,
-    snapshot.screen,
-    matchStartedAtMs,
-    currentQuestionHasAnswered,
-    currentQuestionIndex,
-    totalQuestionMs,
-  ]);
-
-  const visualTimeState = engine.getQuestionTimeVisualState(questionRemainingMs);
-  const showTimeAlerts =
-    snapshot.screen === 'quiz-screen' && Boolean(currentQuestion && !currentQuestion.hasAnswered);
-
-  // Controla o pulso intermitente de flash nos últimos 5 segundos quando habilitado.
-  useEffect(() => {
-    if (!showTimeAlerts || !visualTimeState.isFlashing) {
       setFlashActive(false);
       return;
     }
@@ -402,15 +361,14 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         window.clearTimeout(timeoutHide);
       }
     };
-  }, [showTimeAlerts, visualTimeState.isFlashing]);
+  }, [snapshot.screen, currentQuestionHasAnswered, alertVisual.isFlashing]);
 
-  // Sincroniza a altura padrão do teclado virtual ao carregar novas configurações do Evento.
+  // Sincroniza altura do teclado virtual e garante fechamento ao sair da tela inicial.
   const configuredKeyboardHeight = snapshot.event.settings.virtualKeyboardHeight;
   useEffect(() => {
     setVirtualKeyboardHeightVh(configuredKeyboardHeight || DEFAULT_KEYBOARD_HEIGHT_VH);
   }, [configuredKeyboardHeight]);
 
-  // Garante fechamento do teclado virtual sempre que o Totem sair da tela inicial.
   useEffect(() => {
     if (snapshot.screen !== 'initial-screen') {
       setActiveVirtualField(null);
@@ -422,6 +380,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   useEffect(() => {
     if (snapshot.screen === 'idle-screen') {
       clearIdleTimers();
+      isFadingToIdleRef.current = false;
       setIsFadingToIdle(false);
       return;
     }
@@ -439,12 +398,20 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     clearIdleTimers,
   ]);
 
-  // Reinicia inatividade apenas em eventos confiáveis fora do arraste do teclado e bloqueia menu de contexto.
+  // Reinicia inatividade em eventos confiáveis fora do arraste do teclado com throttle de mousemove.
   useEffect(() => {
     const handleDocumentInteraction = (event: Event) => {
-      if (event.isTrusted && !isResizingKeyboardRef.current) {
-        resetIdleTimer();
+      if (!event.isTrusted || isResizingKeyboardRef.current) {
+        return;
       }
+      if (event.type === 'mousemove' && !isFadingToIdleRef.current) {
+        const now = Date.now();
+        if (now - lastMouseMoveResetRef.current < MOUSEMOVE_THROTTLE_MS) {
+          return;
+        }
+        lastMouseMoveResetRef.current = now;
+      }
+      resetIdleTimer();
     };
 
     const handleContextMenu = (event: MouseEvent) => {
@@ -497,20 +464,6 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const isSoundEnabled = (snapshot.event.settings.enableSoundEffects ?? true) && !localSoundMuted;
   const autoAdvanceSeconds = snapshot.event.settings.autoAdvanceSeconds ?? 0;
 
-  // Toca tick sonoro discreto nos últimos 5 segundos de uma questão em aberto.
-  useEffect(() => {
-    const currentQ = snapshot.activeMatch?.currentQuestion;
-    if (snapshot.screen !== 'quiz-screen' || !currentQ || currentQ.hasAnswered) {
-      lastTickSecondRef.current = null;
-      return;
-    }
-    const remainingSec = Math.ceil(questionRemainingMs / 1000);
-    if (remainingSec <= 5 && remainingSec >= 1 && lastTickSecondRef.current !== remainingSec) {
-      lastTickSecondRef.current = remainingSec;
-      playTotemSound('tick', isSoundEnabled);
-    }
-  }, [snapshot.screen, snapshot.activeMatch?.currentQuestion, questionRemainingMs, isSoundEnabled]);
-
   // Alterna os destaques dinâmicos da Tela de Descanso enquanto o Evento estiver ativo.
   useEffect(() => {
     if (snapshot.screen !== 'idle-screen' || snapshot.eventWindow.isBlocked) {
@@ -527,7 +480,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
   const isGhostTouchActive = () => Date.now() < ghostTouchUntilRef.current;
 
-  const handleStartQuiz = async () => {
+  const handleStartQuiz = useCallback(async () => {
     if (isGhostTouchActive()) {
       return;
     }
@@ -540,19 +493,28 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
       setActiveModal({ type: 'alert', message: result.errorMessage });
     } else {
       setElapsedMatchSeconds(0);
+      setAlertVisual({ borderPulseState: 'none', isFlashing: false });
     }
-  };
+  }, [engine, isSoundEnabled, nameInput, phoneInput, resetIdleTimer]);
 
-  const handleSelectOption = (optionIndex: number) => {
-    resetIdleTimer();
-    const outcome = engine.submitAnswer(optionIndex);
+  const handleSelectOption = useCallback(
+    (optionIndex: number) => {
+      resetIdleTimer();
+      const outcome = engine.submitAnswer(optionIndex);
+      setSnapshot(outcome.snapshot);
+      const answered = outcome.snapshot.activeMatch?.currentQuestion;
+      if (answered?.hasAnswered) {
+        const chosen = answered.question.shuffledOptions[optionIndex];
+        playTotemSound(chosen?.isCorrect ? 'correct' : 'incorrect', isSoundEnabled);
+      }
+    },
+    [engine, isSoundEnabled, resetIdleTimer],
+  );
+
+  const handleQuestionTimeout = useCallback(() => {
+    const outcome = engine.handleQuestionTimeout();
     setSnapshot(outcome.snapshot);
-    const answered = outcome.snapshot.activeMatch?.currentQuestion;
-    if (answered?.hasAnswered) {
-      const chosen = answered.question.shuffledOptions[optionIndex];
-      playTotemSound(chosen?.isCorrect ? 'correct' : 'incorrect', isSoundEnabled);
-    }
-  };
+  }, [engine]);
 
   const handleAdvanceQuestion = useCallback(async () => {
     if (isAdvancing) {
@@ -578,13 +540,12 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     }
   }, [engine, isAdvancing, isSoundEnabled, resetIdleTimer]);
 
-  // Avança automaticamente após responder/timeout quando autoAdvanceSeconds > 0.
+  // Avança automaticamente após responder/timeout usando apenas dependências primitivas (imune a heartbeats).
   useEffect(() => {
-    const currentQ = snapshot.activeMatch?.currentQuestion;
     if (
       snapshot.screen !== 'quiz-screen' ||
-      !currentQ ||
-      !currentQ.hasAnswered ||
+      currentQuestionIndex < 0 ||
+      !currentQuestionHasAnswered ||
       autoAdvanceSeconds <= 0
     ) {
       setAutoAdvanceRemaining(null);
@@ -611,17 +572,19 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     };
   }, [
     snapshot.screen,
-    snapshot.activeMatch?.currentQuestion,
+    matchStartedAtMs,
+    currentQuestionIndex,
+    currentQuestionHasAnswered,
     autoAdvanceSeconds,
     handleAdvanceQuestion,
   ]);
 
-  const handleOpenRanking = async () => {
+  const handleOpenRanking = useCallback(async () => {
     resetTransientUiState(false);
     resetIdleTimer();
     const nextSnapshot = await engine.openRankingScreen();
     setSnapshot(nextSnapshot);
-  };
+  }, [engine, resetIdleTimer, resetTransientUiState]);
 
   const handleConfirmGiveUp = async () => {
     resetTransientUiState(true);
@@ -644,9 +607,8 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     resetIdleTimer();
   };
 
-  // Desperta o Totem da Tela de Descanso limpando campos e estado transitório da tela inicial.
   const handleWakeFromIdle = () => {
-    if (engine.getSnapshot().screen !== 'idle-screen') {
+    if (engine.getScreen() !== 'idle-screen') {
       return;
     }
     ghostTouchUntilRef.current = Date.now() + GHOST_TOUCH_GUARD_MS;
@@ -665,7 +627,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     resetIdleTimer();
   };
 
-  // Processa teclas do teclado virtual aplicando normalização de nome ou máscara de telefone.
+  // Teclado ágil no estande: PRÓXIMO avança para Telefone e JOGAR inicia a Partida diretamente.
   const handleVirtualKeyPress = (key: string) => {
     if (!activeVirtualField) {
       return;
@@ -673,13 +635,16 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
     resetIdleTimer();
 
-    if (key === 'OK') {
+    if (key === 'NEXT' || (key === 'OK' && activeVirtualField === 'nome')) {
+      setActiveVirtualField('telefone');
+      phoneInputRef.current?.focus();
+      return;
+    }
+
+    if (key === 'SUBMIT' || (key === 'OK' && activeVirtualField === 'telefone')) {
       setActiveVirtualField(null);
-      if (activeVirtualField === 'nome') {
-        nameInputRef.current?.blur();
-      } else {
-        phoneInputRef.current?.blur();
-      }
+      phoneInputRef.current?.blur();
+      void handleStartQuiz();
       return;
     }
 
@@ -750,12 +715,18 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   };
 
   const containerClasses = ['quiz-container'];
+  if (isInSimulator) {
+    containerClasses.push('in-simulator');
+  }
   if (isFadingToIdle && snapshot.screen !== 'idle-screen') {
     containerClasses.push('fading-to-idle');
   }
-  if (showTimeAlerts && visualTimeState.borderPulseState === 'warning') {
+  const showTimeAlerts =
+    snapshot.screen === 'quiz-screen' &&
+    Boolean(currentQuestion && !currentQuestion.hasAnswered);
+  if (showTimeAlerts && alertVisual.borderPulseState === 'warning') {
     containerClasses.push('time-alert-border-pulse-warning');
-  } else if (showTimeAlerts && visualTimeState.borderPulseState === 'critical') {
+  } else if (showTimeAlerts && alertVisual.borderPulseState === 'critical') {
     containerClasses.push('time-alert-border-pulse-critical');
   }
   if (showTimeAlerts && flashActive) {
@@ -785,833 +756,128 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         />
       )}
 
-      <AccessibilityControls
-        hiddenOnIdle={snapshot.screen === 'idle-screen'}
-        onInteraction={resetIdleTimer}
-        onOpenDiagnostics={handleOpenDiagnosticsPrompt}
-      />
-
-      <section
-        id="initial-screen"
-        className={`screen ${snapshot.screen === 'initial-screen' ? 'active' : ''}`}
-        aria-hidden={snapshot.screen !== 'initial-screen'}
-      >
-        <div className="screen-content">
-          <EventLogoImage src={logoSrc} />
-          <h2>{texts.initialScreenTitle}</h2>
-          <p className="slogan">{texts.initialScreenSlogan}</p>
-          {eventWindow.initialScreenMessage !== null && (
-            <p id="event-status-message">{eventWindow.initialScreenMessage}</p>
-          )}
-          <p>Preencha seus dados para começar:</p>
-
-          <div className="form-group">
-            <label htmlFor="nome">Nome</label>
-            <input
-              ref={nameInputRef}
-              id="nome"
-              name="nome"
-              type="text"
-              autoComplete="off"
-              placeholder={texts.inputNamePlaceholder}
-              value={nameInput}
-              onFocus={() => handleFieldFocus('nome')}
-              onChange={(event) => {
-                setNameInput(normalizeParticipantName(event.target.value));
-                resetIdleTimer();
-              }}
-            />
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="telefone">Telefone</label>
-            <input
-              ref={phoneInputRef}
-              id="telefone"
-              name="telefone"
-              type="tel"
-              autoComplete="off"
-              placeholder={texts.inputPhonePlaceholder}
-              value={phoneInput}
-              onFocus={() => handleFieldFocus('telefone')}
-              onChange={(event) => {
-                setPhoneInput(formatPhoneMask(event.target.value));
-                resetIdleTimer();
-              }}
-            />
-          </div>
-
-          {snapshot.event.settings.lgpdNoticeText?.trim() && (
-            <p id="lgpd-notice-text" className="lgpd-notice-text">
-              {snapshot.event.settings.lgpdNoticeText.trim()}
-            </p>
-          )}
-
-          <button
-            id="start-quiz-btn"
-            type="button"
-            className={shouldHideStartButton ? 'btn hidden' : 'btn'}
-            disabled={eventWindow.isBlocked}
-            hidden={shouldHideStartButton}
-            onClick={handleStartQuiz}
-          >
-            {texts.initialScreenStartButton}
-          </button>
-
-          <button
-            id="view-ranking-initial-btn"
-            type="button"
-            className="btn-secondary"
-            onClick={handleOpenRanking}
-          >
-            {texts.initialScreenRankingButton}
-          </button>
-        </div>
-
-        <VirtualKeyboard
-          activeField={snapshot.screen === 'initial-screen' ? activeVirtualField : null}
-          enabled={snapshot.event.settings.enableVirtualKeyboard}
-          heightVh={virtualKeyboardHeightVh}
-          onHeightVhChange={setVirtualKeyboardHeightVh}
-          onKeyPress={handleVirtualKeyPress}
-          onResizingChange={handleKeyboardResizingChange}
+      <div className="totem-stage">
+        <AccessibilityControls
+          hiddenOnIdle={snapshot.screen === 'idle-screen'}
+          onInteraction={resetIdleTimer}
+          onOpenDiagnostics={handleOpenDiagnosticsPrompt}
         />
-      </section>
 
-      <section
-        id="quiz-screen"
-        className={`screen ${snapshot.screen === 'quiz-screen' ? 'active' : ''}`}
-        aria-hidden={snapshot.screen !== 'quiz-screen'}
-      >
-        <EventLogoImage src={logoSrc} />
+        <TotemInitialScreen
+          active={snapshot.screen === 'initial-screen'}
+          logoSrc={logoSrc}
+          texts={texts}
+          eventWindow={eventWindow}
+          lgpdNoticeText={snapshot.event.settings.lgpdNoticeText}
+          nameInput={nameInput}
+          phoneInput={phoneInput}
+          nameInputRef={nameInputRef}
+          phoneInputRef={phoneInputRef}
+          shouldHideStartButton={shouldHideStartButton}
+          activeVirtualField={activeVirtualField}
+          enableVirtualKeyboard={snapshot.event.settings.enableVirtualKeyboard}
+          virtualKeyboardHeightVh={virtualKeyboardHeightVh}
+          onNameChange={(val) => {
+            setNameInput(val);
+            resetIdleTimer();
+          }}
+          onPhoneChange={(val) => {
+            setPhoneInput(val);
+            resetIdleTimer();
+          }}
+          onFieldFocus={handleFieldFocus}
+          onStartQuiz={() => void handleStartQuiz()}
+          onOpenRanking={() => void handleOpenRanking()}
+          onVirtualKeyboardHeightChange={setVirtualKeyboardHeightVh}
+          onVirtualKeyPress={handleVirtualKeyPress}
+          onVirtualKeyboardResizingChange={handleKeyboardResizingChange}
+        />
 
-        {currentQuestion && (
-          <>
-            <div className="quiz-header-top">
-              <div
-                id="question-difficulty-tag"
-                className={`question-difficulty-tag difficulty-${currentQuestion.question.difficulty}`}
-              >
-                {DIFFICULTY_LABELS[currentQuestion.question.difficulty]}
-              </div>
+        <TotemQuizScreen
+          active={snapshot.screen === 'quiz-screen'}
+          engine={engine}
+          logoSrc={logoSrc}
+          currentQuestion={currentQuestion}
+          matchStartedAtMs={matchStartedAtMs}
+          elapsedMatchSeconds={elapsedMatchSeconds}
+          totalQuestionMs={totalQuestionMs}
+          isSoundEnabled={isSoundEnabled}
+          isAdvancing={isAdvancing}
+          autoAdvanceRemaining={autoAdvanceRemaining}
+          onSelectOption={handleSelectOption}
+          onAdvanceQuestion={() => void handleAdvanceQuestion()}
+          onRequestGiveUp={() => {
+            setActiveModal({ type: 'give-up' });
+            resetIdleTimer();
+          }}
+          onElapsedMatchSecondsChange={setElapsedMatchSeconds}
+          onTimeAlertVisualChange={setAlertVisual}
+          onQuestionTimeout={handleQuestionTimeout}
+        />
 
-              <span id="question-counter" className="quiz-counter">
-                {currentQuestion.index + 1}/{currentQuestion.total}
-              </span>
+        <TotemResultScreen
+          active={snapshot.screen === 'result-screen'}
+          logoSrc={logoSrc}
+          texts={texts}
+          lastResult={snapshot.lastResult}
+          backgroundSyncNotice={snapshot.backgroundSyncNotice}
+          onShowIncorrectAnswers={() => {
+            setActiveModal({ type: 'incorrect' });
+            resetIdleTimer();
+          }}
+          onOpenRanking={() => void handleOpenRanking()}
+          onPlayAgain={handlePlayAgain}
+        />
 
-              <div id="progress-bar-container">
-                <div
-                  id="progress-bar-fill"
-                  style={{
-                    width: `${((currentQuestion.index + 1) / currentQuestion.total) * 100}%`,
-                  }}
-                />
-              </div>
+        <TotemRankingScreen
+          active={snapshot.screen === 'ranking-screen'}
+          logoSrc={logoSrc}
+          texts={texts}
+          ranking={snapshot.ranking}
+          onBackToInitial={handlePlayAgain}
+        />
 
-              <span id="timer" className="quiz-timer timer-normal">
-                {formatTimeMMSS(elapsedMatchSeconds)}
-              </span>
-            </div>
+        <TotemIdleScreen
+          active={snapshot.screen === 'idle-screen'}
+          logoSrc={logoSrc}
+          texts={texts}
+          eventWindow={eventWindow}
+          settings={snapshot.event.settings}
+          ranking={snapshot.ranking}
+          totalMatchesCount={snapshot.totalMatchesCount}
+          idleSlideIndex={idleSlideIndex}
+          onWake={handleWakeFromIdle}
+        />
 
-            <div className="screen-content">
-              <div id="question-area">
-                <h3 id="question-text">{currentQuestion.question.text}</h3>
-
-                <div
-                  id="options-container"
-                  className={currentQuestion.isTimedOut ? 'options-really-dimmed' : ''}
-                >
-                  {currentQuestion.question.shuffledOptions.map((option, idx) => {
-                    const optionClasses = ['option'];
-                    if (currentQuestion.hasAnswered) {
-                      optionClasses.push('disabled');
-                      const isChosen = currentQuestion.selectedOptionIndex === idx;
-                      const isRevealedCorrect =
-                        currentQuestion.revealedCorrectOptionIndex === idx;
-
-                      if (isRevealedCorrect || (isChosen && option.isCorrect)) {
-                        optionClasses.push('correct');
-                      } else if (isChosen && !option.isCorrect) {
-                        optionClasses.push('incorrect');
-                      }
-                    }
-
-                    return (
-                      <button
-                        key={`${currentQuestion.question.id}-${idx}`}
-                        type="button"
-                        className={optionClasses.join(' ')}
-                        disabled={currentQuestion.hasAnswered}
-                        onClick={() => handleSelectOption(idx)}
-                      >
-                        <span className="option-letter" aria-hidden="true">
-                          {OPTION_LETTERS[idx] ?? idx + 1}
-                        </span>
-                        <span className="option-label">{option.text}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {!currentQuestion.hasAnswered && (
-                  <div id="question-time-bar-container" aria-label="Tempo restante da questão">
-                    <div
-                      id="question-time-bar-fill"
-                      style={{
-                        width: `${visualTimeState.percentageRemaining}%`,
-                        backgroundColor: visualTimeState.barColor,
-                      }}
-                    />
-                  </div>
-                )}
-
-                {currentQuestion.hasAnswered && (
-                  <div id="post-question-controls">
-                    {currentQuestion.isTimedOut && (
-                      <p id="timeout-message-text">Tempo Esgotado!</p>
-                    )}
-                    <button
-                      id="next-question-btn"
-                      type="button"
-                      className="btn"
-                      disabled={isAdvancing}
-                      onClick={() => void handleAdvanceQuestion()}
-                    >
-                      {autoAdvanceRemaining !== null
-                        ? `${currentQuestion.advanceButtonLabel} (${autoAdvanceRemaining}s)`
-                        : currentQuestion.advanceButtonLabel}
-                    </button>
-                  </div>
-                )}
-
-                {!currentQuestion.hasAnswered && (
-                  <button
-                    id="give-up-btn"
-                    type="button"
-                    className="btn-give-up"
-                    title="Desistir do Quiz"
-                    aria-label="Desistir do Quiz"
-                    onClick={() => {
-                      setActiveModal({ type: 'give-up' });
-                      resetIdleTimer();
-                    }}
-                  >
-                    &times;
-                  </button>
-                )}
-              </div>
-            </div>
-          </>
-        )}
-      </section>
-
-      <section
-        id="result-screen"
-        className={`screen ${snapshot.screen === 'result-screen' ? 'active' : ''}`}
-        aria-hidden={snapshot.screen !== 'result-screen'}
-      >
-        {snapshot.lastResult && (
-          <div className="screen-content">
-            <EventLogoImage src={logoSrc} />
-
-            <h2 id="result-participant-name-title">{snapshot.lastResult.participantName},</h2>
-
-            <p
-              id="result-prize-message"
-              className={`result-message ${
-                snapshot.lastResult.wonPrize ? 'prize-won' : 'prize-not-won'
-              }`}
-            >
-              {snapshot.lastResult.wonPrize
-                ? texts.resultScreenPrizeWon
-                : texts.resultScreenPrizeNotWon}
-              {snapshot.lastResult.wonPrize && snapshot.lastResult.prizeStatus && (
-                <span className="prize-status-badge">
-                  {PRIZE_STATUS_LABELS[snapshot.lastResult.prizeStatus]}
-                </span>
-              )}
-            </p>
-
-            <div id="result-summary-details">
-              <p>
-                Seu Desempenho:{' '}
-                <strong>
-                  {snapshot.lastResult.score}/{snapshot.lastResult.totalQuestions}
-                </strong>{' '}
-                acertos
-              </p>
-              <p>
-                Tempo: <strong>{formatTimeMMSS(snapshot.lastResult.timeSeconds)}</strong>
-              </p>
-              <p>
-                Ranking:{' '}
-                <strong>
-                  {snapshot.lastResult.rankingPosition > 0
-                    ? `${snapshot.lastResult.rankingPosition}º lugar`
-                    : 'N/A'}
-                </strong>
-              </p>
-            </div>
-
-            {snapshot.lastResult.isPerfectScore && (
-              <p id="result-all-correct-message" className="result-message all-correct-message">
-                {texts.resultScreenAllCorrect}
-              </p>
-            )}
-
-            {snapshot.lastResult.canShowIncorrectAnswers && (
-              <button
-                id="show-incorrect-answers-btn"
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setActiveModal({ type: 'incorrect' });
-                  resetIdleTimer();
-                }}
-              >
-                Onde Eu Errei?
-              </button>
-            )}
-
-            <button
-              id="show-ranking-btn"
-              type="button"
-              className="btn-secondary"
-              onClick={handleOpenRanking}
-            >
-              {texts.resultScreenRankingButton}
-            </button>
-
-            <button id="restart-quiz-btn" type="button" className="btn" onClick={handlePlayAgain}>
-              {texts.resultScreenPlayAgainButton}
-            </button>
-          </div>
-        )}
-      </section>
-
-      <section
-        id="ranking-screen"
-        className={`screen ${snapshot.screen === 'ranking-screen' ? 'active' : ''}`}
-        aria-hidden={snapshot.screen !== 'ranking-screen'}
-      >
-        <div className="screen-content">
-          <EventLogoImage src={logoSrc} />
-          <h2>{texts.rankingScreenTitle}</h2>
-          <ol id="ranking-list" className="ranking-list-shared-style">
-            {snapshot.ranking.length === 0 ? (
-              <li>Nenhum participante no ranking ainda.</li>
-            ) : (
-              snapshot.ranking.map((entry) => (
-                <li key={entry.matchId}>
-                  <span>
-                    {entry.position}. <span className="rank-name">{entry.participantName}</span>
-                  </span>
-                  <span className="rank-score">{entry.score} Acertos</span>
-                  <span className="rank-time">{formatTimeMMSS(entry.timeSeconds)}</span>
-                </li>
-              ))
-            )}
-          </ol>
-          <button
-            id="back-to-initial-btn"
-            type="button"
-            className="btn"
-            onClick={handlePlayAgain}
-          >
-            {texts.rankingScreenBackButton}
-          </button>
-        </div>
-      </section>
-
-      <section
-        id="idle-screen"
-        className={`screen ${snapshot.screen === 'idle-screen' ? 'active' : ''}`}
-        aria-hidden={snapshot.screen !== 'idle-screen'}
-        onClick={handleWakeFromIdle}
-        onTouchStart={handleWakeFromIdle}
-      >
-        {!eventWindow.isBlocked && (
-          <div className="idle-ambient-bg" aria-hidden="true">
-            <span className="idle-orb idle-orb-1" />
-            <span className="idle-orb idle-orb-2" />
-            <span className="idle-orb idle-orb-3" />
-          </div>
-        )}
-
-        <div className="screen-content">
-          <EventLogoImage src={logoSrc} />
-          <p className="slogan">{texts.initialScreenSlogan}</p>
-
-          {!eventWindow.isBlocked && (
-            <div className="idle-showcase-card" aria-live="off">
-              {idleSlideIndex === 0 && (
-                <div className="idle-showcase-slide" data-testid="idle-slide-podium">
-                  <span className="idle-showcase-kicker">Pódio ao Vivo · Top 3</span>
-                  {snapshot.ranking.length > 0 ? (
-                    <ol className="idle-podium-list">
-                      {snapshot.ranking.slice(0, 3).map((entry, idx) => (
-                        <li key={entry.matchId} className={`idle-podium-item rank-${idx + 1}`}>
-                          <span className="idle-podium-medal" aria-hidden="true">
-                            {idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}
-                          </span>
-                          <span className="idle-podium-name">{entry.participantName}</span>
-                          <span className="idle-podium-score">
-                            {entry.score}/{entry.totalQuestions} · {formatTimeMMSS(entry.timeSeconds)}
-                          </span>
-                        </li>
-                      ))}
-                    </ol>
-                  ) : (
-                    <p className="idle-showcase-highlight">
-                      Ninguém no pódio ainda — seja o 1º a liderar o ranking! 🏆
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {idleSlideIndex === 1 && (
-                <div className="idle-showcase-slide" data-testid="idle-slide-challenge">
-                  <span className="idle-showcase-kicker">Desafio do Estande</span>
-                  <p className="idle-showcase-big-number">
-                    {snapshot.ranking.length}{' '}
-                    <span>
-                      {snapshot.ranking.length === 1 ? 'participação' : 'participações'} no ranking
-                    </span>
-                  </p>
-                  <p className="idle-showcase-sub">
-                    Acerte a partir de {snapshot.event.settings.minScoreForPrize} questões e conquiste seu brinde!
-                  </p>
-                </div>
-              )}
-
-              {idleSlideIndex === 2 && (
-                <div className="idle-showcase-slide" data-testid="idle-slide-stats">
-                  <span className="idle-showcase-kicker">Como Funciona</span>
-                  <div className="idle-stats-pills">
-                    <span className="idle-stat-pill">
-                      <strong>{snapshot.event.settings.numberOfQuestions}</strong> perguntas
-                    </span>
-                    <span className="idle-stat-pill">
-                      <strong>{snapshot.event.settings.timePerQuestion}s</strong> por questão
-                    </span>
-                  </div>
-                  <p className="idle-showcase-sub">
-                    Quanto mais rápido e preciso, melhor sua posição no pódio!
-                  </p>
-                </div>
-              )}
-
-              <div className="idle-showcase-dots" aria-hidden="true">
-                {[0, 1, 2].map((dot) => (
-                  <span
-                    key={dot}
-                    className={dot === idleSlideIndex ? 'idle-dot active' : 'idle-dot'}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          <h2
-            id="idle-call-to-action"
-            className={!eventWindow.isBlocked ? 'idle-cta-animated' : undefined}
-          >
-            {eventWindow.idleCallToActionTitle}
-            {eventWindow.idleCallToActionSubtitle && (
-              <small>{eventWindow.idleCallToActionSubtitle}</small>
-            )}
-          </h2>
-        </div>
-      </section>
-
-      {activeModal?.type === 'alert' && (
-        <div
-          id="alert-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="alert-modal-title"
-        >
-          <div className="modal-content">
-            <h3 id="alert-modal-title" className="modal-title">
-              Atenção
-            </h3>
-            <p id="alert-message" className="modal-text">
-              {activeModal.message}
-            </p>
-            <button
-              id="alert-ok-btn"
-              type="button"
-              className="btn modal-close-btn"
-              onClick={() => {
-                setActiveModal(null);
-                resetIdleTimer();
-              }}
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
-
-      {activeModal?.type === 'incorrect' && snapshot.lastResult && (
-        <div
-          id="incorrect-answers-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="incorrect-answers-modal-title"
-        >
-          <div className="modal-content">
-            <h3 id="incorrect-answers-modal-title" className="modal-title">
-              {texts.modalIncorrectAnswersTitle}
-            </h3>
-            <div id="incorrect-answers-list" className="modal-scrollable-content">
-              {snapshot.lastResult.incorrectAnswers.map((item) => (
-                <div key={item.questionId} className="question-review-item">
-                  <h4>{item.questionText}</h4>
-                  <p className="participant-answer">
-                    <span className="review-label">Sua resposta: </span>
-                    <span className="review-value-participant">{item.selectedOptionText}</span>
-                  </p>
-                  <p className="correct-answer-review">
-                    <span className="review-label">Resposta correta: </span>
-                    <span className="review-value-correct">{item.correctOptionText}</span>
-                  </p>
-                </div>
-              ))}
-            </div>
-            <button
-              id="close-incorrect-answers-modal-btn"
-              type="button"
-              className="btn modal-close-btn"
-              onClick={() => {
-                setActiveModal(null);
-                resetIdleTimer();
-              }}
-            >
-              Fechar
-            </button>
-          </div>
-        </div>
-      )}
-
-      {snapshot.alreadyWonModal && (
-        <div
-          id="winner-already-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="winner-already-modal-title"
-        >
-          <div className="modal-content">
-            <h3 id="winner-already-modal-title" className="modal-title">
-              {texts.modalAlreadyWonTitle}
-            </h3>
-            <p id="winner-already-main-message" className="modal-text">
-              {texts.modalAlreadyWonMessage}
-            </p>
-            <p id="winner-already-timestamp" className="modal-timestamp">
-              {formatAwardedAtPtBr(snapshot.alreadyWonModal.awardedAt)}
-            </p>
-            <button
-              id="close-winner-already-modal-btn"
-              type="button"
-              className="btn modal-close-btn"
-              onClick={handleDismissWinnerAlreadyModal}
-            >
-              Entendi!
-            </button>
-          </div>
-        </div>
-      )}
-
-      {activeModal?.type === 'top3' && snapshot.lastResult && snapshot.lastResult.isTop3 && (
-        <div
-          id="top3-congrats-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="top3-modal-title"
-        >
-          <div className="modal-content">
-            <h3 id="top3-modal-title" className="modal-title">
-              ✨ Resultado Espetacular! ✨
-            </h3>
-            <div id="top3-modal-message-content">
-              <p>
-                Parabéns, <strong>{snapshot.lastResult.participantName}</strong>!
-              </p>
-              <p>Você garantiu um lugar entre os melhores desempenhos do Evento!</p>
-              <p>
-                <span className="msg-rank-highlight">
-                  TOP {snapshot.lastResult.rankingPosition}
-                </span>
-              </p>
-            </div>
-            <button
-              id="close-top3-congrats-modal-btn"
-              type="button"
-              className="btn modal-close-btn"
-              onClick={() => {
-                setActiveModal(null);
-                resetIdleTimer();
-              }}
-            >
-              OK!
-            </button>
-          </div>
-        </div>
-      )}
-
-      {activeModal?.type === 'give-up' && (
-        <div
-          id="confirm-modal"
-          className="modal-overlay modal-type-danger"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="confirm-modal-title"
-        >
-          <div className="modal-content">
-            <h3 id="confirm-modal-title" className="modal-title">
-              Confirmação
-            </h3>
-            <p id="confirm-message" className="modal-text">
-              Tem certeza que deseja desistir do quiz? Seu progresso atual não será salvo.
-            </p>
-            <div className="modal-actions">
-              <button
-                id="confirm-proceed-btn"
-                type="button"
-                className="btn btn-danger"
-                onClick={handleConfirmGiveUp}
-              >
-                Sair
-              </button>
-              <button
-                id="confirm-cancel-btn"
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setActiveModal(null);
-                  resetIdleTimer();
-                }}
-              >
-                Cancelar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showPairingModal && (
-        <div
-          id="totem-pairing-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="totem-pairing-title"
-        >
-          <div className="modal-content">
-            <h3 id="totem-pairing-title" className="modal-title">
-              Pareamento do Totem
-            </h3>
-            <p className="modal-text">
-              Autorize este código no Painel Administrativo para vincular o Totem a um Evento:
-            </p>
-            <p className="totem-pairing-code-box">
-              <strong id="totem-pairing-code">{snapshot.pairing.pairingCode ?? '------'}</strong>
-            </p>
-
-            <form
-              className="totem-modal-form"
-              onSubmit={(e) => void handleActivateWithCodeSubmit(e)}
-            >
-              <div className="form-group">
-                <label htmlFor="totem-activation-input">Código ou Link de Ativação</label>
-                <input
-                  id="totem-activation-input"
-                  type="text"
-                  value={activationInput}
-                  onChange={(e) => setActivationInput(e.target.value)}
-                  placeholder="Ex.: ABC123 ou ?pairingCode=ABC123"
-                />
-              </div>
-
-              {snapshot.lastValidationError && (
-                <p className="totem-modal-error" role="alert">
-                  {snapshot.lastValidationError}
-                </p>
-              )}
-
-              <div className="modal-actions">
-                <button id="totem-activate-code-btn" type="submit" className="btn">
-                  Ativar com Código
-                </button>
-                {activeModal?.type === 'pairing' &&
-                  snapshot.pairing.status !== 'awaiting_authorization' && (
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => setActiveModal(null)}
-                    >
-                      Fechar
-                    </button>
-                  )}
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {activeModal?.type === 'pin-prompt' && (
-        <div
-          id="totem-pin-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="totem-pin-title"
-        >
-          <div className="modal-content">
-            <h3 id="totem-pin-title" className="modal-title">
-              Acesso ao Diagnóstico Local
-            </h3>
-            <p className="modal-text">
-              Informe o PIN numérico rápido configurado para este Totem:
-            </p>
-            <form className="totem-modal-form" onSubmit={handlePinSubmit}>
-              <div className="form-group">
-                <label htmlFor="totem-pin-input">PIN do Totem</label>
-                <input
-                  id="totem-pin-input"
-                  type="password"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  value={pinInput}
-                  onChange={(e) => {
-                    setPinInput(e.target.value);
-                    setPinError(null);
-                  }}
-                />
-              </div>
-
-              {pinError && (
-                <p id="totem-pin-error" className="totem-modal-error" role="alert">
-                  {pinError}
-                </p>
-              )}
-
-              <div className="modal-actions">
-                <button id="totem-pin-submit-btn" type="submit" className="btn">
-                  Acessar Diagnóstico
-                </button>
-                <button
-                  id="totem-pin-cancel-btn"
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => {
-                    setActiveModal(null);
-                    setPinError(null);
-                    resetIdleTimer();
-                  }}
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {activeModal?.type === 'diagnostics' && diagnostics && (
-        <div
-          id="totem-diagnostics-modal"
-          className="modal-overlay"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="totem-diagnostics-title"
-        >
-          <div className="modal-content">
-            <h3 id="totem-diagnostics-title" className="modal-title">
-              Diagnóstico Local do Totem
-            </h3>
-
-            <dl className="totem-diagnostics-list">
-              <div>
-                <dt>Status de Conexão</dt>
-                <dd id="diagnostics-connection-status">
-                  {TOTEM_ONLINE_STATUS_LABELS[diagnostics.isOnline ? 'online' : 'offline']}
-                </dd>
-              </div>
-              <div>
-                <dt>Evento Atual</dt>
-                <dd id="diagnostics-event-name">
-                  {diagnostics.eventName} (v{diagnostics.configVersion})
-                </dd>
-              </div>
-              <div>
-                <dt>Totem</dt>
-                <dd id="diagnostics-totem-name">
-                  {diagnostics.totemName ?? 'Não vinculado'}
-                </dd>
-              </div>
-              <div>
-                <dt>Código do Totem</dt>
-                <dd id="diagnostics-totem-code">
-                  {diagnostics.pairingCode ?? diagnostics.totemId ?? 'Não pareado'}
-                </dd>
-              </div>
-              <div>
-                <dt>Itens pendentes na syncQueue</dt>
-                <dd id="diagnostics-pending-sync">{diagnostics.pendingSyncCount}</dd>
-              </div>
-              <div>
-                <dt>Último Ping</dt>
-                <dd id="diagnostics-last-ping">
-                  {formatLastSeenPtBr(diagnostics.lastHeartbeatAt)}
-                </dd>
-              </div>
-            </dl>
-
-            {diagnosticsSyncMessage && (
-              <p id="diagnostics-sync-status" className="modal-text" role="status">
-                {diagnosticsSyncMessage}
-              </p>
-            )}
-
-            <div className="modal-actions">
-              <button
-                id="diagnostics-toggle-sound-btn"
-                type="button"
-                className="btn-secondary"
-                onClick={() => setLocalSoundMuted((prev) => !prev)}
-              >
-                {localSoundMuted ? 'Ativar Som Local' : 'Silenciar Som Local'}
-              </button>
-              <button
-                id="diagnostics-force-sync-btn"
-                type="button"
-                className="btn"
-                disabled={isForcingSync}
-                onClick={() => void handleForceDiagnosticsSync()}
-              >
-                {isForcingSync ? 'Sincronizando...' : 'Forçar Sincronização'}
-              </button>
-              <button
-                id="close-diagnostics-modal-btn"
-                type="button"
-                className="btn-secondary"
-                onClick={() => {
-                  setActiveModal(null);
-                  resetIdleTimer();
-                }}
-              >
-                Fechar Diagnóstico
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+        <TotemModals
+          activeModal={activeModal}
+          snapshot={snapshot}
+          showPairingModal={showPairingModal}
+          diagnostics={diagnostics}
+          activationInput={activationInput}
+          pinInput={pinInput}
+          pinError={pinError}
+          diagnosticsSyncMessage={diagnosticsSyncMessage}
+          isForcingSync={isForcingSync}
+          localSoundMuted={localSoundMuted}
+          onActivationInputChange={setActivationInput}
+          onActivateWithCodeSubmit={(e) => void handleActivateWithCodeSubmit(e)}
+          onPinInputChange={(value) => {
+            setPinInput(value);
+            setPinError(null);
+          }}
+          onPinSubmit={handlePinSubmit}
+          onConfirmGiveUp={() => void handleConfirmGiveUp()}
+          onDismissWinnerAlready={handleDismissWinnerAlreadyModal}
+          onForceDiagnosticsSync={() => void handleForceDiagnosticsSync()}
+          onToggleLocalSound={() => setLocalSoundMuted((prev) => !prev)}
+          onCloseModal={() => {
+            setActiveModal(null);
+            setPinError(null);
+            resetIdleTimer();
+          }}
+        />
+      </div>
     </div>
   );
 }

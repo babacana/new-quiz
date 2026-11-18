@@ -26,6 +26,7 @@ import {
 } from './components/ui/dialog';
 import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
+import { Select } from './components/ui/select';
 import {
   TOTEM_ONLINE_STATUS_LABELS,
   TOTEM_SCREEN_LABELS,
@@ -45,9 +46,6 @@ type PendingBatchCommand =
   | { type: 'switch-event'; targetEventId: string; newEventId: string }
   | { type: 'force-sync'; targetEventId: string }
   | { type: 'reload-screen'; targetEventId: string; screen: ReloadTargetScreen };
-
-const SELECT_CLASSES =
-  'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm text-foreground shadow-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 function resolveValidEventId(currentId: string, events: EventConfig[]): string {
   return currentId && events.some((e) => e.id === currentId) ? currentId : (events[0]?.id ?? '');
@@ -342,9 +340,8 @@ export function AdminTotemsTab({
 
               <div className="space-y-1.5">
                 <Label htmlFor="totem-event-select">Evento Vinculado</Label>
-                <select
+                <Select
                   id="totem-event-select"
-                  className={SELECT_CLASSES}
                   value={selectedEventId}
                   onChange={(e) => setSelectedEventId(e.target.value)}
                   required
@@ -354,7 +351,7 @@ export function AdminTotemsTab({
                       {ev.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </div>
             </div>
 
@@ -506,9 +503,9 @@ export function AdminTotemsTab({
                             {totem.isPaired ? (
                               <div className="flex flex-col items-end gap-2">
                                 <div className="flex items-center gap-1.5">
-                                  <select
+                                  <Select
                                     aria-label={`Trocar Evento de ${totem.name}`}
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                    className="h-8 w-auto px-2 text-xs"
                                     value={targetEventId}
                                     onChange={(e) =>
                                       setRowEventSelection((prev) => ({
@@ -522,7 +519,7 @@ export function AdminTotemsTab({
                                         {ev.name}
                                       </option>
                                     ))}
-                                  </select>
+                                  </Select>
                                   <Button
                                     type="button"
                                     size="sm"
@@ -557,9 +554,9 @@ export function AdminTotemsTab({
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
-                                  <select
+                                  <Select
                                     aria-label={`Tela de reinício de ${totem.name}`}
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                                    className="h-8 w-auto px-2 text-xs"
                                     value={targetReloadScreen}
                                     onChange={(e) =>
                                       setRowReloadSelection((prev) => ({
@@ -570,7 +567,7 @@ export function AdminTotemsTab({
                                   >
                                     <option value="initial-screen">Tela Inicial</option>
                                     <option value="idle-screen">Tela de Descanso</option>
-                                  </select>
+                                  </Select>
                                   <Button
                                     type="button"
                                     size="sm"
@@ -715,9 +712,8 @@ export function AdminTotemsTab({
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="space-y-1.5">
               <Label htmlFor="batch-target-event-select">Evento Alvo do Comando</Label>
-              <select
+              <Select
                 id="batch-target-event-select"
-                className={SELECT_CLASSES}
                 value={batchTargetEventId}
                 onChange={(e) => setBatchTargetEventId(e.target.value)}
               >
@@ -726,14 +722,13 @@ export function AdminTotemsTab({
                     {ev.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="batch-switch-event-select">Novo Evento em Lote</Label>
-              <select
+              <Select
                 id="batch-switch-event-select"
-                className={SELECT_CLASSES}
                 value={batchSwitchEventId}
                 onChange={(e) => setBatchSwitchEventId(e.target.value)}
               >
@@ -742,20 +737,19 @@ export function AdminTotemsTab({
                     {ev.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </div>
 
             <div className="space-y-1.5">
               <Label htmlFor="batch-reload-screen-select">Tela de Destino em Lote</Label>
-              <select
+              <Select
                 id="batch-reload-screen-select"
-                className={SELECT_CLASSES}
                 value={batchReloadScreen}
                 onChange={(e) => setBatchReloadScreen(e.target.value as ReloadTargetScreen)}
               >
                 <option value="initial-screen">Tela Inicial</option>
                 <option value="idle-screen">Tela de Descanso</option>
-              </select>
+              </Select>
             </div>
           </div>
 
@@ -827,9 +821,8 @@ export function AdminTotemsTab({
               <div className="space-y-1.5">
                 <Label htmlFor="mobile-totem-switch-select">Trocar Evento</Label>
                 <div className="flex gap-2">
-                  <select
+                  <Select
                     id="mobile-totem-switch-select"
-                    className={SELECT_CLASSES}
                     value={
                       rowEventSelection[mobileCommandTotem.id] ??
                       mobileCommandTotem.eventId ??
@@ -848,7 +841,7 @@ export function AdminTotemsTab({
                         {ev.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <Button
                     type="button"
                     size="sm"
@@ -873,9 +866,8 @@ export function AdminTotemsTab({
               <div className="space-y-1.5">
                 <Label htmlFor="mobile-totem-reload-select">Reiniciar Tela</Label>
                 <div className="flex gap-2">
-                  <select
+                  <Select
                     id="mobile-totem-reload-select"
-                    className={SELECT_CLASSES}
                     value={rowReloadSelection[mobileCommandTotem.id] ?? 'initial-screen'}
                     onChange={(e) =>
                       setRowReloadSelection((prev) => ({
@@ -886,7 +878,7 @@ export function AdminTotemsTab({
                   >
                     <option value="initial-screen">Tela Inicial</option>
                     <option value="idle-screen">Tela de Descanso</option>
-                  </select>
+                  </Select>
                   <Button
                     type="button"
                     size="sm"

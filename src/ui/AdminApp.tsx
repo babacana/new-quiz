@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
 import { EventAdminController } from '../domain/eventAdminController';
+import type { AdminCloudPort } from '../domain/ports';
 import type {
   AuthSession,
   EventConfig,
@@ -26,7 +27,7 @@ import {
   resolveInitialAdminTab,
   type AdminTabId,
 } from './adminRoutes';
-import { createDefaultCloudGateway } from './cloudFactory';
+import { createAdminCloudPort } from './adminCloudFactory';
 import { AdminLoginScreen } from './components/AdminLoginScreen';
 import { AdminSaasShell } from './components/AdminSaasShell';
 import { Button } from './components/ui/button';
@@ -40,8 +41,8 @@ import {
 } from './components/ui/dialog';
 import { ToastViewport, type ToastMessage } from './components/ui/toast';
 import { useSaasTheme } from './hooks/useSaasTheme';
+import { UnsavedNavigationGuard } from './navigationGuard';
 import './saas.css';
-import './styles.css';
 
 type PendingNavigationAction =
   | { type: 'tab'; tab: AdminTabId }
@@ -54,6 +55,8 @@ type PendingNavigationAction =
 
 export interface AdminAppProps {
   controller?: EventAdminController;
+  cloudGateway?: AdminCloudPort;
+  navigationGuard?: UnsavedNavigationGuard;
   routeMode?: 'admin' | 'operator';
   activeTab?: AdminTabId;
   onAdminTabChange?: (tab: AdminTabId) => void;
@@ -63,9 +66,9 @@ export interface AdminAppProps {
   onResolveExternalRoute?: (confirm: boolean, req: ExternalRouteNavigationRequest) => void;
 }
 
-function createDefaultController(): EventAdminController {
+function createDefaultController(cloudGateway?: AdminCloudPort): EventAdminController {
   return new EventAdminController({
-    cloudGateway: createDefaultCloudGateway(),
+    cloudGateway: cloudGateway ?? createAdminCloudPort(),
     clock: new SystemClock(),
     random: new CryptoRandomSource(),
   });
@@ -74,6 +77,8 @@ function createDefaultController(): EventAdminController {
 // Painel de Equipe do Estande (Administrador em #admin/* e Operador em #operador).
 export function AdminApp({
   controller: injectedController,
+  cloudGateway: injectedCloudGateway,
+  navigationGuard: injectedNavigationGuard,
   routeMode = 'admin',
   activeTab: controlledActiveTab,
   onAdminTabChange,
@@ -83,8 +88,12 @@ export function AdminApp({
   onResolveExternalRoute,
 }: AdminAppProps) {
   const controller = useMemo(
-    () => injectedController ?? createDefaultController(),
-    [injectedController],
+    () => injectedController ?? createDefaultController(injectedCloudGateway),
+    [injectedController, injectedCloudGateway],
+  );
+  const navigationGuard = useMemo(
+    () => injectedNavigationGuard ?? new UnsavedNavigationGuard(),
+    [injectedNavigationGuard],
   );
 
   const { theme, toggleTheme } = useSaasTheme();
@@ -202,14 +211,14 @@ export function AdminApp({
     if (!externalRouteRequest) {
       return;
     }
-    const prompt = controller.checkUnsavedNavigation();
+    const prompt = navigationGuard.checkUnsavedNavigation();
     if (prompt.canProceedImmediately) {
       onResolveExternalRoute?.(true, externalRouteRequest);
       return;
     }
     setPendingAction({ type: 'external-route', req: externalRouteRequest });
     setUnsavedPrompt(prompt);
-  }, [controller, externalRouteRequest, onResolveExternalRoute]);
+  }, [navigationGuard, externalRouteRequest, onResolveExternalRoute]);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,6 +226,7 @@ export function AdminApp({
     setIsLoggingIn(true);
     try {
       const authenticated = await controller.login(loginEmail, loginPassword);
+      navigationGuard.clearDirty();
       setSession(authenticated);
       setLoginPassword('');
       if (!controlledActiveTab) {
@@ -250,6 +260,7 @@ export function AdminApp({
       }
       if (action.type === 'logout') {
         await controller.logout();
+        navigationGuard.clearDirty();
         setSession(null);
         setLoginEmail('');
         setLoginPassword('');
@@ -268,12 +279,12 @@ export function AdminApp({
       }
       onOpenTotem?.();
     },
-    [controller, onOpenTotem, onResolveExternalRoute, onSwitchPanelRoute, setActiveTab],
+    [controller, navigationGuard, onOpenTotem, onResolveExternalRoute, onSwitchPanelRoute, setActiveTab],
   );
 
   const requestGuardedAction = useCallback(
     (action: PendingNavigationAction) => {
-      const prompt = controller.checkUnsavedNavigation();
+      const prompt = navigationGuard.checkUnsavedNavigation();
       if (prompt.canProceedImmediately) {
         void executeNavigationAction(action);
         return;
@@ -281,7 +292,7 @@ export function AdminApp({
       setPendingAction(action);
       setUnsavedPrompt(prompt);
     },
-    [controller, executeNavigationAction],
+    [navigationGuard, executeNavigationAction],
   );
 
   const requestGuardedCallback = useCallback(
@@ -294,7 +305,7 @@ export function AdminApp({
   const handleUnsavedResolution = async (resolution: UnsavedChangesResolution) => {
     const actionToRun = pendingAction;
     try {
-      const canProceed = await controller.resolveUnsavedNavigation(
+      const canProceed = await navigationGuard.resolveUnsavedNavigation(
         resolution,
         activeSaveHandlerRef.current ?? undefined,
       );
@@ -384,6 +395,7 @@ export function AdminApp({
             {activeTab === 'settings' && (
               <AdminSettingsTab
                 controller={controller}
+                navigationGuard={navigationGuard}
                 selectedEvent={events.find((ev) => ev.id === selectedEventId) ?? null}
                 allQuestions={allQuestions}
                 onEventsChanged={loadWorkspaceData}
@@ -409,6 +421,7 @@ export function AdminApp({
             {activeTab === 'customization' && (
               <AdminCustomizationTab
                 controller={controller}
+                navigationGuard={navigationGuard}
                 events={events}
                 selectedEventId={selectedEventId}
                 onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
@@ -452,6 +465,7 @@ export function AdminApp({
             {activeTab === 'questions' && (
               <AdminQuestionsTab
                 controller={controller}
+                navigationGuard={navigationGuard}
                 onRequestGuardedAction={requestGuardedCallback}
                 onQuestionsChanged={() => loadWorkspaceData()}
                 onRegisterSaveHandler={registerSaveHandler}

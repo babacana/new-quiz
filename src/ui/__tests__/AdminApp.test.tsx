@@ -772,4 +772,60 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await user.click(within(confirmModal).getByRole('button', { name: 'Confirmar Restauração' }));
     expect(await screen.findByText(/Backup legado migrado: 1 questão\(ões\)/i)).toBeInTheDocument();
   });
+
+  it('exibe KPI correto de participantes únicos quando o mesmo telefone joga múltiplas Partidas na Visão Geral', async () => {
+    const clock = new AdminUiClock();
+    const cloudGateway = new InMemoryCloudGateway({
+      online: true,
+      seedDefaultEvent: true,
+      nowIso: () => clock.toISOString(),
+    });
+    const controller = new EventAdminController({
+      cloudGateway,
+      clock,
+      random: new AdminUiRandom(),
+    });
+
+    const [defaultEvent] = await cloudGateway.listEvents();
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'kpi-match-1',
+      match: {
+        id: 'kpi-match-1',
+        eventId: defaultEvent!.id,
+        totemId: null,
+        participantName: 'JOANA',
+        participantPhone: '(61) 99999-8888',
+        score: 2,
+        totalQuestions: 5,
+        timeSeconds: 30,
+        answers: [],
+        playedAt: '2026-11-16T11:50:00.000Z',
+        syncedAt: '2026-11-16T11:50:02.000Z',
+      },
+    });
+    await cloudGateway.pushMatch({
+      idempotencyKey: 'kpi-match-2',
+      match: {
+        id: 'kpi-match-2',
+        eventId: defaultEvent!.id,
+        totemId: null,
+        participantName: 'JOANA DUPLICADA',
+        participantPhone: '(61) 99999-8888',
+        score: 4,
+        totalQuestions: 5,
+        timeSeconds: 20,
+        answers: [],
+        playedAt: '2026-11-16T11:55:00.000Z',
+        syncedAt: '2026-11-16T11:55:02.000Z',
+      },
+    });
+
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+    await user.click(await screen.findByRole('button', { name: 'Visão Geral' }));
+
+    const kpis = await screen.findByTestId('overview-kpis');
+    expect(within(kpis).getByText('2')).toBeInTheDocument();
+    expect(within(kpis).getByText('1 participante(s) único(s)')).toBeInTheDocument();
+  });
 });

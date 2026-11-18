@@ -1,18 +1,19 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
-import { EventAdminController } from '../domain/eventAdminController';
 import type { CloudGateway } from '../domain/ports';
 import { TotemSessionEngine } from '../domain/totemSessionEngine';
 import { TotemApp } from './TotemApp';
-
-const AdminApp = lazy(() => import('./AdminApp').then((mod) => ({ default: mod.AdminApp })));
 import {
   getHashForAdminTab,
   resolveAdminTabFromHash,
   type AdminTabId,
 } from './adminRoutes';
-import { createDefaultCloudGateway } from './cloudFactory';
+import { createTotemCloudPort } from './cloudFactory';
+import { UnsavedNavigationGuard } from './navigationGuard';
+
+// O painel administrativo é carregado sob demanda para manter o bundle público do Totem enxuto.
+const AdminApp = lazy(() => import('./AdminApp').then((mod) => ({ default: mod.AdminApp })));
 
 export type AppRouteMode = 'totem' | 'admin' | 'operator';
 
@@ -71,23 +72,28 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
     useState<ExternalRouteNavigationRequest | null>(null);
   const ignoringHashChangeRef = useRef(false);
 
-  const sharedServices = useMemo(() => {
-    const cloudGateway = injectedCloudGateway ?? createDefaultCloudGateway();
-    const clock = new SystemClock();
-    const random = new CryptoRandomSource();
-    const localStore = new DexieLocalStore();
+  const navigationGuard = useMemo(() => new UnsavedNavigationGuard(), []);
 
-    return {
-      totemEngine: new TotemSessionEngine({
-        localStore,
-        cloudGateway,
-        clock,
-        random,
-        requirePairing: true,
-      }),
-      adminController: new EventAdminController({ cloudGateway, clock, random }),
+  // Motor do Totem só é instanciado quando a rota ativa é pública ('totem').
+  const totemEngine = useMemo(() => {
+    if (routeMode !== 'totem') {
+      return null;
+    }
+    const cloudGateway = injectedCloudGateway ?? createTotemCloudPort();
+    return new TotemSessionEngine({
+      localStore: new DexieLocalStore(),
+      cloudGateway,
+      clock: new SystemClock(),
+      random: new CryptoRandomSource(),
+      requirePairing: true,
+    });
+  }, [injectedCloudGateway, routeMode]);
+
+  useEffect(() => {
+    return () => {
+      totemEngine?.dispose();
     };
-  }, [injectedCloudGateway]);
+  }, [totemEngine]);
 
   useEffect(() => {
     routeModeRef.current = routeMode;
@@ -119,7 +125,7 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
 
       if (
         (currentRoute === 'admin' || currentRoute === 'operator') &&
-        !sharedServices.adminController.checkUnsavedNavigation().canProceedImmediately
+        !navigationGuard.checkUnsavedNavigation().canProceedImmediately
       ) {
         // Mantém a rota atual no navegador até o usuário resolver o alerta de alterações não salvas.
         const targetHash = window.location.hash;
@@ -142,7 +148,7 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
 
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, [sharedServices]);
+  }, [navigationGuard]);
 
   const navigateToRoute = useCallback(
     (nextRoute: AppRouteMode, explicitHash?: string, explicitAdminTab?: AdminTabId) => {
@@ -188,7 +194,8 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
         }
       >
         <AdminApp
-          controller={sharedServices.adminController}
+          cloudGateway={injectedCloudGateway}
+          navigationGuard={navigationGuard}
           routeMode={routeMode}
           activeTab={adminTab}
           onAdminTabChange={handleAdminTabChange}
@@ -206,5 +213,5 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
     );
   }
 
-  return <TotemApp engine={sharedServices.totemEngine} />;
+  return <TotemApp engine={totemEngine ?? undefined} />;
 }

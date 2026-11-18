@@ -203,6 +203,7 @@ export interface PrizeClaimRecord {
   totemId: string | null;
   participantName: string;
   participantPhone: string;
+  phoneHash?: string;
   status: PrizeClaimStatus;
   awardedAt: string;
   deliveredAt: string | null;
@@ -213,6 +214,30 @@ export interface GiveUpLockoutRecord {
   eventId: string;
   totemId: string | null;
   participantPhone: string;
+  phoneHash?: string;
+  lockedAt: string;
+  expiresAt: string;
+}
+
+// Registro enxuto de Partida para exibição do Ranking no Totem (sem telefone ou respostas).
+export type TotemRankingMatch = Omit<MatchRecord, 'participantPhone' | 'answers'>;
+
+// Registro anonimizado (hash SHA-256) de Trava de Brinde armazenado offline no Totem.
+export interface TotemPrizeLockRecord {
+  id: string;
+  eventId: string;
+  matchId: string;
+  phoneHash: string;
+  status: PrizeClaimStatus;
+  awardedAt: string;
+  deliveredAt: string | null;
+}
+
+// Registro anonimizado (hash SHA-256) de Bloqueio por Desistência armazenado offline no Totem.
+export interface TotemLockoutRecord {
+  id: string;
+  eventId: string;
+  phoneHash: string;
   lockedAt: string;
   expiresAt: string;
 }
@@ -345,6 +370,8 @@ export interface TotemSessionSnapshot {
   } | null;
   lastResult: MatchResultSummary | null;
   ranking: RankingEntry[];
+  totalMatchesCount: number;
+  backgroundSyncNotice: string | null;
   alreadyWonModal: {
     participantPhone: string;
     awardedAt: string;
