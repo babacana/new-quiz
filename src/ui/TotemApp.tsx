@@ -745,18 +745,18 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
   return (
     <div className={containerClasses.join(' ')} style={themeStyle}>
-      {backgroundSrc && (
-        <div
-          className="quiz-custom-background-layer"
-          style={{
-            backgroundImage: `url(${backgroundSrc})`,
-            opacity: snapshot.event.customizations.visualIdentity.customBackgroundOpacity,
-          }}
-          aria-hidden="true"
-        />
-      )}
-
       <div className="totem-stage">
+        {backgroundSrc && (
+          <div
+            className="quiz-custom-background-layer"
+            style={{
+              backgroundImage: `url(${backgroundSrc})`,
+              opacity: snapshot.event.customizations.visualIdentity.customBackgroundOpacity,
+            }}
+            aria-hidden="true"
+          />
+        )}
+
         <AccessibilityControls
           hiddenOnIdle={snapshot.screen === 'idle-screen'}
           onInteraction={resetIdleTimer}
