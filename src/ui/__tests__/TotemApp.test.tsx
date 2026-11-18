@@ -1129,4 +1129,40 @@ describe('TotemApp (Interface do Totem)', () => {
       vi.useRealTimers();
     }
   });
+
+  it('mantém .quiz-custom-background-layer contida dentro do palco proporcional .totem-stage', async () => {
+    const { engine, cloudGateway } = createUiTestRig({
+      nowIso: '2026-11-16T12:00:00.000Z',
+    });
+
+    const uploaded = await cloudGateway.uploadEventVisualAsset({
+      eventId: DEFAULT_EVENT_CONFIG.id,
+      kind: 'background',
+      fileName: 'fundo-palco.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([137, 80, 78, 71]),
+    });
+
+    await cloudGateway.saveEvent({
+      ...DEFAULT_EVENT_CONFIG,
+      customizations: {
+        ...DEFAULT_EVENT_CONFIG.customizations,
+        visualIdentity: {
+          ...DEFAULT_EVENT_CONFIG.customizations.visualIdentity,
+          enableCustomBackground: true,
+          customBackgroundFileName: 'fundo-palco.png',
+          customBackgroundUrl: uploaded.url,
+          customBackgroundOpacity: 0.25,
+        },
+      },
+    });
+
+    const { container } = render(<TotemApp engine={engine} />);
+
+    await waitFor(() => {
+      const layer = container.querySelector('.quiz-custom-background-layer');
+      expect(layer).not.toBeNull();
+      expect(layer?.parentElement).toHaveClass('totem-stage');
+    });
+  });
 });
