@@ -7,7 +7,9 @@ import type {
   EventCustomizationsPatch,
   EventSettings,
   EventUpsertInput,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
+  VisualAssetKind,
 } from '../types';
 import type { AdminDomainContext } from './adminContext';
 
@@ -416,6 +418,49 @@ export class EventCatalogModule {
       throw new Error('Selecione um arquivo de imagem válido para upload.');
     }
     return this.ctx.cloudGateway.uploadEventVisualAsset(input);
+  }
+
+  async listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]> {
+    this.ctx.auth.requireAdmin();
+    return this.ctx.cloudGateway.listEventVisualAssets(options);
+  }
+
+  async deleteEventVisualAsset(storagePath: string): Promise<void> {
+    this.ctx.auth.requireAdmin();
+    const normalizedPath = storagePath.trim();
+    if (!normalizedPath) {
+      throw new Error('Informe o caminho da imagem para exclusão.');
+    }
+
+    const [assets, events] = await Promise.all([
+      this.ctx.cloudGateway.listEventVisualAssets(),
+      this.ctx.cloudGateway.listEvents(),
+    ]);
+
+    const targetAsset = assets.find((item) => item.storagePath === normalizedPath);
+    if (!targetAsset) {
+      throw new Error('Imagem não encontrada no armazenamento.');
+    }
+
+    const usingEvents = events.filter((ev) => {
+      const visual = ev.customizations.visualIdentity;
+      return (
+        visual.logoUrl === targetAsset.url ||
+        visual.customBackgroundUrl === targetAsset.url
+      );
+    });
+
+    if (usingEvents.length > 0) {
+      const names = usingEvents.map((ev) => `"${ev.name}"`).join(', ');
+      throw new Error(
+        `Não é possível excluir esta imagem porque ela está em uso no(s) Evento(s): ${names}. Troque a imagem e salve o Evento antes de excluir.`,
+      );
+    }
+
+    await this.ctx.cloudGateway.deleteEventVisualAsset(normalizedPath);
   }
 
   async saveEventCustomizations(

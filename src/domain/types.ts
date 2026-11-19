@@ -120,6 +120,16 @@ export interface EventVisualAssetUploadInput {
   bytes: Uint8Array;
 }
 
+export interface EventVisualAssetRecord {
+  storagePath: string;
+  url: string;
+  eventId: string;
+  kind: VisualAssetKind;
+  fileName: string;
+  createdAt: string;
+  sizeBytes: number | null;
+}
+
 export interface EventCustomizations {
   texts: EventCustomizationTexts;
   colors: EventCustomizationColors;

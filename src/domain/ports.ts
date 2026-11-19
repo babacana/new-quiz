@@ -3,6 +3,7 @@ import type {
   CachedVisualAsset,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
@@ -21,6 +22,7 @@ import type {
   TotemRankingMatch,
   TotemRecord,
   UserProfile,
+  VisualAssetKind,
 } from './types';
 
 // Fonte determinística de tempo para permitir testes sem dependência de timers reais.
@@ -192,6 +194,11 @@ export interface AdminCloudPort {
   uploadEventVisualAsset(
     input: EventVisualAssetUploadInput,
   ): Promise<{ url: string; fileName: string }>;
+  listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]>;
+  deleteEventVisualAsset(storagePath: string): Promise<void>;
 
   // Importação direta de registros históricos/backup sem acionar débito de estoque
   importOperationalRecords(payload: {

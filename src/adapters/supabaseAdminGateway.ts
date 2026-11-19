@@ -10,6 +10,7 @@ import type {
   AuthSession,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
@@ -21,8 +22,9 @@ import type {
   TotemRecord,
   UserProfile,
   UserRole,
+  VisualAssetKind,
 } from '../domain/types';
-import { sanitizeAssetFileName } from '../domain/visualAssetUtils';
+import { parseVisualAssetObjectName, sanitizeAssetFileName } from '../domain/visualAssetUtils';
 import {
   fetchAllPages,
   getSharedSupabaseClient,
@@ -873,6 +875,110 @@ export class SupabaseAdminGateway implements AdminCloudPort {
       url: data.publicUrl,
       fileName: safeFileName,
     };
+  }
+
+  async listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para listar imagens do Evento.');
+    }
+
+    const bucket = this.client.storage.from('quiz_event_assets');
+    let folderNames: string[] = [];
+
+    if (options?.eventId?.trim()) {
+      folderNames = [options.eventId.trim()];
+    } else {
+      const { data: rootEntries, error: rootError } = await bucket.list('', {
+        limit: 1000,
+      });
+      if (rootError) {
+        throw new Error(`Erro ao listar pastas de imagens no Storage: ${rootError.message}`);
+      }
+      folderNames = (rootEntries ?? [])
+        .filter((entry) => entry.id === null && Boolean(entry.name) && !entry.name.startsWith('.'))
+        .map((entry) => entry.name);
+    }
+
+    if (folderNames.length === 0) {
+      return [];
+    }
+
+    const perFolderLists = await Promise.all(
+      folderNames.map(async (folderName) => {
+        const { data: files, error: listError } = await bucket.list(folderName, {
+          limit: 1000,
+          sortBy: { column: 'created_at', order: 'desc' },
+        });
+        if (listError) {
+          throw new Error(
+            `Erro ao listar imagens do Evento (${folderName}) no Storage: ${listError.message}`,
+          );
+        }
+
+        const records: EventVisualAssetRecord[] = [];
+        for (const item of files ?? []) {
+          if (item.id === null || !item.name) {
+            continue;
+          }
+          const parsed = parseVisualAssetObjectName(item.name);
+          if (!parsed) {
+            continue;
+          }
+          if (options?.kind && parsed.kind !== options.kind) {
+            continue;
+          }
+          const storagePath = `${folderName}/${item.name}`;
+          const { data: publicUrlData } = bucket.getPublicUrl(storagePath);
+          const rawSize = (item.metadata as { size?: unknown } | null | undefined)?.size;
+          const sizeBytes =
+            typeof rawSize === 'number' && Number.isFinite(rawSize)
+              ? rawSize
+              : typeof rawSize === 'string' && rawSize.trim() !== '' && Number.isFinite(Number(rawSize))
+                ? Number(rawSize)
+                : null;
+
+          records.push({
+            storagePath,
+            url: publicUrlData.publicUrl,
+            eventId: folderName,
+            kind: parsed.kind,
+            fileName: parsed.fileName,
+            createdAt: item.created_at ?? item.updated_at ?? '',
+            sizeBytes,
+          });
+        }
+        return records;
+      }),
+    );
+
+    const allRecords = perFolderLists.flat();
+    return allRecords.sort((a, b) => {
+      const cmp = b.createdAt.localeCompare(a.createdAt);
+      if (cmp !== 0) {
+        return cmp;
+      }
+      return b.storagePath.localeCompare(a.storagePath);
+    });
+  }
+
+  async deleteEventVisualAsset(storagePath: string): Promise<void> {
+    if (!this.isOnline()) {
+      throw new Error('Navegador sem conectividade para excluir imagem do Evento.');
+    }
+    const normalizedPath = storagePath.trim();
+    if (!normalizedPath) {
+      throw new Error('Caminho da imagem inválido para exclusão.');
+    }
+
+    const { error } = await this.client.storage
+      .from('quiz_event_assets')
+      .remove([normalizedPath]);
+    if (error) {
+      throw new Error(`Erro ao excluir imagem do Supabase Storage: ${error.message}`);
+    }
   }
 
   async importOperationalRecords(payload: {

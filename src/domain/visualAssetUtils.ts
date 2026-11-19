@@ -1,4 +1,4 @@
-import type { EventVisualIdentity, ResolvedVisualAssets } from './types';
+import type { EventVisualIdentity, ResolvedVisualAssets, VisualAssetKind } from './types';
 
 // Converte bytes binários em Data URL base64 de forma portátil entre navegador e Node/Vitest.
 export function bytesToDataUrl(bytes: Uint8Array, mimeType: string): string {
@@ -17,6 +17,24 @@ export function sanitizeAssetFileName(fileName: string): string {
   const trimmed = fileName.trim();
   const safe = trimmed.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '');
   return safe || 'asset.png';
+}
+
+// Extrai o tipo (logo ou background) e o nome legível a partir do nome do objeto salvo no Storage.
+export function parseVisualAssetObjectName(
+  objectName: string,
+): { kind: VisualAssetKind; fileName: string } | null {
+  const trimmed = objectName.trim();
+  if (!trimmed || trimmed.startsWith('.')) {
+    return null;
+  }
+  const match = /^(logo|background)-(?:(\d+)-)?(.+)$/.exec(trimmed);
+  if (!match) {
+    return null;
+  }
+  return {
+    kind: match[1] as VisualAssetKind,
+    fileName: match[3],
+  };
 }
 
 // Resolve URLs finais de logotipo e fundo com fallback seguro para /assets/logo.png.

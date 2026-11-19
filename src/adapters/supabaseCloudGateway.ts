@@ -10,6 +10,7 @@ import type {
   AuthSession,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
@@ -22,6 +23,7 @@ import type {
   TotemPairingRequestInput,
   TotemRecord,
   UserProfile,
+  VisualAssetKind,
 } from '../domain/types';
 import { SupabaseAdminGateway } from './supabaseAdminGateway';
 import { getSharedSupabaseClient } from './supabaseClient';
@@ -209,6 +211,17 @@ export class SupabaseCloudGateway implements CloudGateway {
     input: EventVisualAssetUploadInput,
   ): Promise<{ url: string; fileName: string }> {
     return this.adminGateway.uploadEventVisualAsset(input);
+  }
+
+  listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]> {
+    return this.adminGateway.listEventVisualAssets(options);
+  }
+
+  deleteEventVisualAsset(storagePath: string): Promise<void> {
+    return this.adminGateway.deleteEventVisualAsset(storagePath);
   }
 
   importOperationalRecords(payload: {
