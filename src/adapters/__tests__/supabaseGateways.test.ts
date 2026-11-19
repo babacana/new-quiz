@@ -297,4 +297,91 @@ describe('Adaptadores Cloud e Gateways Supabase', () => {
     await gateway.deleteTotems([totem.id]);
     await expect(gateway.claimTotemPairing(totem.pairingCode)).resolves.toBeNull();
   });
+
+  it('SupabaseAdminGateway lista ativos visuais de múltiplos Eventos no Storage e exclui pelo storagePath', async () => {
+    const removedPaths: string[][] = [];
+
+    const mockBucket = {
+      list: vi.fn(async (folder: string) => {
+        if (folder === '') {
+          return {
+            data: [
+              { id: null, name: 'evt-1' },
+              { id: null, name: 'evt-2' },
+              { id: 'placeholder-id', name: '.emptyFolderPlaceholder' },
+            ],
+            error: null,
+          };
+        }
+        if (folder === 'evt-1') {
+          return {
+            data: [
+              {
+                id: 'obj-1',
+                name: 'logo-1790000001-logo-caesb.png',
+                created_at: '2026-11-18T10:00:00.000Z',
+                metadata: { size: 42000 },
+              },
+              {
+                id: 'obj-2',
+                name: 'background-1790000002-fundo-azul.png',
+                created_at: '2026-11-18T11:00:00.000Z',
+                metadata: { size: 312000 },
+              },
+            ],
+            error: null,
+          };
+        }
+        if (folder === 'evt-2') {
+          return {
+            data: [
+              {
+                id: 'obj-3',
+                name: 'logo-1790000003-logo-feira.png',
+                created_at: '2026-11-18T12:00:00.000Z',
+                metadata: { size: 51000 },
+              },
+            ],
+            error: null,
+          };
+        }
+        return { data: [], error: null };
+      }),
+      getPublicUrl: vi.fn((storagePath: string) => ({
+        data: { publicUrl: `https://example.supabase.co/storage/v1/object/public/quiz_event_assets/${storagePath}` },
+      })),
+      remove: vi.fn(async (paths: string[]) => {
+        removedPaths.push(paths);
+        return { data: [], error: null };
+      }),
+    };
+
+    const mockClient = {
+      storage: {
+        from: vi.fn(() => mockBucket),
+      },
+    } as unknown as SupabaseClient;
+
+    const adminGateway = new SupabaseAdminGateway('https://example.supabase.co', 'anon-key', mockClient);
+
+    const allAssets = await adminGateway.listEventVisualAssets();
+    expect(allAssets).toHaveLength(3);
+    // Ordenados do mais recente para o mais antigo
+    expect(allAssets.map((a) => a.fileName)).toEqual([
+      'logo-feira.png',
+      'fundo-azul.png',
+      'logo-caesb.png',
+    ]);
+    expect(allAssets[0].eventId).toBe('evt-2');
+    expect(allAssets[0].kind).toBe('logo');
+    expect(allAssets[0].sizeBytes).toBe(51000);
+
+    // Filtra apenas logos do evt-1
+    const evt1Logos = await adminGateway.listEventVisualAssets({ eventId: 'evt-1', kind: 'logo' });
+    expect(evt1Logos).toHaveLength(1);
+    expect(evt1Logos[0].fileName).toBe('logo-caesb.png');
+
+    await adminGateway.deleteEventVisualAsset('evt-1/logo-1790000001-logo-caesb.png');
+    expect(removedPaths).toEqual([['evt-1/logo-1790000001-logo-caesb.png']]);
+  });
 });

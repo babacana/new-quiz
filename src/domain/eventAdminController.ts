@@ -28,6 +28,7 @@ import type {
   EventCustomizations,
   EventCustomizationsPatch,
   EventUpsertInput,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
   OperatorEventSnapshot,
   PaginatedParticipantReportResult,
@@ -48,6 +49,7 @@ import type {
   TotemRecord,
   UserProfile,
   UserRole,
+  VisualAssetKind,
 } from './types';
 
 export {
@@ -169,6 +171,17 @@ export class EventAdminController {
     input: EventVisualAssetUploadInput,
   ): Promise<{ url: string; fileName: string }> {
     return this.catalogModule.uploadEventVisualAsset(input);
+  }
+
+  listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]> {
+    return this.catalogModule.listEventVisualAssets(options);
+  }
+
+  deleteEventVisualAsset(storagePath: string): Promise<void> {
+    return this.catalogModule.deleteEventVisualAsset(storagePath);
   }
 
   saveEventCustomizations(

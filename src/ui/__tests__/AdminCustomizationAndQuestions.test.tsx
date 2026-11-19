@@ -151,4 +151,76 @@ describe('Issue #13 — Aparência do Totem e Banco de Questões Central', () =>
     await user.click(screen.getByRole('button', { name: 'Exportar JSON' }));
     expect(await screen.findByText(/Exportação JSON concluída/i)).toBeInTheDocument();
   }, 15000);
+
+  it('permite selecionar imagens anteriores ou de outros Eventos na Biblioteca e excluir imagens sem uso com confirmação', async () => {
+    const { controller, cloudGateway } = createHarness();
+    const user = userEvent.setup();
+
+    // Semeia um ativo enviado em outro Evento para testar reaproveitamento cruzado
+    await cloudGateway.uploadEventVisualAsset({
+      eventId: '00000000-0000-4000-8000-000000000099',
+      kind: 'logo',
+      fileName: 'logo-outro-evento.png',
+      mimeType: 'image/png',
+      bytes: new Uint8Array([137, 80, 78, 71]),
+    });
+
+    window.location.hash = '#admin';
+    render(<AdminApp controller={controller} />);
+    await signInAdmin(user);
+
+    const desktopNav = await screen.findByRole('navigation', { name: 'Navegação administrativa' });
+    await user.click(within(desktopNav).getByRole('button', { name: 'Personalização Visual' }));
+
+    const library = await screen.findByTestId('visual-asset-library');
+    expect(await within(library).findByText('logo-outro-evento.png')).toBeInTheDocument();
+
+    // Envia duas imagens no Evento atual
+    const logoInput = screen.getByLabelText('Upload de Logotipo');
+    const file1 = new File([new Uint8Array([1, 2, 3])], 'logo-v1.png', { type: 'image/png' });
+    const file2 = new File([new Uint8Array([4, 5, 6])], 'logo-v2.png', { type: 'image/png' });
+
+    await user.upload(logoInput, file1);
+    expect(await within(library).findByText('logo-v1.png')).toBeInTheDocument();
+
+    await user.upload(logoInput, file2);
+    expect(await within(library).findByText('logo-v2.png')).toBeInTheDocument();
+
+    // Filtro "Apenas este Evento" oculta a imagem de outro Evento
+    await user.click(
+      within(library).getByRole('button', { name: 'Exibir apenas imagens deste Evento' }),
+    );
+    expect(within(library).queryByText('logo-outro-evento.png')).not.toBeInTheDocument();
+    expect(within(library).getByText('logo-v1.png')).toBeInTheDocument();
+
+    // Volta para "Todos os Eventos" e reaproveita a imagem do outro Evento
+    await user.click(
+      within(library).getByRole('button', { name: 'Exibir imagens de todos os Eventos' }),
+    );
+    await user.click(
+      within(library).getByRole('button', { name: 'Usar imagem logo-outro-evento.png' }),
+    );
+
+    // Salva a personalização para vincular logo-outro-evento.png ao Evento atual
+    const stickyBar = await screen.findByTestId('customization-sticky-action-bar');
+    await user.click(within(stickyBar).getByRole('button', { name: /Salvar Personalização/i }));
+    expect(await screen.findByText(/Personalização visual salva/i)).toBeInTheDocument();
+
+    // A imagem em uso pelo Evento salvo fica com botão de exclusão desabilitado
+    expect(
+      within(library).getByRole('button', { name: 'Excluir imagem logo-outro-evento.png' }),
+    ).toBeDisabled();
+
+    // Exclui logo-v1.png (não utilizada) confirmando no modal
+    const deleteV1Btn = within(library).getByRole('button', { name: 'Excluir imagem logo-v1.png' });
+    expect(deleteV1Btn).toBeEnabled();
+    await user.click(deleteV1Btn);
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Excluir Imagem do Armazenamento')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmar Exclusão' }));
+
+    expect(await screen.findByText(/Imagem "logo-v1\.png" excluída/i)).toBeInTheDocument();
+    expect(within(library).queryByText('logo-v1.png')).not.toBeInTheDocument();
+  });
 });

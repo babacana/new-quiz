@@ -18,6 +18,7 @@ import type {
   AuthSession,
   CreateStaffAccountInput,
   EventConfig,
+  EventVisualAssetRecord,
   EventVisualAssetUploadInput,
   GiveUpLockoutRecord,
   MatchRecord,
@@ -33,6 +34,7 @@ import type {
   TotemRankingMatch,
   TotemRecord,
   UserProfile,
+  VisualAssetKind,
 } from '../domain/types';
 import { bytesToDataUrl, sanitizeAssetFileName } from '../domain/visualAssetUtils';
 
@@ -69,8 +71,10 @@ export class InMemoryCloudGateway implements CloudGateway {
   private readonly remoteCommands: RemoteCommandPayload[] = [];
   private readonly channelListeners = new Set<(event: TotemChannelEvent) => void | Promise<void>>();
   private readonly visualAssetsByUrl = new Map<string, { dataUrl: string; mimeType: string }>();
+  private readonly visualAssetRecordsByPath = new Map<string, EventVisualAssetRecord>();
   private currentSession: AuthSession | null = null;
   private staffSequence = 0;
+  private visualAssetSequence = 0;
 
   constructor(options: InMemoryCloudGatewayOptions = {}) {
     this.online = options.online ?? true;
@@ -976,11 +980,69 @@ export class InMemoryCloudGateway implements CloudGateway {
       throw new Error('Sem conectividade com a nuvem para enviar imagem do Evento.');
     }
 
+    this.visualAssetSequence += 1;
     const safeFileName = sanitizeAssetFileName(input.fileName);
-    const url = `https://storage.local/event-assets/${input.eventId}/${input.kind}-${safeFileName}`;
+    const storagePath = `${input.eventId}/${input.kind}-${this.visualAssetSequence}-${safeFileName}`;
+    const url = `https://storage.local/event-assets/${storagePath}`;
     const dataUrl = bytesToDataUrl(input.bytes, input.mimeType);
     this.visualAssetsByUrl.set(url, { dataUrl, mimeType: input.mimeType });
+    this.visualAssetRecordsByPath.set(storagePath, {
+      storagePath,
+      url,
+      eventId: input.eventId,
+      kind: input.kind,
+      fileName: safeFileName,
+      createdAt: this.nowIso(),
+      sizeBytes: input.bytes.byteLength,
+    });
     return { url, fileName: safeFileName };
+  }
+
+  async listEventVisualAssets(options?: {
+    eventId?: string;
+    kind?: VisualAssetKind;
+  }): Promise<EventVisualAssetRecord[]> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para listar imagens do Evento.');
+    }
+    const eventFilter = options?.eventId?.trim();
+    const kindFilter = options?.kind;
+
+    const filtered = Array.from(this.visualAssetRecordsByPath.values())
+      .filter((item) => {
+        if (eventFilter && item.eventId !== eventFilter) {
+          return false;
+        }
+        if (kindFilter && item.kind !== kindFilter) {
+          return false;
+        }
+        return true;
+      })
+      .map((item) => structuredClone(item));
+
+    return filtered.sort((a, b) => {
+      const cmp = b.createdAt.localeCompare(a.createdAt);
+      if (cmp !== 0) {
+        return cmp;
+      }
+      return b.storagePath.localeCompare(a.storagePath);
+    });
+  }
+
+  async deleteEventVisualAsset(storagePath: string): Promise<void> {
+    if (!this.online) {
+      throw new Error('Sem conectividade com a nuvem para excluir imagem do Evento.');
+    }
+    const normalizedPath = storagePath.trim();
+    if (!normalizedPath) {
+      throw new Error('Caminho da imagem inválido para exclusão.');
+    }
+    const record = this.visualAssetRecordsByPath.get(normalizedPath);
+    if (!record) {
+      throw new Error('Imagem não encontrada no armazenamento.');
+    }
+    this.visualAssetRecordsByPath.delete(normalizedPath);
+    this.visualAssetsByUrl.delete(record.url);
   }
 
   async downloadVisualAsset(url: string): Promise<{ dataUrl: string; mimeType: string }> {

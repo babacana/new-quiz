@@ -78,6 +78,10 @@ function createLazyInMemoryAdminProxy(): AdminCloudPort {
       call('deleteMatches', ...args) as ReturnType<AdminCloudPort['deleteMatches']>,
     uploadEventVisualAsset: (...args) =>
       call('uploadEventVisualAsset', ...args) as ReturnType<AdminCloudPort['uploadEventVisualAsset']>,
+    listEventVisualAssets: (...args) =>
+      call('listEventVisualAssets', ...args) as ReturnType<AdminCloudPort['listEventVisualAssets']>,
+    deleteEventVisualAsset: (...args) =>
+      call('deleteEventVisualAsset', ...args) as ReturnType<AdminCloudPort['deleteEventVisualAsset']>,
     importOperationalRecords: (...args) =>
       call('importOperationalRecords', ...args) as ReturnType<AdminCloudPort['importOperationalRecords']>,
   };

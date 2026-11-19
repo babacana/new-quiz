@@ -14,10 +14,12 @@ import type {
   EventCustomizationFontSizes,
   EventCustomizationTexts,
   EventCustomizations,
+  EventVisualAssetRecord,
   PredefinedThemeId,
   VisualAssetKind,
 } from '../domain/types';
 import { CustomizationPreview } from './CustomizationPreview';
+import { VisualAssetLibrary } from './VisualAssetLibrary';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import { Input } from './components/ui/input';
@@ -126,6 +128,24 @@ export function AdminCustomizationTab({
   const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
   const [uploadingKind, setUploadingKind] = useState<VisualAssetKind | null>(null);
   const [saving, setSaving] = useState(false);
+  const [visualAssets, setVisualAssets] = useState<EventVisualAssetRecord[]>([]);
+  const [loadingAssets, setLoadingAssets] = useState(false);
+
+  const loadVisualAssets = useCallback(async () => {
+    setLoadingAssets(true);
+    try {
+      const list = await controller.listEventVisualAssets();
+      setVisualAssets(list);
+    } catch {
+      // Falha ao listar imagens existentes não impede a edição do Evento.
+    } finally {
+      setLoadingAssets(false);
+    }
+  }, [controller]);
+
+  useEffect(() => {
+    void loadVisualAssets();
+  }, [loadVisualAssets, targetEvent?.id]);
 
   const resetFromEvent = useCallback(
     (ev: EventConfig) => {
@@ -223,6 +243,7 @@ export function AdminCustomizationTab({
         next.visualIdentity.enableCustomBackground = true;
       }
       markDraftDirty(next);
+      void loadVisualAssets();
       onStatusMessage(
         'success',
         `${kind === 'logo' ? 'Logotipo' : 'Plano de fundo'} enviado para a nuvem (${uploaded.fileName}).`,
@@ -234,6 +255,70 @@ export function AdminCustomizationTab({
       );
     } finally {
       setUploadingKind(null);
+    }
+  };
+
+  const handleSelectLibraryAsset = (asset: EventVisualAssetRecord) => {
+    const next: EventCustomizations = structuredClone(draft);
+    if (asset.kind === 'logo') {
+      next.visualIdentity.logoFileName = asset.fileName;
+      next.visualIdentity.logoUrl = asset.url;
+    } else {
+      next.visualIdentity.customBackgroundFileName = asset.fileName;
+      next.visualIdentity.customBackgroundUrl = asset.url;
+      next.visualIdentity.enableCustomBackground = true;
+    }
+    markDraftDirty(next);
+    onStatusMessage(
+      'success',
+      `${asset.kind === 'logo' ? 'Logotipo' : 'Plano de fundo'} "${asset.fileName}" aplicado na pré-visualização. Salve para publicar.`,
+    );
+  };
+
+  const handleDeleteLibraryAsset = async (asset: EventVisualAssetRecord) => {
+    try {
+      await controller.deleteEventVisualAsset(asset.storagePath);
+
+      if (asset.kind === 'logo' && draft.visualIdentity.logoUrl === asset.url) {
+        const fallbackLogo = targetEvent?.customizations.visualIdentity;
+        const next: EventCustomizations = structuredClone(draft);
+        next.visualIdentity.logoUrl =
+          fallbackLogo?.logoUrl && fallbackLogo.logoUrl !== asset.url
+            ? fallbackLogo.logoUrl
+            : DEFAULT_CUSTOMIZATIONS.visualIdentity.logoUrl;
+        next.visualIdentity.logoFileName =
+          fallbackLogo?.logoUrl && fallbackLogo.logoUrl !== asset.url
+            ? fallbackLogo.logoFileName
+            : DEFAULT_CUSTOMIZATIONS.visualIdentity.logoFileName;
+        setDraft(next);
+      } else if (
+        asset.kind === 'background' &&
+        draft.visualIdentity.customBackgroundUrl === asset.url
+      ) {
+        const fallbackBg = targetEvent?.customizations.visualIdentity;
+        const next: EventCustomizations = structuredClone(draft);
+        const keepSaved =
+          fallbackBg?.customBackgroundUrl && fallbackBg.customBackgroundUrl !== asset.url;
+        next.visualIdentity.customBackgroundUrl = keepSaved
+          ? fallbackBg.customBackgroundUrl
+          : DEFAULT_CUSTOMIZATIONS.visualIdentity.customBackgroundUrl;
+        next.visualIdentity.customBackgroundFileName = keepSaved
+          ? fallbackBg.customBackgroundFileName
+          : DEFAULT_CUSTOMIZATIONS.visualIdentity.customBackgroundFileName;
+        if (!keepSaved) {
+          next.visualIdentity.enableCustomBackground = false;
+        }
+        setDraft(next);
+      }
+
+      await loadVisualAssets();
+      onStatusMessage('success', `Imagem "${asset.fileName}" excluída do armazenamento.`);
+    } catch (error) {
+      onStatusMessage(
+        'error',
+        error instanceof Error ? error.message : 'Erro ao excluir imagem do armazenamento.',
+      );
+      throw error;
     }
   };
 
@@ -372,7 +457,11 @@ export function AdminCustomizationTab({
                     type="file"
                     accept="image/*"
                     disabled={uploadingKind === 'logo'}
-                    onChange={(e) => void handleAssetUpload('logo', e.target.files?.[0] ?? null)}
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      e.target.value = '';
+                      void handleAssetUpload('logo', file);
+                    }}
                   />
                   <p className="truncate text-xs text-muted-foreground">
                     Atual: {draft.visualIdentity.logoUrl || draft.visualIdentity.logoFileName}
@@ -386,9 +475,11 @@ export function AdminCustomizationTab({
                     type="file"
                     accept="image/*"
                     disabled={uploadingKind === 'background'}
-                    onChange={(e) =>
-                      void handleAssetUpload('background', e.target.files?.[0] ?? null)
-                    }
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] ?? null;
+                      e.target.value = '';
+                      void handleAssetUpload('background', file);
+                    }}
                   />
                   <p className="truncate text-xs text-muted-foreground">
                     Atual:{' '}
@@ -441,6 +532,18 @@ export function AdminCustomizationTab({
                   />
                 </div>
               </div>
+
+              <VisualAssetLibrary
+                assets={visualAssets}
+                loading={loadingAssets}
+                events={events}
+                currentEventId={targetEvent.id}
+                activeLogoUrl={draft.visualIdentity.logoUrl ?? null}
+                activeBackgroundUrl={draft.visualIdentity.customBackgroundUrl ?? null}
+                onRefresh={() => void loadVisualAssets()}
+                onSelectAsset={handleSelectLibraryAsset}
+                onDeleteAsset={handleDeleteLibraryAsset}
+              />
             </CardContent>
           </Card>
 

@@ -22,6 +22,10 @@ class FakeClock implements Clock {
     return this.currentMs;
   }
 
+  advanceMs(deltaMs: number): void {
+    this.currentMs += deltaMs;
+  }
+
   toISOString(ms?: number): string {
     return new Date(ms ?? this.currentMs).toISOString();
   }
@@ -1483,6 +1487,66 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
           bytes: logoBytes,
         }),
       ).rejects.toThrow(/Administrador/i);
+      await expect(opController.listEventVisualAssets()).rejects.toThrow(/Administrador/i);
+      await expect(
+        opController.deleteEventVisualAsset('any/path.png'),
+      ).rejects.toThrow(/Administrador/i);
+    });
+
+    it('lista biblioteca de imagens de todos os Eventos, permite reaproveitamento e impede exclusão de imagem em uso', async () => {
+      const clock = new FakeClock('2026-11-16T14:00:00.000Z');
+      const random = new DeterministicRandomSource();
+      const cloudGateway = new InMemoryCloudGateway({ nowIso: () => clock.toISOString() });
+
+      const adminController = new EventAdminController({ cloudGateway, clock, random });
+      await adminController.login('admin@caesb.df.gov.br', 'CAESB2025!');
+
+      const secondEvent = await adminController.createEvent({
+        name: 'Congresso de Saneamento',
+        isActive: true,
+      });
+
+      const sampleBytes = new Uint8Array([137, 80, 78, 71]);
+      const logo1 = await adminController.uploadEventVisualAsset({
+        eventId: DEFAULT_EVENT_ID,
+        kind: 'logo',
+        fileName: 'logo-v1.png',
+        mimeType: 'image/png',
+        bytes: sampleBytes,
+      });
+      clock.advanceMs(1000);
+      const logo2 = await adminController.uploadEventVisualAsset({
+        eventId: secondEvent.id,
+        kind: 'logo',
+        fileName: 'logo-congresso.png',
+        mimeType: 'image/png',
+        bytes: sampleBytes,
+      });
+
+      const allAssets = await adminController.listEventVisualAssets();
+      expect(allAssets).toHaveLength(2);
+      expect(allAssets.map((a) => a.fileName)).toEqual(['logo-congresso.png', 'logo-v1.png']);
+
+      // Reaproveita logo2 (enviado no secondEvent) no Evento padrão (DEFAULT_EVENT_ID)
+      const [defaultEv] = await adminController.listEvents();
+      const custom = structuredClone(defaultEv!.customizations);
+      custom.visualIdentity.logoFileName = logo2.fileName;
+      custom.visualIdentity.logoUrl = logo2.url;
+      await adminController.saveEventCustomizations(DEFAULT_EVENT_ID, custom);
+
+      const logo2Record = allAssets.find((a) => a.url === logo2.url)!;
+      const logo1Record = allAssets.find((a) => a.url === logo1.url)!;
+
+      // Impede exclusão de logo2 enquanto está em uso no Evento salvo
+      await expect(
+        adminController.deleteEventVisualAsset(logo2Record.storagePath),
+      ).rejects.toThrow(/em uso no\(s\) Evento\(s\)/i);
+
+      // Permite excluir logo1 que não está vinculada a nenhum Evento salvo
+      await adminController.deleteEventVisualAsset(logo1Record.storagePath);
+      const remaining = await adminController.listEventVisualAssets();
+      expect(remaining).toHaveLength(1);
+      expect(remaining[0].url).toBe(logo2.url);
     });
   });
 
