@@ -82,6 +82,21 @@ describe('LayoutPreviewApp (Totem real dentro do iframe de prévia)', () => {
     expect(closed.querySelector('.slogan')).not.toBeNull();
   });
 
+  it('mostra a logo estilizada no Quiz Fechado só quando ativada no layout', () => {
+    render(<LayoutPreviewApp />);
+    sendState({ screenId: 'closed' });
+    expect(document.querySelector('#closed-screen [data-layout-element="stylizedLogo"]')).toBeNull();
+    sendState({
+      screenId: 'closed',
+      layout: updateLayoutElement(undefined, 'closed', 'stylizedLogo', { visible: true }),
+    });
+    expect(
+      document
+        .querySelector('#closed-screen [data-layout-element="stylizedLogo"] img')
+        ?.getAttribute('src'),
+    ).toBe('/assets/logo-estilizada.png');
+  });
+
   it('mostra a Tela de Descanso com a mensagem de Evento fechado quando pedido', () => {
     render(<LayoutPreviewApp />);
     sendState({ screenId: 'idle', showConditional: true });

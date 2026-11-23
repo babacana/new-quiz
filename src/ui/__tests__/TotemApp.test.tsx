@@ -139,6 +139,31 @@ describe('TotemApp (Interface do Totem)', () => {
     expect((item as HTMLElement).style.fontSize).toBe('120%');
   });
 
+  it('Quiz Fechado: a logo estilizada da CAESB aparece quando ativada no layout', async () => {
+    const { engine } = createUiTestRig({
+      nowIso: '2026-11-16T09:00:00-03:00',
+      eventOverrides: {
+        startTime: '2026-11-16T10:00:00-03:00',
+        endTime: '2026-11-16T18:00:00-03:00',
+        enableOutOfPeriodMessage: true,
+        customizations: {
+          ...DEFAULT_EVENT_CONFIG.customizations,
+          layout: {
+            version: 1,
+            screens: { closed: { elements: { stylizedLogo: { visible: true } } } },
+          },
+        },
+      },
+    });
+    render(<TotemApp engine={engine} />);
+    await waitFor(() => expect(document.getElementById('closed-screen')).toHaveClass('active'));
+    expect(
+      document
+        .querySelector('#closed-screen [data-layout-element="stylizedLogo"] img')
+        ?.getAttribute('src'),
+    ).toBe('/assets/logo-estilizada.png');
+  });
+
   it('aplica o layout configurado no Evento (zonas, tamanho, cor) e mantém o padrão sem layout', async () => {
     const { engine } = createUiTestRig({
       eventOverrides: {
