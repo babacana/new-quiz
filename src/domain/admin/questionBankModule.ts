@@ -401,7 +401,8 @@ export class QuestionBankModule {
       ].join(','),
     );
 
-    return [header, ...lines].join('\n');
+    // The UTF-8 BOM lets Excel recognize the encoding when opening the file directly.
+    return '\uFEFF' + [header, ...lines].join('\n');
   }
 
   async importQuestionsJson(

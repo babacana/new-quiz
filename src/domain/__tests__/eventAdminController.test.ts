@@ -402,6 +402,7 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       expect(parsedInitial.length).toBeGreaterThanOrEqual(10);
 
       const initialCsv = await controller.exportQuestionsCsv();
+      expect(initialCsv.startsWith('\uFEFF')).toBe(true);
       expect(initialCsv).toContain('id,text,optionA,optionB,optionC,optionD,correctIndex,difficulty,tags,isDisabled');
 
       // Importação JSON no modo merge aceitando campo legado "correct" e dificuldade acentuada ("Fácil").
