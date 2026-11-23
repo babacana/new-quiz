@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
+import { resolveScreenLayout } from '../domain/screenLayout';
 import { extractPairingCodeFromInput } from '../domain/pairingUtils';
 import {
   TotemSessionEngine,
@@ -737,6 +738,9 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const logoSrc = snapshot.resolvedAssets.logoSrc;
   const backgroundSrc = snapshot.resolvedAssets.backgroundSrc;
   const themeStyle = buildThemeCssVariables(snapshot.event.customizations);
+  const eventLayout = snapshot.event.customizations.layout;
+  const initialLayout = useMemo(() => resolveScreenLayout(eventLayout, 'initial'), [eventLayout]);
+  const idleLayout = useMemo(() => resolveScreenLayout(eventLayout, 'idle'), [eventLayout]);
   const { eventWindow } = snapshot;
   const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
   const showPairingModal =
@@ -765,6 +769,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
         <TotemInitialScreen
           active={snapshot.screen === 'initial-screen'}
+          layout={initialLayout}
           logoSrc={logoSrc}
           texts={texts}
           eventWindow={eventWindow}
@@ -839,6 +844,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
         <TotemIdleScreen
           active={snapshot.screen === 'idle-screen'}
+          layout={idleLayout}
           logoSrc={logoSrc}
           texts={texts}
           eventWindow={eventWindow}

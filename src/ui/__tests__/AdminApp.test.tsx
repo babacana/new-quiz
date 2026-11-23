@@ -829,3 +829,59 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     expect(within(kpis).getByText('1 participante(s) único(s)')).toBeInTheDocument();
   });
 });
+
+describe('AdminApp — Layout das Telas', () => {
+  it('edita o layout da Tela Inicial e da Tela de Descanso, muda a resolução da prévia e salva no Evento', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+
+    await user.click(await screen.findByRole('button', { name: 'Layout das Telas' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Layout das Telas do Totem' }),
+    ).toBeInTheDocument();
+
+    // Prévia usa a resolução do Totem por padrão e permite resolução personalizada
+    const stage = screen.getByTestId('layout-preview-stage');
+    expect(stage.style.width).toBe('1080px');
+    expect(stage.style.height).toBe('1920px');
+    await user.selectOptions(screen.getByLabelText('Resolução da prévia'), 'custom');
+    fireEvent.change(screen.getByLabelText('Largura'), { target: { value: '1920' } });
+    fireEvent.change(screen.getByLabelText('Altura'), { target: { value: '1080' } });
+    expect(screen.getByTestId('layout-preview-stage').style.width).toBe('607.5px');
+
+    // Move o botão Iniciar Quiz para a base: prévia reflete na zona correspondente
+    const bottomZone = () =>
+      document.querySelector('[data-testid="layout-preview-stage"] [data-layout-zone="bottom"]')!;
+    expect(bottomZone().querySelector('#start-quiz-btn')).toBeNull();
+    const startRow = screen.getByTestId('layout-element-startButton');
+    await user.click(within(startRow).getByRole('button', { name: 'Base' }));
+    expect(bottomZone().querySelector('#start-quiz-btn')).not.toBeNull();
+    // Elementos obrigatórios não podem ser ocultados
+    expect(
+      within(startRow).getByRole('button', { name: 'Ocultar Botão Iniciar Quiz' }),
+    ).toBeDisabled();
+
+    // Tela de Descanso: oculta a vitrine e ajusta o tamanho do logotipo
+    await user.click(screen.getByRole('tab', { name: 'Tela de Descanso' }));
+    const showcaseRow = screen.getByTestId('layout-element-showcase');
+    await user.click(within(showcaseRow).getByRole('button', { name: 'Ocultar Vitrine (pódio e estatísticas)' }));
+    expect(document.querySelector('[data-testid="layout-preview-stage"] .idle-showcase-card')).toBeNull();
+    await user.click(within(screen.getByTestId('layout-element-logo')).getByText('Logotipo'));
+    fireEvent.change(screen.getByLabelText(/Tamanho \(100%\)/), { target: { value: '150' } });
+
+    await user.click(screen.getByRole('button', { name: 'Salvar Layout' }));
+    expect(await screen.findByText(/Layout das telas salvo/i)).toBeInTheDocument();
+
+    const [savedEvent] = await cloudGateway.listEvents();
+    expect(savedEvent?.customizations.layout?.screens.initial?.elements).toMatchObject({
+      startButton: { zone: 'bottom' },
+    });
+    expect(savedEvent?.customizations.layout?.screens.idle?.elements).toMatchObject({
+      showcase: { visible: false },
+      logo: { scalePercent: 150 },
+    });
+    // Salvar o layout não altera a aparência
+    expect(savedEvent?.customizations.colors.quizMainBackground).toBe('#002244');
+  });
+});

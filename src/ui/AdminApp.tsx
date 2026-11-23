@@ -12,6 +12,7 @@ import type {
 import { AdminAnalyticsTab } from './AdminAnalyticsTab';
 import { AdminBackupTab } from './AdminBackupTab';
 import { AdminCustomizationTab } from './AdminCustomizationTab';
+import { AdminLayoutTab } from './AdminLayoutTab';
 import { AdminEventsTab } from './AdminEventsTab';
 import { AdminOverviewTab } from './AdminOverviewTab';
 import { AdminSettingsTab } from './AdminSettingsTab';
@@ -425,6 +426,18 @@ export function AdminApp({
                 events={events}
                 selectedEventId={selectedEventId}
                 onSelectEvent={(id) => requestGuardedAction({ type: 'select-event', eventId: id })}
+                onEventsChanged={loadWorkspaceData}
+                onRegisterSaveHandler={registerSaveHandler}
+                onStatusMessage={handleStatusMessage}
+              />
+            )}
+
+            {activeTab === 'layout' && (
+              <AdminLayoutTab
+                controller={controller}
+                navigationGuard={navigationGuard}
+                events={events}
+                selectedEventId={selectedEventId}
                 onEventsChanged={loadWorkspaceData}
                 onRegisterSaveHandler={registerSaveHandler}
                 onStatusMessage={handleStatusMessage}

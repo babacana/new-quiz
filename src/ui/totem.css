@@ -259,6 +259,59 @@ body.totem-fullscreen-mode {
   display: none !important;
 }
 
+/* Layout por zonas (topo, centro, base) configurável no ADM — ver LayoutScreenContent */
+.layout-zones {
+  justify-content: space-between;
+  gap: 0;
+}
+
+.layout-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-height: 0;
+}
+
+.layout-zone-top,
+.layout-zone-bottom {
+  flex: 0 0 auto;
+}
+
+.layout-zone-center {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.layout-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  --layout-scale: 1;
+}
+
+.layout-item.is-highlighted {
+  outline: 0.14em dashed var(--quiz-highlight-color);
+  outline-offset: 0.2em;
+}
+
+.layout-item[data-layout-element='logo'] .event-logo {
+  width: calc(58% * var(--layout-scale));
+  max-height: calc(18cqh * var(--layout-scale));
+}
+
+#initial-screen .screen-content.layout-zones {
+  height: 100%;
+  margin: 0;
+  justify-content: space-between;
+}
+
+#idle-screen .layout-zone {
+  gap: 0.5em;
+}
+
 /* Tela de Descanso do Totem — sem sobreposição entre showcase e chamada à ação */
 #idle-screen {
   justify-content: center;
@@ -324,14 +377,6 @@ body.totem-fullscreen-mode {
   justify-content: space-between;
   gap: 0.85em;
   padding: 2em 1.1em 2.2em;
-}
-
-#idle-screen .idle-hero-header {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5em;
-  width: 100%;
 }
 
 #idle-screen .slogan {
@@ -481,7 +526,7 @@ body.totem-fullscreen-mode {
 #idle-screen #idle-call-to-action {
   position: static;
   width: 100%;
-  font-size: min(var(--idle-call-to-action-font-size), 8.2cqw);
+  font-size: calc(min(var(--idle-call-to-action-font-size), 8.2cqw) * var(--layout-scale, 1));
   line-height: 1.18;
   font-weight: 800;
   color: var(--quiz-highlight-color);

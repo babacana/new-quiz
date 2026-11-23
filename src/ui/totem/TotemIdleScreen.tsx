@@ -4,8 +4,10 @@ import type {
   EventWindowState,
   RankingEntry,
 } from '../../domain/types';
+import type { ResolvedScreenLayout } from '../../domain/screenLayout';
 import { EventLogoImage } from '../EventLogoImage';
 import { formatTimeMMSS } from '../formatters';
+import { LayoutScreenContent } from './LayoutScreenContent';
 
 export interface TotemIdleScreenProps {
   active: boolean;
@@ -17,6 +19,10 @@ export interface TotemIdleScreenProps {
   totalMatchesCount: number;
   idleSlideIndex: number;
   onWake: () => void;
+  /** Layout resolvido do Evento; sem ele usa a distribuição padrão. */
+  layout?: ResolvedScreenLayout;
+  /** Elemento destacado no editor de layout do ADM. */
+  highlightedElementId?: string | null;
 }
 
 // Tela de Descanso rotativa do Totem exibindo pódio ao vivo, total real de participações e chamada à ação.
@@ -30,6 +36,8 @@ export function TotemIdleScreen({
   totalMatchesCount,
   idleSlideIndex,
   onWake,
+  layout,
+  highlightedElementId,
 }: TotemIdleScreenProps) {
   return (
     <section
@@ -47,14 +55,15 @@ export function TotemIdleScreen({
         </div>
       )}
 
-      <div className="screen-content">
-        <div className="idle-hero-header">
-          <EventLogoImage src={logoSrc} />
-          <p className="slogan">{texts.initialScreenSlogan}</p>
-        </div>
-
-        {!eventWindow.isBlocked && (
-          <div className="idle-showcase-card" aria-live="off">
+      <LayoutScreenContent
+        screenId="idle"
+        layout={layout}
+        highlightedElementId={highlightedElementId}
+        elements={{
+          logo: <EventLogoImage src={logoSrc} />,
+          slogan: <p className="slogan">{texts.initialScreenSlogan}</p>,
+          showcase: eventWindow.isBlocked ? null : (
+<div className="idle-showcase-card" aria-live="off">
             {idleSlideIndex === 0 && (
               <div className="idle-showcase-slide" data-testid="idle-slide-podium">
                 <span className="idle-showcase-kicker">Pódio ao Vivo · Top 3</span>
@@ -121,8 +130,8 @@ export function TotemIdleScreen({
               ))}
             </div>
           </div>
-        )}
-
+          ),
+          callToAction: (
         <h2
           id="idle-call-to-action"
           className={!eventWindow.isBlocked ? 'idle-cta-animated' : undefined}
@@ -132,7 +141,9 @@ export function TotemIdleScreen({
             <small>{eventWindow.idleCallToActionSubtitle}</small>
           )}
         </h2>
-      </div>
+          ),
+        }}
+      />
     </section>
   );
 }

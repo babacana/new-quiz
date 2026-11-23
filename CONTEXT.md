@@ -18,6 +18,10 @@ _Avoid_: Kiosk, cliente, máquina, terminal, aparelho
 Vínculo autorizado entre um Totem físico e o painel administrativo por meio de código ou link de ativação, permitindo associá-lo a um Evento e receber comandos remotos.
 _Avoid_: Login do totem, cadastro de máquina
 
+**Layout da Tela**:
+Posição, ordem, tamanho, espaçamento e visibilidade de cada elemento de uma tela do Totem (hoje Tela Inicial e Tela de Descanso), definidos pelo Administrador por Evento em zonas topo, centro e base, com prévia em qualquer resolução. Fica em `customizations.layout` do Evento e é aplicado pelo Totem, inclusive offline, junto com o restante da configuração.
+_Avoid_: Template, tema (o tema trata de cores e fontes)
+
 ### Jogo e Participação
 
 **Participante**:
