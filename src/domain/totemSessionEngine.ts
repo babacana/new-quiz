@@ -19,6 +19,7 @@ import type {
   RandomSource,
   TotemCloudPort,
 } from './ports';
+import { TotemNotRecognizedError } from './ports';
 import { TotemSyncManager } from './totemSyncManager';
 import type {
   ActiveQuestionState,
@@ -473,11 +474,30 @@ export class TotemSessionEngine {
       } else if (updated?.lastSeenAt) {
         this.lastHeartbeatAt = updated.lastSeenAt;
       }
-    } catch {
+    } catch (error) {
+      if (error instanceof TotemNotRecognizedError && effectiveOnline && this.activeMatch === null) {
+        await this.resetRevokedPairing();
+        return this.getSnapshot();
+      }
       // Falha ao enviar telemetria não interrompe o funcionamento local do Totem.
     }
 
     return this.getSnapshot();
+  }
+
+  // O Totem foi excluído ou despareado no painel: descarta a identidade local e volta à tela de Pareamento.
+  // A fila de sincronização é preservada para não perder Partidas ainda não enviadas.
+  private async resetRevokedPairing(): Promise<void> {
+    this.totemConfig = {
+      ...this.totemConfig,
+      totemId: null,
+      totemName: null,
+      pairingCode: null,
+      deviceToken: null,
+    };
+    this.pairingStatus = 'unpaired';
+    this.screen = 'initial-screen';
+    await this.requestPairing();
   }
 
   async requestPairing(): Promise<TotemSessionSnapshot> {

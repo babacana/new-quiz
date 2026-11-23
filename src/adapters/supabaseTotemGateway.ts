@@ -1,5 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { normalizePairingCode } from '../domain/pairingUtils';
+import { TotemNotRecognizedError } from '../domain/ports';
 import type {
   CloudEventSnapshot,
   PushMatchResponse,
@@ -335,8 +336,12 @@ export class SupabaseTotemGateway implements TotemCloudPort {
       })
       .maybeSingle<SupabaseTotemRow>();
 
-    if (error || !data) {
+    if (error) {
       return null;
+    }
+    if (!data) {
+      // A RPC respondeu sem erro, mas nenhuma linha casou com (totem_id, device_token, is_paired).
+      throw new TotemNotRecognizedError();
     }
 
     const record = mapTotemRow(data);

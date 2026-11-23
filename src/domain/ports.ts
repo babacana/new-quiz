@@ -25,6 +25,14 @@ import type {
   VisualAssetKind,
 } from './types';
 
+// Sinaliza que a nuvem respondeu normalmente, mas não reconhece este Totem (excluído ou despareado).
+export class TotemNotRecognizedError extends Error {
+  constructor() {
+    super('Totem não reconhecido pela nuvem: Pareamento removido.');
+    this.name = 'TotemNotRecognizedError';
+  }
+}
+
 // Fonte determinística de tempo para permitir testes sem dependência de timers reais.
 export interface Clock {
   now(): number;
