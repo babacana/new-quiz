@@ -1,4 +1,5 @@
 import { DEFAULT_CUSTOMIZATIONS } from './defaults';
+import { sanitizeEventLayout } from './screenLayout';
 import type {
   CustomizationSection,
   EventCustomizations,
@@ -95,6 +96,11 @@ export function mergeEventCustomizations(
     colors: { ...base.colors, ...(patch?.colors ?? {}) },
     fontSizes: { ...base.fontSizes, ...(patch?.fontSizes ?? {}) },
     visualIdentity: { ...base.visualIdentity, ...(patch?.visualIdentity ?? {}) },
+    ...(patch?.layout !== undefined
+      ? { layout: sanitizeEventLayout(patch.layout) }
+      : base.layout !== undefined
+        ? { layout: base.layout }
+        : {}),
   };
 }
 
@@ -110,6 +116,7 @@ export function applyPredefinedTheme(
   const presetClone = structuredClone(preset.customizations);
 
   return {
+    ...(base.layout !== undefined ? { layout: base.layout } : {}),
     texts: options.includeTexts ? presetClone.texts : base.texts,
     colors: presetClone.colors,
     fontSizes: presetClone.fontSizes,
@@ -133,7 +140,8 @@ export function restoreDefaultCustomizations(
 ): EventCustomizations {
   const defaults = structuredClone(DEFAULT_CUSTOMIZATIONS);
   if (section === 'all') {
-    return defaults;
+    // O layout das telas tem editor próprio e não é afetado pela restauração visual.
+    return current.layout !== undefined ? { ...defaults, layout: current.layout } : defaults;
   }
 
   const next = structuredClone(current);

@@ -2,6 +2,7 @@ export type AdminTabId =
   | 'overview'
   | 'settings'
   | 'customization'
+  | 'layout'
   | 'reports'
   | 'analytics'
   | 'events'
@@ -36,6 +37,12 @@ export const ADMIN_ROUTES: readonly AdminRouteMeta[] = [
     id: 'customization',
     slug: 'aparencia',
     label: 'Personalização Visual',
+    group: 'event',
+  },
+  {
+    id: 'layout',
+    slug: 'layout',
+    label: 'Layout das Telas',
     group: 'event',
   },
   {

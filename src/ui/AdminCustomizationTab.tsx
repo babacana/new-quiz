@@ -177,7 +177,13 @@ export function AdminCustomizationTab({
     }
     setSaving(true);
     try {
-      const saved = await controller.saveEventCustomizations(targetEvent.id, draft);
+      // O layout das telas tem editor próprio (aba Layout das Telas) e não deve ser sobrescrito aqui.
+      const saved = await controller.saveEventCustomizations(targetEvent.id, {
+        texts: draft.texts,
+        colors: draft.colors,
+        fontSizes: draft.fontSizes,
+        visualIdentity: draft.visualIdentity,
+      });
       setIsDirty(false);
       navigationGuard.clearDirty('customization');
       onStatusMessage(

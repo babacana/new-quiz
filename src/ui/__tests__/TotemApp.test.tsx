@@ -112,6 +112,50 @@ describe('TotemApp (Interface do Totem)', () => {
     vi.restoreAllMocks();
   });
 
+  it('aplica o layout configurado no Evento (zonas, tamanho, cor) e mantém o padrão sem layout', async () => {
+    const { engine } = createUiTestRig({
+      eventOverrides: {
+        customizations: {
+          ...DEFAULT_EVENT_CONFIG.customizations,
+          layout: {
+            version: 1,
+            screens: {
+              initial: {
+                elements: {
+                  startButton: { zone: 'bottom', scalePercent: 150 },
+                  slogan: { visible: false },
+                  title: { zone: 'top', textColor: '#ff0000' },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    render(<TotemApp engine={engine} />);
+
+    // Aguarda o Totem carregar o Evento da nuvem (o layout chega junto com a configuração).
+    await waitFor(() =>
+      expect(
+        document
+          .getElementById('start-quiz-btn')
+          ?.closest('[data-layout-zone]')
+          ?.getAttribute('data-layout-zone'),
+      ).toBe('bottom'),
+    );
+    const startButton = screen.getByRole('button', { name: 'Iniciar Quiz' });
+    expect((startButton.closest('.layout-item') as HTMLElement).style.fontSize).toBe('150%');
+
+    const title = screen.getByRole('heading', { name: 'Bem-vindo ao Quiz!' });
+    expect(title.closest('[data-layout-zone]')?.getAttribute('data-layout-zone')).toBe('top');
+    expect((title.closest('.layout-item') as HTMLElement).style.color).toBe('rgb(255, 0, 0)');
+    expect(document.querySelector('#initial-screen .slogan')).toBeNull();
+    // Campos continuam no centro (padrão)
+    expect(
+      document.getElementById('nome')?.closest('[data-layout-zone]')?.getAttribute('data-layout-zone'),
+    ).toBe('center');
+  });
+
   it('converte nome para maiúsculas, aplica máscara de telefone, percorre Partida e abre modal "Onde Eu Errei?"', async () => {
     const user = userEvent.setup();
     const { engine } = createUiTestRig({ numberOfQuestions: 2 });

@@ -1,5 +1,7 @@
 // Tipos de domínio utilizando o vocabulário ubíquo definido em CONTEXT.md.
 
+import type { EventLayout } from './screenLayout';
+
 export type DifficultyLevel = 'facil' | 'moderado' | 'dificil';
 
 export interface DifficultyPercentages {
@@ -135,6 +137,8 @@ export interface EventCustomizations {
   colors: EventCustomizationColors;
   fontSizes: EventCustomizationFontSizes;
   visualIdentity: EventVisualIdentity;
+  /** Posição dos elementos das telas do Totem; ausente em Eventos antigos (usa o layout padrão). */
+  layout?: EventLayout;
 }
 
 export interface EventConfig {
@@ -441,6 +445,7 @@ export interface EventCustomizationsPatch {
   colors?: Partial<EventCustomizationColors>;
   fontSizes?: Partial<EventCustomizationFontSizes>;
   visualIdentity?: Partial<EventVisualIdentity>;
+  layout?: EventLayout;
 }
 
 export interface EventUpsertInput {
@@ -514,7 +519,7 @@ export interface QuestionsImportResult {
   mode: QuestionsImportMode;
 }
 
-export type DirtySection = 'event' | 'settings' | 'question' | 'customization';
+export type DirtySection = 'event' | 'settings' | 'question' | 'customization' | 'layout';
 export type UnsavedChangesResolution = 'save_and_leave' | 'discard_and_leave' | 'cancel';
 
 export interface UnsavedNavigationPrompt {

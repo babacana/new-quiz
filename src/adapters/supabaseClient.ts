@@ -1,5 +1,6 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from '../domain/defaults';
+import { sanitizeEventLayout } from '../domain/screenLayout';
 import type {
   DifficultyLevel,
   EventConfig,
@@ -202,6 +203,9 @@ export function mapEventRow(row: SupabaseEventRow): EventConfig {
         ...DEFAULT_CUSTOMIZATIONS.visualIdentity,
         ...(rawCustomizations.visualIdentity ?? {}),
       },
+      ...(rawCustomizations.layout !== undefined
+        ? { layout: sanitizeEventLayout(rawCustomizations.layout) }
+        : {}),
     },
     configVersion: row.config_version,
   };
