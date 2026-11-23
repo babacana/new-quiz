@@ -32,6 +32,15 @@ describe('screenLayout', () => {
 
     const closed = resolveScreenLayout(undefined, 'closed');
     expect(closed.zones.center).toEqual(['logo', 'slogan', 'statusMessage', 'rankingButton']);
+    // A logo estilizada também é opcional (oculta por padrão) na tela fechada
+    const closedWithLogo = updateLayoutElement(undefined, 'closed', 'stylizedLogo', { visible: true });
+    expect(resolveScreenLayout(closedWithLogo, 'closed').zones.center).toEqual([
+      'logo',
+      'stylizedLogo',
+      'slogan',
+      'statusMessage',
+      'rankingButton',
+    ]);
     // A mensagem do Evento é obrigatória na tela fechada
     expect(
       resolveScreenLayout(updateLayoutElement(undefined, 'closed', 'statusMessage', { visible: false }), 'closed')

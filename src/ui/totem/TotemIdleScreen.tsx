@@ -7,6 +7,7 @@ import type {
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
 import { EventLogoImage } from '../EventLogoImage';
 import { formatTimeMMSS } from '../formatters';
+import { StylizedLogoImage } from './StylizedLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
 
 export interface TotemIdleScreenProps {
@@ -131,13 +132,7 @@ export function TotemIdleScreen({
             </div>
           </div>
           ),
-          stylizedLogo: (
-            <img
-              src="/assets/logo-estilizada.png"
-              alt="CAESB"
-              className="event-logo idle-stylized-logo"
-            />
-          ),
+          stylizedLogo: <StylizedLogoImage />,
           callToAction: (
         <h2
           id="idle-call-to-action"

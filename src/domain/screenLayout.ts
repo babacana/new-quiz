@@ -87,6 +87,13 @@ export const LAYOUT_SCREENS: readonly LayoutScreenDefinition[] = [
     label: 'Quiz Fechado',
     elements: [
       { id: 'logo', label: 'Logotipo', defaultZone: 'center' },
+      {
+        id: 'stylizedLogo',
+        label: 'Logo estilizada da CAESB',
+        hint: 'Opcional: começa oculta. Ative aqui para exibi-la na tela de Quiz Fechado.',
+        defaultZone: 'center',
+        defaultHidden: true,
+      },
       { id: 'slogan', label: 'Slogan', defaultZone: 'center', supportsColor: true },
       {
         id: 'statusMessage',

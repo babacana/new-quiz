@@ -1,6 +1,7 @@
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
 import type { EventCustomizationTexts, EventWindowState } from '../../domain/types';
 import { EventLogoImage } from '../EventLogoImage';
+import { StylizedLogoImage } from './StylizedLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
 
 export interface TotemClosedScreenProps {
@@ -38,6 +39,7 @@ export function TotemClosedScreen({
         highlightedElementId={highlightedElementId}
         elements={{
           logo: <EventLogoImage src={logoSrc} />,
+          stylizedLogo: <StylizedLogoImage />,
           slogan: <p className="slogan">{texts.initialScreenSlogan}</p>,
           statusMessage: eventWindow.initialScreenMessage ? (
             <p id="closed-status-message" className="event-status-message">
