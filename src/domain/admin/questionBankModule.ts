@@ -410,33 +410,49 @@ export class QuestionBankModule {
     return writeQuestionWorkbook(await this.listAllQuestions());
   }
 
-  async previewQuestionsXlsx(file: ArrayBuffer): Promise<Array<{ id: number; text: string }>> {
+  async previewQuestionsXlsx(
+    file: ArrayBuffer,
+  ): Promise<Array<{ id: number; text: string; isNew: boolean }>> {
     const changes = await this.getWorkbookChanges(file);
-    return changes.map(({ id, text }) => ({ id, text }));
+    return changes.map(({ question, isNew }) => ({ id: question.id, text: question.text, isNew }));
   }
 
-  async importQuestionsXlsx(file: ArrayBuffer, reviewed?: Array<{ id: number; text: string }>): Promise<number> {
+  async importQuestionsXlsx(
+    file: ArrayBuffer,
+    reviewed?: Array<{ id: number; text: string; isNew?: boolean }>,
+  ): Promise<number> {
     const changes = await this.getWorkbookChanges(file);
-    if (reviewed && JSON.stringify(reviewed) !== JSON.stringify(changes.map(({ id, text }) => ({ id, text })))) {
+    const summary = (items: Array<{ id: number; text: string; isNew?: boolean }>) =>
+      JSON.stringify(items.map(({ id, text, isNew }) => ({ id, text, isNew: Boolean(isNew) })));
+    if (reviewed && summary(reviewed) !== summary(changes.map(({ question, isNew }) => ({ ...question, isNew })))) {
       throw new Error('O banco mudou desde a revisão. Revise a planilha novamente.');
     }
 
-    for (const question of changes) {
-      await this.updateQuestion(question.id, question);
+    for (const { question, isNew } of changes) {
+      if (isNew) await this.createQuestion(question);
+      else await this.updateQuestion(question.id, question);
     }
     return changes.length;
   }
 
-  private async getWorkbookChanges(file: ArrayBuffer): Promise<Question[]> {
+  /**
+   * Lê a planilha. Linhas com ID existente atualizam a questão; linhas com ID vazio ou ainda
+   * inexistente criam uma questão nova (ID vazio recebe o próximo número livre).
+   */
+  private async getWorkbookChanges(
+    file: ArrayBuffer,
+  ): Promise<Array<{ question: Question; isNew: boolean }>> {
     const existing = new Map((await this.listAllQuestions()).map((question) => [question.id, question]));
     const ids = new Set<number>();
-    const changes: Question[] = [];
+    const changes: Array<{ question: Question; isNew: boolean }> = [];
+    const blankIdRows: Question[] = [];
     await readQuestionWorkbook(file, ([rawId, text, a, b, c, d, answer, level, tags, disabled]) => {
-      const id = /^\d+$/.test(rawId) ? Number(rawId) : NaN;
-      const current = existing.get(id);
-      if (!current) throw new Error('Informe o ID de uma questão existente.');
-      if (ids.has(id)) throw new Error(`ID ${id} repetido.`);
-      ids.add(id);
+      const isBlank = rawId === '';
+      if (!isBlank && !/^\d+$/.test(rawId)) throw new Error('O ID deve ser um número ou ficar vazio para criar uma questão.');
+      const id = isBlank ? 0 : Number(rawId);
+      const current = isBlank ? undefined : existing.get(id);
+      if (!isBlank && ids.has(id)) throw new Error(`ID ${id} repetido.`);
+      if (!isBlank) ids.add(id);
 
       const correctIndex = ['A', 'B', 'C', 'D'].indexOf(answer.toUpperCase());
       if (correctIndex < 0) throw new Error('Escolha A, B, C ou D em Resposta correta.');
@@ -448,17 +464,28 @@ export class QuestionBankModule {
       if (status !== 'sim' && status !== 'não') throw new Error('Escolha Sim ou Não em Desativada.');
       const question: Question = {
         id, text, options: [a, b, c, d], correctIndex, difficulty,
-        tags: tags === current.tags.join('; ') ? current.tags : normalizeTags(tags.split(';')),
+        tags: current && tags === current.tags.join('; ') ? current.tags : normalizeTags(tags.split(';')),
         isDisabled: status === 'sim',
       };
       validateQuestionInput(question);
+      if (!current) {
+        if (isBlank) blankIdRows.push(question);
+        else changes.push({ question, isNew: true });
+        return;
+      }
       if (text !== current.text || question.options.some((option, index) => option !== current.options[index])
         || correctIndex !== current.correctIndex || difficulty !== current.difficulty
         || question.isDisabled !== current.isDisabled
         || JSON.stringify(question.tags) !== JSON.stringify(current.tags)) {
-        changes.push(question);
+        changes.push({ question, isNew: false });
       }
     });
+
+    // IDs vazios recebem os próximos números livres, depois de todos os IDs existentes ou citados.
+    let nextId = Math.max(0, ...existing.keys(), ...ids) + 1;
+    for (const question of blankIdRows) {
+      changes.push({ question: { ...question, id: nextId++ }, isNew: true });
+    }
     return changes;
   }
 

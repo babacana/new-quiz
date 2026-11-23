@@ -231,11 +231,11 @@ export class EventAdminController {
     return this.questionBankModule.exportQuestionsXlsx();
   }
 
-  previewQuestionsXlsx(file: ArrayBuffer): Promise<Array<{ id: number; text: string }>> {
+  previewQuestionsXlsx(file: ArrayBuffer): Promise<Array<{ id: number; text: string; isNew: boolean }>> {
     return this.questionBankModule.previewQuestionsXlsx(file);
   }
 
-  importQuestionsXlsx(file: ArrayBuffer, reviewed?: Array<{ id: number; text: string }>): Promise<number> {
+  importQuestionsXlsx(file: ArrayBuffer, reviewed?: Array<{ id: number; text: string; isNew?: boolean }>): Promise<number> {
     return this.questionBankModule.importQuestionsXlsx(file, reviewed);
   }
 

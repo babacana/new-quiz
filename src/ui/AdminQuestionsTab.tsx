@@ -125,7 +125,7 @@ export function AdminQuestionsTab({
   const [workbookFile, setWorkbookFile] = useState<File | null>(null);
   const [workbookReview, setWorkbookReview] = useState<{
     data: ArrayBuffer;
-    changes: Array<{ id: number; text: string }>;
+    changes: Array<{ id: number; text: string; isNew: boolean }>;
   } | null>(null);
   const [workbookError, setWorkbookError] = useState('');
   const [workbookBusy, setWorkbookBusy] = useState(false);
@@ -316,7 +316,7 @@ export function AdminQuestionsTab({
       setIsWorkbookOpen(false);
       await refreshList();
       await onQuestionsChanged();
-      onStatusMessage('success', `${count} questão(ões) atualizada(s) pela planilha.`);
+      onStatusMessage('success', `${count} questão(ões) criada(s) ou atualizada(s) pela planilha.`);
     } catch (error) {
       setWorkbookReview(null);
       const message = error instanceof Error ? error.message : 'Erro ao importar planilha.';
@@ -947,8 +947,8 @@ export function AdminQuestionsTab({
           <DialogHeader>
             <DialogTitle>Importar planilha de questões</DialogTitle>
             <DialogDescription>
-              Envie a planilha baixada do banco. Preserve a aba Questões, o cabeçalho e os IDs.
-              A importação atualiza questões existentes.
+              Envie a planilha baixada do banco. Preserve a aba Questões e o cabeçalho.
+              IDs existentes atualizam a questão; ID vazio ou ainda inexistente cria uma questão nova.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
@@ -966,11 +966,11 @@ export function AdminQuestionsTab({
             {workbookReview && (
               <div className="space-y-2" aria-live="polite">
                 <p>{workbookReview.changes.length
-                  ? `${workbookReview.changes.length} questão(ões) a atualizar.`
+                  ? `${workbookReview.changes.filter((c) => c.isNew).length} nova(s) e ${workbookReview.changes.filter((c) => !c.isNew).length} a atualizar.`
                   : 'A planilha não contém alterações.'}</p>
                 {workbookReview.changes.length > 0 && (
                   <ul className="max-h-48 list-disc overflow-y-auto pl-5 text-sm">
-                    {workbookReview.changes.map(({ id, text }) => <li key={id}>#{id} {text}</li>)}
+                    {workbookReview.changes.map(({ id, text, isNew }) => <li key={id}>#{id} {isNew ? '(nova) ' : ''}{text}</li>)}
                   </ul>
                 )}
               </div>
