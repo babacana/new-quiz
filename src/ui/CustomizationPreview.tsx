@@ -1,27 +1,34 @@
 import { useState } from 'react';
+import type { LayoutScreenId } from '../domain/screenLayout';
 import type { EventCustomizations } from '../domain/types';
-import { EventLogoImage } from './EventLogoImage';
+import { LayoutPreviewStage } from './LayoutPreviewStage';
+import { PreviewResolutionControls } from './PreviewResolutionControls';
+import { usePreviewResolution } from './usePreviewResolution';
 import { cn } from './lib/utils';
-import { buildThemeCssVariables, resolvePreviewVisualAssets } from './themeCss';
 
 export interface CustomizationPreviewProps {
   customizations: EventCustomizations;
+  /** Aviso LGPD configurado no Evento (vazio = não aparece, como no Totem real). */
+  lgpdNoticeText?: string;
 }
 
-type PreviewScreenTab = 'initial' | 'quiz' | 'result';
-
-const PREVIEW_TABS: readonly { id: PreviewScreenTab; label: string }[] = [
+const PREVIEW_TABS: readonly { id: LayoutScreenId; label: string }[] = [
   { id: 'initial', label: 'Tela Inicial' },
+  { id: 'idle', label: 'Tela de Descanso' },
   { id: 'quiz', label: 'Tela de Quiz' },
   { id: 'result', label: 'Tela de Resultado' },
+  { id: 'ranking', label: 'Tela de Ranking' },
 ];
 
-// Pré-visualização interativa ao vivo das alterações de textos, cores, fontes, logotipo e fundo.
-export function CustomizationPreview({ customizations }: CustomizationPreviewProps) {
-  const [previewScreen, setPreviewScreen] = useState<PreviewScreenTab>('initial');
-  const themeStyle = buildThemeCssVariables(customizations);
-  const { logoSrc, backgroundSrc } = resolvePreviewVisualAssets(customizations);
-  const { texts, colors, visualIdentity } = customizations;
+// Pré-visualização ao vivo de textos, cores, fontes, logotipo e fundo: é o próprio Totem (mesmo componente da aba
+// Layout das Telas), carregado em um iframe na resolução escolhida e reduzido apenas visualmente.
+export function CustomizationPreview({
+  customizations,
+  lgpdNoticeText = '',
+}: CustomizationPreviewProps) {
+  const [previewScreen, setPreviewScreen] = useState<LayoutScreenId>('initial');
+  const [quizAnswered, setQuizAnswered] = useState(false);
+  const [resolution, persistResolution] = usePreviewResolution();
 
   return (
     <div className="space-y-3">
@@ -52,161 +59,36 @@ export function CustomizationPreview({ customizations }: CustomizationPreviewPro
         })}
       </div>
 
-      <div
-        id="customization-live-preview"
-        className="relative min-h-[320px] overflow-hidden rounded-xl border border-border p-5 shadow-xs"
-        style={{
-          ...themeStyle,
-          backgroundImage: 'linear-gradient(165deg, var(--quiz-bg-start), var(--quiz-bg-end))',
-          color: colors.quizMainTextColor,
-        }}
-      >
-        {backgroundSrc && (
-          <div
-            className="pointer-events-none absolute inset-0 z-0 bg-cover bg-center bg-no-repeat"
-            style={{
-              backgroundImage: `url(${backgroundSrc})`,
-              opacity: visualIdentity.customBackgroundOpacity,
-            }}
-            aria-hidden="true"
+      <PreviewResolutionControls
+        resolution={resolution}
+        onChange={persistResolution}
+        idPrefix="customization"
+      />
+
+      {previewScreen === 'quiz' && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-input"
+            checked={quizAnswered}
+            onChange={(e) => setQuizAnswered(e.target.checked)}
           />
-        )}
+          Mostrar a pergunta já respondida
+        </label>
+      )}
 
-        <div className="relative z-10 flex flex-col items-center gap-3 text-center">
-          <EventLogoImage
-            src={logoSrc}
-            alt="Pré-visualização do logotipo"
-            className="max-h-14 w-auto object-contain"
-          />
-
-          {previewScreen === 'initial' && (
-            <div className="flex w-full flex-col items-center gap-2.5">
-              <h4 style={{ color: colors.quizHighlightColor }}>{texts.initialScreenTitle}</h4>
-              <p
-                style={{
-                  fontSize: customizations.fontSizes.initialSloganFontSize,
-                  color: colors.quizMainTextColor,
-                }}
-              >
-                {texts.initialScreenSlogan}
-              </p>
-              <input
-                type="text"
-                readOnly
-                value=""
-                placeholder={texts.inputNamePlaceholder}
-                className="w-full max-w-xs rounded-md border bg-background/10 px-3 py-1.5 text-center text-sm"
-                style={{
-                  borderColor: colors.quizInputBorder,
-                  color: colors.quizMainTextColor,
-                }}
-              />
-              <div className="flex flex-wrap justify-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizPrimaryButtonBg,
-                    color: colors.quizPrimaryButtonText,
-                    fontSize: customizations.fontSizes.mainButtonsFontSize,
-                  }}
-                >
-                  {texts.initialScreenStartButton}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border px-3.5 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizSecondaryButtonBg,
-                    borderColor: colors.quizSecondaryButtonBorder,
-                    color: colors.quizSecondaryButtonText,
-                    fontSize: customizations.fontSizes.mainButtonsFontSize,
-                  }}
-                >
-                  {texts.initialScreenRankingButton}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {previewScreen === 'quiz' && (
-            <div className="flex w-full flex-col items-center gap-2.5">
-              <p
-                style={{
-                  fontSize: customizations.fontSizes.questionTextFontSize,
-                  color: colors.quizMainTextColor,
-                  fontWeight: 600,
-                }}
-              >
-                Qual é o principal serviço prestado pela CAESB no DF?
-              </p>
-              <div className="flex w-full flex-col gap-2 text-left text-sm">
-                <div
-                  className="rounded-lg px-3 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizOptionCorrectBg,
-                    color: '#ffffff',
-                  }}
-                >
-                  A) Saneamento básico e água tratada
-                </div>
-                <div
-                  className="rounded-lg px-3 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizOptionBg,
-                    color: colors.quizOptionText,
-                  }}
-                >
-                  B) Transporte coletivo
-                </div>
-              </div>
-              <button
-                type="button"
-                className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
-                style={{
-                  backgroundColor: colors.quizPrimaryButtonBg,
-                  color: colors.quizPrimaryButtonText,
-                  fontSize: customizations.fontSizes.mainButtonsFontSize,
-                }}
-              >
-                {texts.quizScreenNextButton}
-              </button>
-            </div>
-          )}
-
-          {previewScreen === 'result' && (
-            <div className="flex w-full flex-col items-center gap-2.5">
-              <h4 style={{ color: colors.quizHighlightColor }}>MARIA CLARA,</h4>
-              <p style={{ color: colors.quizOptionCorrectBg, fontWeight: 700 }}>
-                {texts.resultScreenPrizeWon}
-              </p>
-              <p style={{ color: colors.quizMainTextColor }}>{texts.resultScreenAllCorrect}</p>
-              <div className="flex flex-wrap justify-center gap-2">
-                <button
-                  type="button"
-                  className="rounded-lg border px-3.5 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizSecondaryButtonBg,
-                    borderColor: colors.quizSecondaryButtonBorder,
-                    color: colors.quizSecondaryButtonText,
-                  }}
-                >
-                  {texts.resultScreenRankingButton}
-                </button>
-                <button
-                  type="button"
-                  className="rounded-lg border border-transparent px-3.5 py-2 font-semibold"
-                  style={{
-                    backgroundColor: colors.quizPrimaryButtonBg,
-                    color: colors.quizPrimaryButtonText,
-                  }}
-                >
-                  {texts.resultScreenPlayAgainButton}
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
+      <div id="customization-live-preview">
+        <LayoutPreviewStage
+          screenId={previewScreen}
+          customizations={customizations}
+          lgpdNoticeText={lgpdNoticeText}
+          quizAnswered={quizAnswered}
+          showConditional={false}
+          highlightedElementId={null}
+          interactive={false}
+          width={resolution.width}
+          height={resolution.height}
+        />
       </div>
     </div>
   );

@@ -220,8 +220,8 @@ export function LayoutPreviewApp() {
         event.preventDefault();
         event.stopPropagation();
       }}
-      onPointerDownCapture={handlePointerDown}
-      onPointerMove={handlePointerMove}
+      onPointerDownCapture={state.interactive === false ? undefined : handlePointerDown}
+      onPointerMove={state.interactive === false ? undefined : handlePointerMove}
       onPointerUp={() => {
         dragRef.current = null;
       }}

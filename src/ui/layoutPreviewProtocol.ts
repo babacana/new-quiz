@@ -14,6 +14,8 @@ export interface LayoutPreviewState {
   /** Mostra elementos que só aparecem em certas situações (aviso do Evento, sincronização etc.). */
   showConditional: boolean;
   highlightedElementId: string | null;
+  /** false = prévia só de leitura (sem seleção nem arraste), como na aba Aparência. */
+  interactive?: boolean;
 }
 
 export type EditorToPreviewMessage = {

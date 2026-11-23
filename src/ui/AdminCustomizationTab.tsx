@@ -687,11 +687,14 @@ export function AdminCustomizationTab({
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Pré-Visualização ao Vivo</CardTitle>
               <CardDescription>
-                Simulação isolada das telas do Totem com as cores e textos atuais.
+                É o próprio Totem na resolução escolhida, com as cores, textos e fontes atuais (reduzido só visualmente para caber aqui).
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <CustomizationPreview customizations={draft} />
+              <CustomizationPreview
+                customizations={draft}
+                lgpdNoticeText={targetEvent.settings.lgpdNoticeText ?? ''}
+              />
             </CardContent>
           </Card>
         </div>
