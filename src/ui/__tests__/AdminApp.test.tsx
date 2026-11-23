@@ -7,6 +7,8 @@ import { DEFAULT_EVENT_ID } from '../../domain/defaults';
 import { EventAdminController } from '../../domain/eventAdminController';
 import type { Clock, RandomSource } from '../../domain/ports';
 import { TotemSessionEngine } from '../../domain/totemSessionEngine';
+import { resolveScreenLayout, type LayoutScreenId } from '../../domain/screenLayout';
+import type { LayoutPreviewState } from '../layoutPreviewProtocol';
 import { AdminApp } from '../AdminApp';
 import { AppRouter } from '../AppRouter';
 
@@ -830,6 +832,22 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
   });
 });
 
+// A prévia é o Totem real em um iframe: o editor só envia o estado por postMessage, então o teste observa essas mensagens.
+function watchPreview() {
+  const iframe = screen.getByTitle('Pré-visualização do Totem real') as HTMLIFrameElement;
+  const states: LayoutPreviewState[] = [];
+  iframe.contentWindow!.addEventListener('message', (event) => {
+    const data = event.data as { type?: string; state?: LayoutPreviewState } | undefined;
+    if (data?.type === 'state' && data.state) {
+      states.push(data.state);
+    }
+  });
+  const last = () => states[states.length - 1]!;
+  const zones = (screenId: LayoutScreenId) =>
+    resolveScreenLayout(last().customizations.layout, screenId).zones;
+  return { iframe, last, zones };
+}
+
 describe('AdminApp — Layout das Telas', () => {
   it('edita o layout da Tela Inicial e da Tela de Descanso, muda a resolução da prévia e salva no Evento', async () => {
     const { cloudGateway, controller } = createAdminUiHarness();
@@ -841,22 +859,23 @@ describe('AdminApp — Layout das Telas', () => {
       await screen.findByRole('heading', { name: 'Layout das Telas do Totem' }),
     ).toBeInTheDocument();
 
-    // Prévia usa a resolução do Totem por padrão e permite resolução personalizada
-    const stage = screen.getByTestId('layout-preview-stage');
-    expect(stage.style.width).toBe('1080px');
-    expect(stage.style.height).toBe('1920px');
+    // A prévia é o Totem real em iframe com o tamanho exato da resolução (padrão: Totem 1080×1920)
+    const preview = watchPreview();
+    expect(preview.iframe.getAttribute('src')).toBe('/#layout-preview');
+    expect(preview.iframe.style.width).toBe('1080px');
+    expect(preview.iframe.style.height).toBe('1920px');
     await user.selectOptions(screen.getByLabelText('Resolução da prévia'), 'custom');
     fireEvent.change(screen.getByLabelText('Largura'), { target: { value: '1920' } });
     fireEvent.change(screen.getByLabelText('Altura'), { target: { value: '1080' } });
-    expect(screen.getByTestId('layout-preview-stage').style.width).toBe('607.5px');
+    expect(preview.iframe.style.width).toBe('1920px');
+    expect(preview.iframe.style.height).toBe('1080px');
 
-    // Move o botão Iniciar Quiz para a base: prévia reflete na zona correspondente
-    const bottomZone = () =>
-      document.querySelector('[data-testid="layout-preview-stage"] [data-layout-zone="bottom"]')!;
-    expect(bottomZone().querySelector('#start-quiz-btn')).toBeNull();
+    // Move o botão Iniciar Quiz para a base: o estado enviado à prévia reflete a zona
+    await waitFor(() => expect(preview.last().screenId).toBe('initial'));
+    expect(preview.zones('initial').bottom).not.toContain('startButton');
     const startRow = screen.getByTestId('layout-element-startButton');
     await user.click(within(startRow).getByRole('button', { name: 'Base' }));
-    expect(bottomZone().querySelector('#start-quiz-btn')).not.toBeNull();
+    await waitFor(() => expect(preview.zones('initial').bottom).toContain('startButton'));
     // Elementos obrigatórios não podem ser ocultados
     expect(
       within(startRow).getByRole('button', { name: 'Ocultar Botão Iniciar Quiz' }),
@@ -866,15 +885,18 @@ describe('AdminApp — Layout das Telas', () => {
     await user.click(screen.getByRole('tab', { name: 'Tela de Descanso' }));
     const showcaseRow = screen.getByTestId('layout-element-showcase');
     await user.click(within(showcaseRow).getByRole('button', { name: 'Ocultar Vitrine (pódio e estatísticas)' }));
-    expect(document.querySelector('[data-testid="layout-preview-stage"] .idle-showcase-card')).toBeNull();
+    await waitFor(() => expect(preview.last().screenId).toBe('idle'));
+    expect(preview.zones('idle').center).not.toContain('showcase');
     await user.click(within(screen.getByTestId('layout-element-logo')).getByText('Logotipo'));
+    expect(preview.last().highlightedElementId).toBe('logo');
     fireEvent.change(screen.getByLabelText(/Tamanho \(100%\)/), { target: { value: '150' } });
 
     fireEvent.change(screen.getByLabelText(/Deslocar na vertical/), { target: { value: '5' } });
-    const logoItem = document.querySelector(
-      '[data-testid="layout-preview-stage"] [data-layout-element="logo"]',
-    ) as HTMLElement;
-    expect(logoItem.style.transform).toBe('translate(0cqw, 5cqh)');
+    await waitFor(() =>
+      expect(
+        resolveScreenLayout(preview.last().customizations.layout, 'idle').elements.logo,
+      ).toMatchObject({ scalePercent: 150, offsetYPercent: 5 }),
+    );
 
     await user.click(screen.getByRole('button', { name: 'Salvar Layout' }));
     expect(await screen.findByText(/Layout das telas salvo/i)).toBeInTheDocument();
@@ -898,17 +920,18 @@ describe('AdminApp — Layout das Telas', () => {
     await user.click(await screen.findByRole('button', { name: 'Layout das Telas' }));
     await screen.findByRole('heading', { name: 'Layout das Telas do Totem' });
 
-    const previewZone = (zone: string) =>
-      document.querySelector(`[data-testid="layout-preview-stage"] [data-layout-zone="${zone}"]`)!;
+    const preview = watchPreview();
 
     await user.click(screen.getByRole('tab', { name: 'Tela de Quiz' }));
-    expect(previewZone('bottom').querySelector('#options-container')).toBeNull();
+    await waitFor(() => expect(preview.last().screenId).toBe('quiz'));
+    expect(preview.zones('quiz').bottom).not.toContain('options');
     await user.click(screen.getByRole('button', { name: /Alternativas na base/ }));
-    expect(previewZone('bottom').querySelector('#options-container')).not.toBeNull();
-    expect(previewZone('center').querySelector('#question-text')).not.toBeNull();
-    expect(document.querySelector('#next-question-btn')).toBeNull();
+    await waitFor(() => expect(preview.zones('quiz').bottom).toContain('options'));
+    expect(preview.zones('quiz').center).toContain('question');
+    expect(preview.last().quizAnswered).toBe(false);
     await user.click(screen.getByRole('button', { name: 'Após responder' }));
-    expect(previewZone('bottom').querySelector('#next-question-btn')).not.toBeNull();
+    await waitFor(() => expect(preview.last().quizAnswered).toBe(true));
+    expect(preview.zones('quiz').bottom).toContain('postControls');
     expect(
       within(screen.getByTestId('layout-element-options')).getByRole('button', {
         name: 'Ocultar Alternativas',
@@ -919,16 +942,18 @@ describe('AdminApp — Layout das Telas', () => {
         name: 'Ocultar Botão Desistir (×)',
       }),
     );
-    expect(document.querySelector('[data-testid="layout-preview-stage"] #give-up-btn')).toBeNull();
+    await waitFor(() =>
+      expect(preview.zones('quiz').top).not.toContain('giveUp'),
+    );
 
     await user.click(screen.getByRole('tab', { name: 'Tela de Resultado' }));
     await user.click(screen.getByRole('button', { name: /Botões na base/ }));
-    expect(previewZone('bottom').querySelector('#restart-quiz-btn')).not.toBeNull();
+    await waitFor(() => expect(preview.zones('result').bottom).toContain('playAgainButton'));
 
     await user.click(screen.getByRole('tab', { name: 'Tela de Ranking' }));
-    expect(previewZone('center').querySelector('#ranking-list')).not.toBeNull();
+    await waitFor(() => expect(preview.zones('ranking').center).toContain('list'));
     await user.click(screen.getByRole('button', { name: /Cabeçalho no topo, botão na base/ }));
-    expect(previewZone('bottom').querySelector('#back-to-initial-btn')).not.toBeNull();
+    await waitFor(() => expect(preview.zones('ranking').bottom).toContain('backButton'));
 
     await user.click(screen.getByRole('button', { name: 'Salvar Layout' }));
     expect(await screen.findByText(/Layout das telas salvo/i)).toBeInTheDocument();
