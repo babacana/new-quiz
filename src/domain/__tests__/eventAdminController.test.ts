@@ -413,13 +413,35 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       sheet.getCell('G3').value = originalAnswer;
       const file = await workbook.xlsx.writeBuffer();
       expect(await controller.previewQuestionsXlsx(file)).toEqual([
-        { id, text: 'Questão revisada sobre captação e distribuição.' },
+        { id, text: 'Questão revisada sobre captação e distribuição.', isNew: false },
       ]);
       await controller.importQuestionsXlsx(file);
       const updated = await controller.listAllQuestions();
       expect(updated).toHaveLength(original.length);
       expect(updated.find((question) => question.id === id)?.text)
         .toBe('Questão revisada sobre captação e distribuição.');
+    }, 30_000);
+
+    it('cria questões novas na planilha (ID vazio ou ainda inexistente) e atualiza as existentes', async () => {
+      const { controller } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+      const { default: ExcelJS } = await import('exceljs');
+      const original = await controller.listAllQuestions();
+      const maxId = Math.max(...original.map((q) => q.id));
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(await controller.exportQuestionsXlsx());
+      const sheet = workbook.worksheets[0];
+      sheet.addRow([maxId + 5, 'Nova com ID explícito?', 'a', 'b', 'c', 'd', 'A', 'Fácil', 'novas', 'Não']);
+      sheet.addRow(['', 'Nova sem ID?', 'a', 'b', 'c', 'd', 'B', 'Moderado', '', 'Não']);
+      const file = await workbook.xlsx.writeBuffer();
+      expect(await controller.previewQuestionsXlsx(file)).toEqual([
+        { id: maxId + 5, text: 'Nova com ID explícito?', isNew: true },
+        { id: maxId + 6, text: 'Nova sem ID?', isNew: true },
+      ]);
+      expect(await controller.importQuestionsXlsx(file)).toBe(2);
+      const updated = await controller.listAllQuestions();
+      expect(updated).toHaveLength(original.length + 2);
+      expect(updated.find((q) => q.id === maxId + 6)?.text).toBe('Nova sem ID?');
     }, 30_000);
 
     it('exporta e importa JSON e CSV escolhendo entre adicionar/mesclar ou substituir tudo', async () => {
