@@ -59,7 +59,14 @@ function attachControllerChangeListener(container: ServiceWorkerContainerLike): 
   }
 
   observedContainer = container;
+  // Na primeira instalação não havia Service Worker controlando a página: o clients.claim() inicial
+  // dispara controllerchange sem ser uma atualização, e recarregar duplicaria a inicialização do Totem.
+  let hadController = Boolean(container.controller);
   controllerChangeHandler = () => {
+    if (!hadController) {
+      hadController = true;
+      return;
+    }
     if (reloadTriggered) {
       return;
     }
