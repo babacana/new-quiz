@@ -31,6 +31,7 @@ export interface TotemInitialScreenProps {
   onVirtualKeyboardHeightChange: (heightVh: number) => void;
   onVirtualKeyPress: (key: string) => void;
   onVirtualKeyboardResizingChange: (isResizing: boolean) => void;
+  onVirtualKeyboardClose?: () => void;
   /** Layout resolvido do Evento; sem ele usa a distribuição padrão. */
   layout?: ResolvedScreenLayout;
   /** Elemento destacado no editor de layout do ADM. */
@@ -60,6 +61,7 @@ export function TotemInitialScreen({
   onVirtualKeyboardHeightChange,
   onVirtualKeyPress,
   onVirtualKeyboardResizingChange,
+  onVirtualKeyboardClose,
   layout,
   highlightedElementId,
 }: TotemInitialScreenProps) {
@@ -151,6 +153,7 @@ export function TotemInitialScreen({
         onHeightVhChange={onVirtualKeyboardHeightChange}
         onKeyPress={onVirtualKeyPress}
         onResizingChange={onVirtualKeyboardResizingChange}
+        onClose={onVirtualKeyboardClose}
       />
     </section>
   );

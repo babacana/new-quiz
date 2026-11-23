@@ -22,6 +22,7 @@ export interface VirtualKeyboardProps {
   onHeightVhChange: (heightVh: number) => void;
   onKeyPress: (key: string) => void;
   onResizingChange?: (isResizing: boolean) => void;
+  onClose?: () => void;
 }
 
 interface KeyboardKeyDescriptor {
@@ -88,6 +89,7 @@ export function VirtualKeyboard({
   onHeightVhChange,
   onKeyPress,
   onResizingChange,
+  onClose,
 }: VirtualKeyboardProps) {
   const isVisible = enabled && activeField !== null;
   const clampedHeightVh = clampKeyboardHeightVh(heightVh);
@@ -129,6 +131,32 @@ export function VirtualKeyboard({
       window.removeEventListener('resize', handleWindowResize);
     };
   }, [isVisible, clampedHeightVh]);
+
+  // Fecha o teclado ao tocar fora dele e fora dos campos de texto.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isVisible || !onCloseRef.current) {
+      return;
+    }
+    const handleOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+      if (target.closest('#virtual-keyboard, #virtual-keyboard-close, input, textarea')) {
+        return;
+      }
+      onCloseRef.current?.();
+    };
+    document.addEventListener('pointerdown', handleOutsidePointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', handleOutsidePointerDown);
+    };
+  }, [isVisible]);
 
   // Configura listener touchstart não passivo na alça e garante limpeza de listeners caso o teclado feche.
   useEffect(() => {
@@ -238,6 +266,20 @@ export function VirtualKeyboard({
   const layout = LAYOUT_CONFIG[activeField];
 
   return (
+    <>
+    {onClose ? (
+      <button
+        id="virtual-keyboard-close"
+        type="button"
+        className="virtual-keyboard-close"
+        style={{ bottom: `${clampedHeightVh}vh` }}
+        aria-label="Fechar teclado"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={onClose}
+      >
+        ✕ FECHAR TECLADO
+      </button>
+    ) : null}
     <div
       id="virtual-keyboard"
       className={isResizing ? 'virtual-keyboard resizing' : 'virtual-keyboard'}
@@ -268,5 +310,6 @@ export function VirtualKeyboard({
         </button>
       ))}
     </div>
+    </>
   );
 }
