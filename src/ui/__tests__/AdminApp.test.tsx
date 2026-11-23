@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_ID } from '../../domain/defaults';
@@ -64,6 +64,9 @@ async function signInThroughUi(email: string, password: string) {
   await user.click(screen.getByRole('button', { name: 'Entrar' }));
   return user;
 }
+
+// A resolução da prévia fica no localStorage; cada teste começa com o padrão.
+afterEach(() => window.localStorage.clear());
 
 describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirty Check)', () => {
   it('restringe Operador à visão de estande e libera painel completo para Administrador', async () => {
@@ -589,23 +592,48 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
       await screen.findByRole('heading', { name: 'Personalização Visual do Evento' }),
     ).toBeInTheDocument();
 
+    // A prévia é o Totem real em iframe; o editor envia o estado atual por postMessage
+    const preview = watchPreview();
+    expect(preview.iframe.style.width).toBe('1080px');
+
     // Aplica tema Escuro Elegante e verifica reflexo imediato na pré-visualização ao vivo
     await user.click(screen.getByRole('button', { name: 'Escuro Elegante' }));
-    const preview = document.getElementById('customization-live-preview')!;
-    expect(preview.style.backgroundColor).toBe('rgb(26, 26, 46)');
+    await waitFor(() =>
+      expect(preview.last().customizations.colors.quizMainBackground).toBe('#1a1a2e'),
+    );
 
     // Edita texto e alterna abas da pré-visualização (Inicial, Quiz, Resultado)
     const titleInput = screen.getByLabelText('Título da Tela Inicial');
     await user.clear(titleInput);
     await user.type(titleInput, 'Quiz Especial Águas');
-    expect(within(preview).getByText('Quiz Especial Águas')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(preview.last().customizations.texts.initialScreenTitle).toBe('Quiz Especial Águas'),
+    );
+    expect(preview.last().screenId).toBe('initial');
+    expect(preview.last().interactive).toBe(false);
 
     await user.click(screen.getByRole('tab', { name: 'Tela de Quiz' }));
-    expect(within(preview).getByText(/principal serviço prestado pela CAESB/i)).toBeInTheDocument();
+    await waitFor(() => expect(preview.last().screenId).toBe('quiz'));
 
     await user.click(screen.getByRole('tab', { name: 'Tela de Resultado' }));
-    expect(within(preview).getByText('MARIA CLARA,')).toBeInTheDocument();
+    await waitFor(() => expect(preview.last().screenId).toBe('result'));
     await user.click(screen.getByRole('tab', { name: 'Tela Inicial' }));
+
+    // Mensagens da Tela de Descanso com o Evento fechado e a tela Quiz Fechado na prévia
+    const closedTitle = screen.getByLabelText('Descanso com Evento fechado: título');
+    await user.clear(closedTitle);
+    await user.type(closedTitle, 'ABRIMOS EM BREVE');
+    await waitFor(() =>
+      expect(preview.last().customizations.texts.idleScreenBeforeTitle).toBe('ABRIMOS EM BREVE'),
+    );
+    await user.click(screen.getByRole('tab', { name: 'Quiz Fechado' }));
+    await waitFor(() => expect(preview.last().screenId).toBe('closed'));
+    await user.click(screen.getByRole('tab', { name: 'Tela Inicial' }));
+
+    // A resolução escolhida vira o tamanho exato do iframe
+    await user.selectOptions(screen.getByLabelText('Resolução da prévia'), 'fhd-1920x1080');
+    expect(preview.iframe.style.width).toBe('1920px');
+    expect(preview.iframe.style.height).toBe('1080px');
 
     // Upload de logotipo e ajuste de opacidade do fundo
     const logoFile = new File([new Uint8Array([137, 80, 78, 71])], 'logo-evento.png', {
@@ -621,8 +649,10 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
 
     // Restauração parcial de textos preserva o tema Escuro Elegante
     await user.click(screen.getByRole('button', { name: 'Restaurar Textos' }));
-    expect(within(preview).getByText('Bem-vindo ao Quiz!')).toBeInTheDocument();
-    expect(preview.style.backgroundColor).toBe('rgb(26, 26, 46)');
+    await waitFor(() =>
+      expect(preview.last().customizations.texts.initialScreenTitle).toBe('Bem-vindo ao Quiz!'),
+    );
+    expect(preview.last().customizations.colors.quizMainBackground).toBe('#1a1a2e');
 
     // Salva personalização e valida persistência no Evento
     await user.click(screen.getByRole('button', { name: 'Salvar Personalização' }));

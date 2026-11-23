@@ -44,6 +44,10 @@ const TEXT_FIELD_LABELS: Array<{ key: keyof EventCustomizationTexts; label: stri
   { key: 'initialScreenStartButton', label: 'Botão Iniciar Quiz' },
   { key: 'initialScreenRankingButton', label: 'Botão Ver Ranking (Inicial)' },
   { key: 'idleScreenCallToAction', label: 'Chamada da Tela de Descanso' },
+  { key: 'idleScreenBeforeTitle', label: 'Descanso com Evento fechado: título' },
+  { key: 'idleScreenBeforeSubtitle', label: 'Descanso com Evento fechado: mensagem' },
+  { key: 'idleScreenAfterTitle', label: 'Descanso com Evento encerrado: título' },
+  { key: 'idleScreenAfterSubtitle', label: 'Descanso com Evento encerrado: mensagem' },
   { key: 'inputNamePlaceholder', label: 'Placeholder do Nome' },
   { key: 'inputPhonePlaceholder', label: 'Placeholder do Telefone' },
   { key: 'quizScreenNextButton', label: 'Botão Próxima Pergunta' },
@@ -687,11 +691,14 @@ export function AdminCustomizationTab({
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Pré-Visualização ao Vivo</CardTitle>
               <CardDescription>
-                Simulação isolada das telas do Totem com as cores e textos atuais.
+                É o próprio Totem na resolução escolhida, com as cores, textos e fontes atuais (reduzido só visualmente para caber aqui).
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <CustomizationPreview customizations={draft} />
+              <CustomizationPreview
+                customizations={draft}
+                lgpdNoticeText={targetEvent.settings.lgpdNoticeText ?? ''}
+              />
             </CardContent>
           </Card>
         </div>

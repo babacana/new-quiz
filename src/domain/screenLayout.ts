@@ -2,7 +2,7 @@
 // Guardado de forma esparsa em `customizations.layout` (jsonb do Evento): só o que foi alterado é
 // salvo, então Eventos antigos (sem layout) continuam idênticos ao visual original.
 
-export type LayoutScreenId = 'initial' | 'idle' | 'quiz' | 'result' | 'ranking';
+export type LayoutScreenId = 'initial' | 'closed' | 'idle' | 'quiz' | 'result' | 'ranking';
 export type LayoutZone = 'top' | 'center' | 'bottom';
 export type LayoutAlign = 'start' | 'center' | 'end';
 
@@ -77,6 +77,22 @@ export const LAYOUT_SCREENS: readonly LayoutScreenDefinition[] = [
       { id: 'phoneField', label: 'Campo Telefone', defaultZone: 'center', required: true },
       { id: 'lgpd', label: 'Aviso LGPD', defaultZone: 'center', supportsColor: true },
       { id: 'startButton', label: 'Botão Iniciar Quiz', defaultZone: 'center', required: true },
+      { id: 'rankingButton', label: 'Botão Ver Ranking', defaultZone: 'center' },
+    ],
+  },
+  {
+    id: 'closed',
+    label: 'Quiz Fechado',
+    elements: [
+      { id: 'logo', label: 'Logotipo', defaultZone: 'center' },
+      { id: 'slogan', label: 'Slogan', defaultZone: 'center', supportsColor: true },
+      {
+        id: 'statusMessage',
+        label: 'Mensagem do Evento',
+        hint: 'Avisa que o quiz ainda não começou ou já terminou.',
+        defaultZone: 'center',
+        required: true,
+      },
       { id: 'rankingButton', label: 'Botão Ver Ranking', defaultZone: 'center' },
     ],
   },

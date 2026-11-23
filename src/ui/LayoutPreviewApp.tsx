@@ -14,6 +14,7 @@ import {
   type PreviewToEditorMessage,
 } from './layoutPreviewProtocol';
 import { buildThemeCssVariables, resolvePreviewVisualAssets } from './themeCss';
+import { TotemClosedScreen } from './totem/TotemClosedScreen';
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
 import { TotemQuizScreen } from './totem/TotemQuizScreen';
@@ -159,8 +160,13 @@ export function LayoutPreviewApp() {
   const eventWindow: EventWindowState = {
     status: 'during',
     isBlocked: false,
-    idleCallToActionTitle: texts.idleScreenCallToAction,
-    idleCallToActionSubtitle: null,
+    // Com os exemplos condicionais ligados, a Tela de Descanso mostra o Evento ainda fechado.
+    idleCallToActionTitle:
+      screenId === 'idle' && showConditional
+        ? texts.idleScreenBeforeTitle
+        : texts.idleScreenCallToAction,
+    idleCallToActionSubtitle:
+      screenId === 'idle' && showConditional ? texts.idleScreenBeforeSubtitle : null,
     initialScreenMessage: showConditional ? 'Aviso de exemplo do Evento' : null,
   };
   const settings = {
@@ -220,8 +226,8 @@ export function LayoutPreviewApp() {
         event.preventDefault();
         event.stopPropagation();
       }}
-      onPointerDownCapture={handlePointerDown}
-      onPointerMove={handlePointerMove}
+      onPointerDownCapture={state.interactive === false ? undefined : handlePointerDown}
+      onPointerMove={state.interactive === false ? undefined : handlePointerMove}
       onPointerUp={() => {
         dragRef.current = null;
       }}
@@ -265,6 +271,21 @@ export function LayoutPreviewApp() {
             onVirtualKeyboardHeightChange={NOOP}
             onVirtualKeyPress={NOOP}
             onVirtualKeyboardResizingChange={NOOP}
+          />
+        )}
+
+        {screenId === 'closed' && (
+          <TotemClosedScreen
+            {...screenProps}
+            texts={texts}
+            eventWindow={{
+              ...eventWindow,
+              status: 'before',
+              isBlocked: true,
+              initialScreenMessage:
+                'O quiz "Nome do Evento" ainda não começou! Prepare-se, a diversão começa em 24/11/2026, 10:00.',
+            }}
+            onOpenRanking={NOOP}
           />
         )}
 

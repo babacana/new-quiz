@@ -30,6 +30,14 @@ describe('screenLayout', () => {
       'rankingButton',
     ]);
 
+    const closed = resolveScreenLayout(undefined, 'closed');
+    expect(closed.zones.center).toEqual(['logo', 'slogan', 'statusMessage', 'rankingButton']);
+    // A mensagem do Evento é obrigatória na tela fechada
+    expect(
+      resolveScreenLayout(updateLayoutElement(undefined, 'closed', 'statusMessage', { visible: false }), 'closed')
+        .elements.statusMessage?.visible,
+    ).toBe(true);
+
     const idle = resolveScreenLayout(undefined, 'idle');
     expect(idle.zones).toEqual({
       top: ['logo', 'slogan'],

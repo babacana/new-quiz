@@ -42,6 +42,10 @@ export const DEFAULT_CUSTOMIZATIONS: EventCustomizations = {
     rankingScreenTitle: 'Ranking Geral',
     rankingScreenBackButton: 'Voltar ao Início',
     idleScreenCallToAction: 'TOQUE PARA COMEÇAR',
+    idleScreenBeforeTitle: 'QUIZ EM BREVE!',
+    idleScreenBeforeSubtitle: 'Toque para mais informações',
+    idleScreenAfterTitle: 'QUIZ ENCERRADO',
+    idleScreenAfterSubtitle: 'Obrigado por participar!',
     modalAlreadyWonTitle: 'Segura a emoção, campeão(ã)! 🏆',
     modalAlreadyWonMessage:
       'Detectamos que você já faturou no nosso Quiz. Para a festa continuar e mais gente ganhar, a vez agora é de outro craque! Espalha a notícia!',

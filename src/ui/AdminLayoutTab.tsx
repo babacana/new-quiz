@@ -4,10 +4,7 @@ import {
   LAYOUT_LIMITS,
   LAYOUT_PRESETS,
   LAYOUT_SCREENS,
-  PREVIEW_DIMENSION_LIMITS,
-  PREVIEW_RESOLUTIONS,
   applyLayoutPreset,
-  clampPreviewDimension,
   getScreenDefinition,
   isScreenLayoutCustomized,
   moveLayoutElement,
@@ -26,11 +23,11 @@ import { DEFAULT_CUSTOMIZATIONS } from '../domain/defaults';
 import type { EventAdminController } from '../domain/eventAdminController';
 import type { EventConfig } from '../domain/types';
 import { LayoutPreviewStage } from './LayoutPreviewStage';
+import { PreviewResolutionControls } from './PreviewResolutionControls';
+import { usePreviewResolution } from './usePreviewResolution';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
-import { Input } from './components/ui/input';
 import { Label } from './components/ui/label';
-import { Select } from './components/ui/select';
 import { cn } from './lib/utils';
 import type { UnsavedNavigationGuard } from './navigationGuard';
 
@@ -46,41 +43,6 @@ export interface AdminLayoutTabProps {
 
 const ZONE_LABELS: Record<LayoutZone, string> = { top: 'Topo', center: 'Centro', bottom: 'Base' };
 const ALIGN_LABELS: Record<LayoutAlign, string> = { start: 'Esquerda', center: 'Centro', end: 'Direita' };
-
-const RESOLUTION_STORAGE_KEY = 'new-quiz.layout-editor.resolution';
-const CUSTOM_RESOLUTION_ID = 'custom';
-
-interface ResolutionChoice {
-  presetId: string;
-  width: number;
-  height: number;
-}
-
-function loadResolutionChoice(): ResolutionChoice {
-  const fallback = PREVIEW_RESOLUTIONS[0]!;
-  const defaults = { presetId: fallback.id, width: fallback.width, height: fallback.height };
-  try {
-    const raw = window.localStorage.getItem(RESOLUTION_STORAGE_KEY);
-    if (!raw) {
-      return defaults;
-    }
-    const parsed = JSON.parse(raw) as Partial<ResolutionChoice>;
-    if (
-      typeof parsed.width === 'number' &&
-      typeof parsed.height === 'number' &&
-      typeof parsed.presetId === 'string'
-    ) {
-      return {
-        presetId: parsed.presetId,
-        width: clampPreviewDimension(parsed.width),
-        height: clampPreviewDimension(parsed.height),
-      };
-    }
-  } catch {
-    // Armazenamento indisponível: usa a resolução padrão do Totem.
-  }
-  return defaults;
-}
 
 function Segmented<T extends string>({
   label,
@@ -141,7 +103,7 @@ export function AdminLayoutTab({
   const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
   const [quizAnswered, setQuizAnswered] = useState(false);
   const [showConditional, setShowConditional] = useState(false);
-  const [resolution, setResolution] = useState<ResolutionChoice>(loadResolutionChoice);
+  const [resolution, persistResolution] = usePreviewResolution();
 
   const resetFromEvent = useCallback(
     (ev: EventConfig) => {
@@ -199,15 +161,6 @@ export function AdminLayoutTab({
     return () => onRegisterSaveHandler(null);
   }, [handleSave, onRegisterSaveHandler]);
 
-  const persistResolution = (next: ResolutionChoice) => {
-    setResolution(next);
-    try {
-      window.localStorage.setItem(RESOLUTION_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // Preferência apenas de conveniência.
-    }
-  };
-
   const screen = getScreenDefinition(screenId);
   const resolved = useMemo(() => resolveScreenLayout(draft, screenId), [draft, screenId]);
   const previewCustomizations = useMemo(
@@ -244,7 +197,6 @@ export function AdminLayoutTab({
   const selectedDefinition = screen.elements.find((el) => el.id === selectedElementId) ?? null;
   const selectedSettings = selectedDefinition ? resolved.elements[selectedDefinition.id]! : null;
   const presets = LAYOUT_PRESETS.filter((preset) => preset.screenId === screenId);
-  const isCustomResolution = resolution.presetId === CUSTOM_RESOLUTION_ID;
 
   return (
     <div id="admin-layout-tab" className="space-y-6 pb-20">
@@ -620,78 +572,7 @@ export function AdminLayoutTab({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <div className="space-y-1.5">
-                  <Label htmlFor="layout-resolution">Resolução da prévia</Label>
-                  <Select
-                    id="layout-resolution"
-                    value={resolution.presetId}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      if (value === CUSTOM_RESOLUTION_ID) {
-                        persistResolution({ ...resolution, presetId: CUSTOM_RESOLUTION_ID });
-                        return;
-                      }
-                      const preset = PREVIEW_RESOLUTIONS.find((item) => item.id === value);
-                      if (preset) {
-                        persistResolution({
-                          presetId: preset.id,
-                          width: preset.width,
-                          height: preset.height,
-                        });
-                      }
-                    }}
-                  >
-                    {PREVIEW_RESOLUTIONS.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.label}
-                      </option>
-                    ))}
-                    <option value={CUSTOM_RESOLUTION_ID}>Personalizada…</option>
-                  </Select>
-                </div>
-                <div className="flex items-end gap-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="layout-width">Largura</Label>
-                    <Input
-                      id="layout-width"
-                      type="number"
-                      inputMode="numeric"
-                      className="w-24"
-                      min={PREVIEW_DIMENSION_LIMITS.min}
-                      max={PREVIEW_DIMENSION_LIMITS.max}
-                      disabled={!isCustomResolution}
-                      value={resolution.width}
-                      onChange={(e) =>
-                        persistResolution({
-                          ...resolution,
-                          width: clampPreviewDimension(Number(e.target.value)),
-                        })
-                      }
-                    />
-                  </div>
-                  <span className="pb-2 text-muted-foreground">×</span>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="layout-height">Altura</Label>
-                    <Input
-                      id="layout-height"
-                      type="number"
-                      inputMode="numeric"
-                      className="w-24"
-                      min={PREVIEW_DIMENSION_LIMITS.min}
-                      max={PREVIEW_DIMENSION_LIMITS.max}
-                      disabled={!isCustomResolution}
-                      value={resolution.height}
-                      onChange={(e) =>
-                        persistResolution({
-                          ...resolution,
-                          height: clampPreviewDimension(Number(e.target.value)),
-                        })
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
+              <PreviewResolutionControls resolution={resolution} onChange={persistResolution} />
 
               {screenId === 'quiz' && (
                 <div className="flex flex-wrap items-center gap-3">
@@ -718,8 +599,8 @@ export function AdminLayoutTab({
                 <span>
                   Mostrar elementos condicionais de exemplo
                   <span className="block text-xs text-muted-foreground">
-                    Aviso do Evento, aviso LGPD, aviso de sincronização e mensagem de gabarito
-                    perfeito só aparecem no Totem em certas situações. Desligado, a prévia mostra o
+                    Aviso do Evento, aviso LGPD, aviso de sincronização, mensagem de gabarito
+                    perfeito e a Tela de Descanso com o Evento fechado só aparecem no Totem em certas situações. Desligado, a prévia mostra o
                     caso comum.
                   </span>
                 </span>

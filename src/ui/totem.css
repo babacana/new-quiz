@@ -302,7 +302,8 @@ body.totem-fullscreen-mode {
   max-height: calc(18cqh * var(--layout-scale));
 }
 
-#initial-screen .screen-content.layout-zones {
+#initial-screen .screen-content.layout-zones,
+#closed-screen .screen-content.layout-zones {
   height: 100%;
   margin: 0;
   justify-content: space-between;
@@ -609,7 +610,8 @@ body.totem-fullscreen-mode {
 }
 
 /* Tela Inicial */
-#initial-screen .screen-content {
+#initial-screen .screen-content,
+#closed-screen .screen-content {
   justify-content: center;
   padding: 1.1em;
   margin: auto;
@@ -623,7 +625,8 @@ body.totem-fullscreen-mode {
   font-weight: bold;
 }
 
-#initial-screen .slogan {
+#initial-screen .slogan,
+#closed-screen .slogan {
   font-size: var(--initial-slogan-font-size);
   margin-bottom: 0.55em;
   color: var(--quiz-highlight-color);
@@ -635,7 +638,8 @@ body.totem-fullscreen-mode {
   color: var(--quiz-main-text-color);
 }
 
-#event-status-message {
+#event-status-message,
+.event-status-message {
   width: 100%;
   color: var(--warning-color-default);
   font-size: 0.92em;
