@@ -140,6 +140,7 @@ export function AdminLayoutTab({
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
   const [quizAnswered, setQuizAnswered] = useState(false);
+  const [showConditional, setShowConditional] = useState(false);
   const [resolution, setResolution] = useState<ResolutionChoice>(loadResolutionChoice);
 
   const resetFromEvent = useCallback(
@@ -614,8 +615,8 @@ export function AdminLayoutTab({
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Pré-visualização ao vivo</CardTitle>
               <CardDescription>
-                Mesmos componentes do Totem, na resolução escolhida. O Totem real mantém o palco na
-                proporção 9:16, centralizado.
+                É o próprio Totem, carregado na resolução escolhida (com o mesmo CSS e a mesma regra de palco
+                9:16 centralizado) e reduzido só visualmente para caber aqui.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -707,11 +708,29 @@ export function AdminLayoutTab({
                 </div>
               )}
 
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 rounded border-input"
+                  checked={showConditional}
+                  onChange={(e) => setShowConditional(e.target.checked)}
+                />
+                <span>
+                  Mostrar elementos condicionais de exemplo
+                  <span className="block text-xs text-muted-foreground">
+                    Aviso do Evento, aviso LGPD, aviso de sincronização e mensagem de gabarito
+                    perfeito só aparecem no Totem em certas situações. Desligado, a prévia mostra o
+                    caso comum.
+                  </span>
+                </span>
+              </label>
+
               <LayoutPreviewStage
                 quizAnswered={quizAnswered}
                 screenId={screenId}
                 customizations={previewCustomizations}
-                layout={resolved}
+                lgpdNoticeText={targetEvent.settings.lgpdNoticeText ?? ''}
+                showConditional={showConditional}
                 width={resolution.width}
                 height={resolution.height}
                 highlightedElementId={selectedElementId}

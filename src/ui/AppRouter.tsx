@@ -10,12 +10,14 @@ import {
   type AdminTabId,
 } from './adminRoutes';
 import { createTotemCloudPort } from './cloudFactory';
+import { LayoutPreviewApp } from './LayoutPreviewApp';
+import { LAYOUT_PREVIEW_HASH } from './layoutPreviewProtocol';
 import { UnsavedNavigationGuard } from './navigationGuard';
 
 // O painel administrativo é carregado sob demanda para manter o bundle público do Totem enxuto.
 const AdminApp = lazy(() => import('./AdminApp').then((mod) => ({ default: mod.AdminApp })));
 
-export type AppRouteMode = 'totem' | 'admin' | 'operator';
+export type AppRouteMode = 'totem' | 'admin' | 'operator' | 'layout-preview';
 
 export interface ExternalRouteNavigationRequest {
   targetRoute: AppRouteMode;
@@ -30,6 +32,9 @@ function resolveRouteFromLocation(): AppRouteMode {
   }
   const hash = window.location.hash.toLowerCase();
   const path = window.location.pathname.toLowerCase();
+  if (hash === LAYOUT_PREVIEW_HASH) {
+    return 'layout-preview';
+  }
   if (hash === '#admin' || hash.startsWith('#admin/') || path === '/admin') {
     return 'admin';
   }
@@ -175,6 +180,10 @@ export function AppRouter({ cloudGateway: injectedCloudGateway }: AppRouterProps
     }
     setAdminTab(nextTab);
   }, []);
+
+  if (routeMode === 'layout-preview') {
+    return <LayoutPreviewApp />;
+  }
 
   if (routeMode === 'admin' || routeMode === 'operator') {
     return (
