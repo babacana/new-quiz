@@ -628,6 +628,13 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
     resetIdleTimer();
   };
 
+  const handleVirtualKeyboardClose = () => {
+    setActiveVirtualField(null);
+    nameInputRef.current?.blur();
+    phoneInputRef.current?.blur();
+    resetIdleTimer();
+  };
+
   // Teclado ágil no estande: PRÓXIMO avança para Telefone e JOGAR inicia a Partida diretamente.
   const handleVirtualKeyPress = (key: string) => {
     if (!activeVirtualField) {
@@ -799,6 +806,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
           onVirtualKeyboardHeightChange={setVirtualKeyboardHeightVh}
           onVirtualKeyPress={handleVirtualKeyPress}
           onVirtualKeyboardResizingChange={handleKeyboardResizingChange}
+          onVirtualKeyboardClose={handleVirtualKeyboardClose}
         />
 
         <TotemQuizScreen

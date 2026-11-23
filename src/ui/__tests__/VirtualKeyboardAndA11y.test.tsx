@@ -114,6 +114,34 @@ describe('VirtualKeyboard e helpers de dimensionamento', () => {
     expect(document.getElementById('virtual-keyboard')).toBeNull();
   });
 
+  it('fecha pelo botão FECHAR TECLADO e ao tocar fora, mas não ao tocar no teclado ou em campos', () => {
+    const onClose = vi.fn();
+    render(
+      <div>
+        <input aria-label="campo" />
+        <p>fora</p>
+        <VirtualKeyboard
+          activeField="nome"
+          enabled={true}
+          heightVh={30}
+          onHeightVhChange={vi.fn()}
+          onKeyPress={vi.fn()}
+          onClose={onClose}
+        />
+      </div>,
+    );
+
+    fireEvent.pointerDown(screen.getByLabelText('campo'));
+    fireEvent.pointerDown(document.getElementById('virtual-keyboard') as HTMLElement);
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Fechar teclado' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerDown(screen.getByText('fora'));
+    expect(onClose).toHaveBeenCalledTimes(2);
+  });
+
   it('renderiza layout QWERTY completo para nome e emite identificadores brutos das teclas', async () => {
     const user = userEvent.setup();
     const onKeyPress = vi.fn();
