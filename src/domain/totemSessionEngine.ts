@@ -345,7 +345,23 @@ export class TotemSessionEngine {
     };
   }
 
-  async initialize(options?: {
+  // Inicializações concorrentes (ex.: efeitos duplicados do React) compartilham a mesma execução,
+  // evitando registrar dois Totens "Aguardando Pareamento" para o mesmo aparelho.
+  private initializePromise: Promise<TotemSessionSnapshot> | null = null;
+
+  initialize(options?: {
+    activationCode?: string;
+    requirePairing?: boolean;
+  }): Promise<TotemSessionSnapshot> {
+    if (!this.initializePromise) {
+      this.initializePromise = this.runInitialize(options).finally(() => {
+        this.initializePromise = null;
+      });
+    }
+    return this.initializePromise;
+  }
+
+  private async runInitialize(options?: {
     activationCode?: string;
     requirePairing?: boolean;
   }): Promise<TotemSessionSnapshot> {

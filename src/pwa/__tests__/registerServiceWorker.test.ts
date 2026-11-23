@@ -119,4 +119,28 @@ describe('registerServiceWorker', () => {
     expect(postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
     unsubscribe();
   });
+
+  it('não recarrega a página no controllerchange da primeira instalação, apenas em atualizações', async () => {
+    const reloadSpy = vi.fn();
+    const listeners: Array<() => void> = [];
+    const container: ServiceWorkerContainerLike = {
+      controller: null,
+      register: vi.fn().mockResolvedValue({ scope: '/' }),
+      addEventListener: ((_type: string, listener: EventListenerOrEventListenerObject) => {
+        listeners.push(listener as () => void);
+      }) as ServiceWorkerContainer['addEventListener'],
+      removeEventListener: vi.fn(),
+    };
+
+    await registerServiceWorker({ serviceWorker: container }, reloadSpy);
+
+    // clients.claim() da instalação inicial: sem reload (evita inicializar o Totem duas vezes).
+    for (const cb of listeners) cb();
+    expect(reloadSpy).not.toHaveBeenCalled();
+
+    // Uma atualização posterior continua recarregando uma única vez.
+    for (const cb of listeners) cb();
+    for (const cb of listeners) cb();
+    expect(reloadSpy).toHaveBeenCalledTimes(1);
+  });
 });

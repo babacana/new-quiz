@@ -1621,6 +1621,25 @@ describe('TotemSessionEngine', () => {
       expect(engine.getSnapshot().initialized).toBe(false);
     });
 
+    it('inicializações concorrentes registram um único Totem aguardando Pareamento', async () => {
+      const { cloudGateway, localStore } = createHarness({ online: true });
+      const pairingEngine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock: new FakeClock(),
+        random: new DeterministicRandomSource('99999999'),
+        requirePairing: true,
+      });
+
+      const [first, second] = await Promise.all([
+        pairingEngine.initialize(),
+        pairingEngine.initialize(),
+      ]);
+
+      expect(second.pairing.pairingCode).toBe(first.pairing.pairingCode);
+      expect(await cloudGateway.listTotems()).toHaveLength(1);
+    });
+
     it('volta à tela de Pareamento quando a nuvem deixa de reconhecer o Totem (excluído no painel)', async () => {
       const customEvent: EventConfig = {
         ...DEFAULT_EVENT_CONFIG,
