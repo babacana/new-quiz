@@ -16,7 +16,14 @@ export function resolveSupabaseCredentials(): { supabaseUrl: string; supabaseKey
   return { supabaseUrl, supabaseKey };
 }
 
+export const MISSING_SUPABASE_CONFIG_MESSAGE =
+  'Configuração do Supabase ausente: defina VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY no build de produção.';
+
 export function loadSharedInMemoryGateway(): Promise<CloudGateway> {
+  // Em produção o gateway em memória (com contas de demonstração) nunca é usado nem incluído no bundle.
+  if (import.meta.env.PROD) {
+    return Promise.reject(new Error(MISSING_SUPABASE_CONFIG_MESSAGE));
+  }
   if (!inMemoryFallbackPromise) {
     inMemoryFallbackPromise = import('../adapters/inMemoryCloudGateway').then(
       ({ InMemoryCloudGateway }) =>
@@ -76,6 +83,9 @@ export function createTotemCloudPort(): TotemCloudPort {
   const credentials = resolveSupabaseCredentials();
   if (credentials) {
     return new SupabaseTotemGateway(credentials.supabaseUrl, credentials.supabaseKey);
+  }
+  if (import.meta.env.PROD) {
+    throw new Error(MISSING_SUPABASE_CONFIG_MESSAGE);
   }
   return createLazyInMemoryTotemProxy();
 }

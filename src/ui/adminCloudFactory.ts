@@ -1,7 +1,11 @@
 import { SupabaseAdminGateway } from '../adapters/supabaseAdminGateway';
 import type { AdminCloudPort } from '../domain/ports';
 import type { TotemChannelEvent } from '../domain/types';
-import { loadSharedInMemoryGateway, resolveSupabaseCredentials } from './cloudFactory';
+import {
+  loadSharedInMemoryGateway,
+  MISSING_SUPABASE_CONFIG_MESSAGE,
+  resolveSupabaseCredentials,
+} from './cloudFactory';
 
 function createLazyInMemoryAdminProxy(): AdminCloudPort {
   const call = async <K extends keyof AdminCloudPort>(
@@ -92,6 +96,9 @@ export function createAdminCloudPort(): AdminCloudPort {
   const credentials = resolveSupabaseCredentials();
   if (credentials) {
     return new SupabaseAdminGateway(credentials.supabaseUrl, credentials.supabaseKey);
+  }
+  if (import.meta.env.PROD) {
+    throw new Error(MISSING_SUPABASE_CONFIG_MESSAGE);
   }
   return createLazyInMemoryAdminProxy();
 }

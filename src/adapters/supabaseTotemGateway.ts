@@ -117,43 +117,8 @@ export class SupabaseTotemGateway implements TotemCloudPort {
 
     const credentials = this.resolveAuthCredentials(auth);
     if (!credentials) {
-      // Sem pareamento concluído, carrega apenas configuração e questões públicas do Evento.
-      const { data: eventData, error: eventError } = await this.client
-        .from('quiz_events')
-        .select('*')
-        .eq('id', eventId)
-        .maybeSingle<SupabaseEventRow>();
-      if (eventError) {
-        throw new Error(`Erro ao buscar Evento no Supabase: ${eventError.message}`);
-      }
-      if (!eventData) {
-        return null;
-      }
-
-      const { data: linkedRows, error: linkError } = await this.client
-        .from('quiz_event_questions')
-        .select('question_id')
-        .eq('event_id', eventId);
-      if (linkError) {
-        throw new Error(`Erro ao buscar vínculo de questões: ${linkError.message}`);
-      }
-
-      let query = this.client.from('quiz_questions').select('*').order('id', { ascending: true });
-      if (linkedRows && linkedRows.length > 0) {
-        query = query.in(
-          'id',
-          linkedRows.map((row: { question_id: number }) => row.question_id),
-        );
-      }
-      const { data: questionRows, error: questionsError } = await query;
-      if (questionsError) {
-        throw new Error(`Erro ao buscar Banco de Questões: ${questionsError.message}`);
-      }
-
-      return {
-        event: mapEventRow(eventData),
-        questions: ((questionRows ?? []) as SupabaseQuestionRow[]).map(mapQuestionRow),
-      };
+      // Sem Pareamento concluído não há credenciais para a borda RPC; o Banco de Questões não é público.
+      return null;
     }
 
     const { data, error } = await this.client

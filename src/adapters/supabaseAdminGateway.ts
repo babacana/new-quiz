@@ -373,23 +373,13 @@ export class SupabaseAdminGateway implements AdminCloudPort {
   }
 
   async replaceAllQuestions(questions: Question[]): Promise<Question[]> {
-    const { error: deleteError } = await this.client.from('quiz_questions').delete().gte('id', 0);
-    if (deleteError) {
-      throw new Error(`Erro ao limpar Banco de Questões no Supabase: ${deleteError.message}`);
-    }
+    // RPC transacional: preserva os vínculos Evento-Questão (por texto) e não deixa o banco vazio em caso de falha.
+    const { data, error } = await this.client.rpc('quiz_replace_all_questions', {
+      p_questions: questions.map((question) => this.mapQuestionToRow(question)),
+    });
 
-    if (questions.length === 0) {
-      return [];
-    }
-
-    const { data, error: insertError } = await this.client
-      .from('quiz_questions')
-      .insert(questions.map((question) => this.mapQuestionToRow(question)))
-      .select('*')
-      .order('id', { ascending: true });
-
-    if (insertError) {
-      throw new Error(`Erro ao inserir questões substituídas no Supabase: ${insertError.message}`);
+    if (error) {
+      throw new Error(`Erro ao substituir Banco de Questões no Supabase: ${error.message}`);
     }
 
     return ((data ?? []) as SupabaseQuestionRow[]).map(mapQuestionRow);
