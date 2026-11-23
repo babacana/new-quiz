@@ -14,6 +14,7 @@ export interface CustomizationPreviewProps {
 
 const PREVIEW_TABS: readonly { id: LayoutScreenId; label: string }[] = [
   { id: 'initial', label: 'Tela Inicial' },
+  { id: 'closed', label: 'Quiz Fechado' },
   { id: 'idle', label: 'Tela de Descanso' },
   { id: 'quiz', label: 'Tela de Quiz' },
   { id: 'result', label: 'Tela de Resultado' },
@@ -28,6 +29,7 @@ export function CustomizationPreview({
 }: CustomizationPreviewProps) {
   const [previewScreen, setPreviewScreen] = useState<LayoutScreenId>('initial');
   const [quizAnswered, setQuizAnswered] = useState(false);
+  const [idleClosed, setIdleClosed] = useState(false);
   const [resolution, persistResolution] = usePreviewResolution();
 
   return (
@@ -77,13 +79,25 @@ export function CustomizationPreview({
         </label>
       )}
 
+      {previewScreen === 'idle' && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-input"
+            checked={idleClosed}
+            onChange={(e) => setIdleClosed(e.target.checked)}
+          />
+          Mostrar com o Evento ainda fechado
+        </label>
+      )}
+
       <div id="customization-live-preview">
         <LayoutPreviewStage
           screenId={previewScreen}
           customizations={customizations}
           lgpdNoticeText={lgpdNoticeText}
           quizAnswered={quizAnswered}
-          showConditional={false}
+          showConditional={previewScreen === 'idle' && idleClosed}
           highlightedElementId={null}
           interactive={false}
           width={resolution.width}

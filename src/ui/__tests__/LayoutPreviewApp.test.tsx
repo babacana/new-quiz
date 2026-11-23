@@ -71,6 +71,23 @@ describe('LayoutPreviewApp (Totem real dentro do iframe de prévia)', () => {
     expect(document.getElementById('lgpd-notice-text')?.textContent).toBe('Aviso real do Evento');
   });
 
+  it('renderiza o Quiz Fechado só com logo, slogan, mensagem e Ver Ranking', () => {
+    render(<LayoutPreviewApp />);
+    sendState({ screenId: 'closed' });
+    const closed = document.getElementById('closed-screen')!;
+    expect(closed.querySelector('input')).toBeNull();
+    expect(closed.querySelector('#start-quiz-btn')).toBeNull();
+    expect(closed.querySelector('#closed-status-message')).not.toBeNull();
+    expect(closed.querySelector('#view-ranking-closed-btn')).not.toBeNull();
+    expect(closed.querySelector('.slogan')).not.toBeNull();
+  });
+
+  it('mostra a Tela de Descanso com a mensagem de Evento fechado quando pedido', () => {
+    render(<LayoutPreviewApp />);
+    sendState({ screenId: 'idle', showConditional: true });
+    expect(document.getElementById('idle-call-to-action')?.textContent).toContain('QUIZ EM BREVE!');
+  });
+
   it.each<[LayoutScreenId, string]>([
     ['idle', '#idle-call-to-action'],
     ['quiz', '#options-container'],

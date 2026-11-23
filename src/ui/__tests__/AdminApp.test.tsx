@@ -619,6 +619,17 @@ describe('AdminApp (T4 - Autenticação, Multi-Evento, Banco de Questões e Dirt
     await waitFor(() => expect(preview.last().screenId).toBe('result'));
     await user.click(screen.getByRole('tab', { name: 'Tela Inicial' }));
 
+    // Mensagens da Tela de Descanso com o Evento fechado e a tela Quiz Fechado na prévia
+    const closedTitle = screen.getByLabelText('Descanso com Evento fechado: título');
+    await user.clear(closedTitle);
+    await user.type(closedTitle, 'ABRIMOS EM BREVE');
+    await waitFor(() =>
+      expect(preview.last().customizations.texts.idleScreenBeforeTitle).toBe('ABRIMOS EM BREVE'),
+    );
+    await user.click(screen.getByRole('tab', { name: 'Quiz Fechado' }));
+    await waitFor(() => expect(preview.last().screenId).toBe('closed'));
+    await user.click(screen.getByRole('tab', { name: 'Tela Inicial' }));
+
     // A resolução escolhida vira o tamanho exato do iframe
     await user.selectOptions(screen.getByLabelText('Resolução da prévia'), 'fhd-1920x1080');
     expect(preview.iframe.style.width).toBe('1920px');

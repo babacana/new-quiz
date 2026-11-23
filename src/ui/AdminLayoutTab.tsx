@@ -599,8 +599,8 @@ export function AdminLayoutTab({
                 <span>
                   Mostrar elementos condicionais de exemplo
                   <span className="block text-xs text-muted-foreground">
-                    Aviso do Evento, aviso LGPD, aviso de sincronização e mensagem de gabarito
-                    perfeito só aparecem no Totem em certas situações. Desligado, a prévia mostra o
+                    Aviso do Evento, aviso LGPD, aviso de sincronização, mensagem de gabarito
+                    perfeito e a Tela de Descanso com o Evento fechado só aparecem no Totem em certas situações. Desligado, a prévia mostra o
                     caso comum.
                   </span>
                 </span>

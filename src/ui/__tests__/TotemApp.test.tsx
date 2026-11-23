@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
-import { DEFAULT_EVENT_CONFIG } from '../../domain/defaults';
+import { DEFAULT_CUSTOMIZATIONS, DEFAULT_EVENT_CONFIG } from '../../domain/defaults';
 import { EventAdminController } from '../../domain/eventAdminController';
 import type { Clock, RandomSource } from '../../domain/ports';
 import { TotemSessionEngine } from '../../domain/totemSessionEngine';
@@ -543,7 +543,7 @@ describe('TotemApp (Interface do Totem)', () => {
     const startIso = '2026-11-16T10:00:00-03:00';
     const endIso = '2026-11-16T18:00:00-03:00';
 
-    // Caso before: botão visível porém desabilitado, mensagem de início futuro e CTA "QUIZ EM BREVE!".
+    // Caso before: tela "Quiz Fechado" (só logo, slogan, mensagem e Ver Ranking) e CTA "QUIZ EM BREVE!".
     const beforeRig = createUiTestRig({
       nowIso: '2026-11-16T09:00:00-03:00',
       eventOverrides: {
@@ -555,20 +555,24 @@ describe('TotemApp (Interface do Totem)', () => {
     });
     const beforeRender = render(<TotemApp engine={beforeRig.engine} />);
     await waitFor(() => {
-      expect(document.getElementById('event-status-message')).not.toBeNull();
+      expect(document.getElementById('closed-status-message')).not.toBeNull();
     });
-    expect(document.getElementById('event-status-message')?.textContent).toContain(
+    expect(document.getElementById('closed-status-message')?.textContent).toContain(
       'O quiz "Feira das Águas" ainda não começou!',
     );
-    const beforeBtn = document.getElementById('start-quiz-btn') as HTMLButtonElement;
-    expect(beforeBtn).toBeDisabled();
-    expect(beforeBtn).not.toHaveClass('hidden');
+    const closedScreen = document.getElementById('closed-screen')!;
+    expect(closedScreen).toHaveClass('active');
+    expect(within(closedScreen).getByRole('button', { name: 'Ver Ranking' })).toBeVisible();
+    expect(closedScreen.querySelector('input')).toBeNull();
+    expect(within(closedScreen).queryByRole('button', { name: 'Iniciar Quiz' })).toBeNull();
+    expect(document.getElementById('initial-screen')).not.toHaveClass('active');
+    expect(screen.queryByRole('button', { name: 'Iniciar Quiz' })).toBeNull();
     expect(document.getElementById('idle-call-to-action')).toHaveTextContent(
       'QUIZ EM BREVE!Toque para mais informações',
     );
     beforeRender.unmount();
 
-    // Caso after: botão desabilitado e oculto, mensagem de encerramento e CTA "QUIZ ENCERRADO".
+    // Caso after: mesma tela fechada, com mensagem de encerramento e CTA "QUIZ ENCERRADO".
     const afterRig = createUiTestRig({
       nowIso: '2026-11-16T19:00:00-03:00',
       eventOverrides: {
@@ -580,19 +584,42 @@ describe('TotemApp (Interface do Totem)', () => {
     });
     const afterRender = render(<TotemApp engine={afterRig.engine} />);
     await waitFor(() => {
-      expect(document.getElementById('event-status-message')).not.toBeNull();
+      expect(document.getElementById('closed-status-message')).not.toBeNull();
     });
-    expect(document.getElementById('event-status-message')?.textContent).toContain(
+    expect(document.getElementById('closed-status-message')?.textContent).toContain(
       'O quiz "Feira das Águas" foi encerrado em',
     );
-    const afterBtn = document.getElementById('start-quiz-btn') as HTMLButtonElement;
-    expect(afterBtn).toBeDisabled();
-    expect(afterBtn).toHaveClass('hidden');
-    expect(afterBtn).not.toBeVisible();
+    expect(document.getElementById('closed-screen')).toHaveClass('active');
+    expect(document.getElementById('start-quiz-btn')).not.toBeVisible();
     expect(document.getElementById('idle-call-to-action')).toHaveTextContent(
       'QUIZ ENCERRADOObrigado por participar!',
     );
     afterRender.unmount();
+
+    // Mensagens da Tela de Descanso personalizadas no ADM valem para Evento fechado.
+    const customRig = createUiTestRig({
+      nowIso: '2026-11-16T09:00:00-03:00',
+      eventOverrides: {
+        startTime: startIso,
+        endTime: endIso,
+        enableOutOfPeriodMessage: true,
+        customizations: {
+          ...DEFAULT_CUSTOMIZATIONS,
+          texts: {
+            ...DEFAULT_CUSTOMIZATIONS.texts,
+            idleScreenBeforeTitle: 'ABRIMOS EM BREVE',
+            idleScreenBeforeSubtitle: 'Volte amanhã às 10h',
+          },
+        },
+      },
+    });
+    const customRender = render(<TotemApp engine={customRig.engine} />);
+    await waitFor(() => {
+      expect(document.getElementById('idle-call-to-action')).toHaveTextContent(
+        'ABRIMOS EM BREVEVolte amanhã às 10h',
+      );
+    });
+    customRender.unmount();
 
     // Caso during: sem aviso de bloqueio e botão habilitado.
     const duringRig = createUiTestRig({

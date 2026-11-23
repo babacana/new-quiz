@@ -254,13 +254,21 @@ export class TotemSessionEngine {
       DEFAULT_CUSTOMIZATIONS.texts.idleScreenCallToAction;
 
     const eventName = event.name.trim() || 'especial';
+    const texts = this.customizationTexts;
+    const defaultTexts = DEFAULT_CUSTOMIZATIONS.texts;
+    const beforeTitle = texts.idleScreenBeforeTitle?.trim() || defaultTexts.idleScreenBeforeTitle;
+    const beforeSubtitle =
+      texts.idleScreenBeforeSubtitle?.trim() || defaultTexts.idleScreenBeforeSubtitle;
+    const afterTitle = texts.idleScreenAfterTitle?.trim() || defaultTexts.idleScreenAfterTitle;
+    const afterSubtitle =
+      texts.idleScreenAfterSubtitle?.trim() || defaultTexts.idleScreenAfterSubtitle;
 
     if (!event.isActive) {
       return {
         status: 'after',
         isBlocked: true,
-        idleCallToActionTitle: 'QUIZ ENCERRADO',
-        idleCallToActionSubtitle: 'Obrigado por participar!',
+        idleCallToActionTitle: afterTitle,
+        idleCallToActionSubtitle: afterSubtitle,
         initialScreenMessage: `O quiz "${eventName}" foi encerrado. Obrigado pela participação!`,
       };
     }
@@ -289,8 +297,8 @@ export class TotemSessionEngine {
       return {
         status,
         isBlocked: true,
-        idleCallToActionTitle: 'QUIZ EM BREVE!',
-        idleCallToActionSubtitle: 'Toque para mais informações',
+        idleCallToActionTitle: beforeTitle,
+        idleCallToActionSubtitle: beforeSubtitle,
         initialScreenMessage: `O quiz "${eventName}" ainda não começou! Prepare-se, a diversão começa em ${formattedStart}.`,
       };
     }
@@ -300,8 +308,8 @@ export class TotemSessionEngine {
       return {
         status,
         isBlocked: true,
-        idleCallToActionTitle: 'QUIZ ENCERRADO',
-        idleCallToActionSubtitle: 'Obrigado por participar!',
+        idleCallToActionTitle: afterTitle,
+        idleCallToActionSubtitle: afterSubtitle,
         initialScreenMessage: `O quiz "${eventName}" foi encerrado em ${formattedEnd}. Obrigado pela participação!`,
       };
     }

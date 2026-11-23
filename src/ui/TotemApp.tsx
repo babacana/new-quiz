@@ -23,6 +23,7 @@ import { playTotemSound } from './soundEffects';
 import { buildThemeCssVariables } from './themeCss';
 import type { TimeAlertVisualUpdate } from './totem/QuestionTimerBar';
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
+import { TotemClosedScreen } from './totem/TotemClosedScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
 import { type ActiveTotemModal, TotemModals } from './totem/TotemModals';
 import { TotemQuizScreen } from './totem/TotemQuizScreen';
@@ -747,6 +748,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const themeStyle = buildThemeCssVariables(snapshot.event.customizations);
   const eventLayout = snapshot.event.customizations.layout;
   const initialLayout = useMemo(() => resolveScreenLayout(eventLayout, 'initial'), [eventLayout]);
+  const closedLayout = useMemo(() => resolveScreenLayout(eventLayout, 'closed'), [eventLayout]);
   const idleLayout = useMemo(() => resolveScreenLayout(eventLayout, 'idle'), [eventLayout]);
   const quizLayout = useMemo(() => resolveScreenLayout(eventLayout, 'quiz'), [eventLayout]);
   const resultLayout = useMemo(() => resolveScreenLayout(eventLayout, 'result'), [eventLayout]);
@@ -778,7 +780,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         />
 
         <TotemInitialScreen
-          active={snapshot.screen === 'initial-screen'}
+          active={snapshot.screen === 'initial-screen' && !eventWindow.isBlocked}
           layout={initialLayout}
           logoSrc={logoSrc}
           texts={texts}
@@ -807,6 +809,15 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
           onVirtualKeyPress={handleVirtualKeyPress}
           onVirtualKeyboardResizingChange={handleKeyboardResizingChange}
           onVirtualKeyboardClose={handleVirtualKeyboardClose}
+        />
+
+        <TotemClosedScreen
+          active={snapshot.screen === 'initial-screen' && eventWindow.isBlocked}
+          layout={closedLayout}
+          logoSrc={logoSrc}
+          texts={texts}
+          eventWindow={eventWindow}
+          onOpenRanking={() => void handleOpenRanking()}
         />
 
         <TotemQuizScreen

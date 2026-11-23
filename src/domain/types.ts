@@ -47,6 +47,12 @@ export interface EventCustomizationTexts {
   rankingScreenTitle: string;
   rankingScreenBackButton: string;
   idleScreenCallToAction: string;
+  /** Tela de Descanso enquanto o Evento ainda não começou. */
+  idleScreenBeforeTitle: string;
+  idleScreenBeforeSubtitle: string;
+  /** Tela de Descanso depois que o Evento terminou. */
+  idleScreenAfterTitle: string;
+  idleScreenAfterSubtitle: string;
   modalAlreadyWonTitle: string;
   modalAlreadyWonMessage: string;
   modalIncorrectAnswersTitle: string;
