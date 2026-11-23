@@ -297,7 +297,8 @@ body.totem-fullscreen-mode {
   outline-offset: 0.2em;
 }
 
-.layout-item[data-layout-element='logo'] .event-logo {
+.layout-item[data-layout-element='logo'] .event-logo,
+.layout-item[data-layout-element='stylizedLogo'] .event-logo {
   width: calc(58% * var(--layout-scale));
   max-height: calc(18cqh * var(--layout-scale));
 }

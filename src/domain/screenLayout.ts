@@ -49,6 +49,8 @@ export interface LayoutElementDefinition {
   supportsColor?: boolean;
   /** Posicionado de forma absoluta no canto da tela: sem zona, só deslocamento. */
   floating?: boolean;
+  /** Elemento opcional: começa oculto até o Administrador ativá-lo (Eventos antigos não mudam). */
+  defaultHidden?: boolean;
 }
 
 export interface LayoutScreenDefinition {
@@ -101,6 +103,13 @@ export const LAYOUT_SCREENS: readonly LayoutScreenDefinition[] = [
     label: 'Tela de Descanso',
     elements: [
       { id: 'logo', label: 'Logotipo', defaultZone: 'top' },
+      {
+        id: 'stylizedLogo',
+        label: 'Logo estilizada da CAESB',
+        hint: 'Opcional: começa oculta. Ative aqui para exibi-la na Tela de Descanso.',
+        defaultZone: 'top',
+        defaultHidden: true,
+      },
       { id: 'slogan', label: 'Slogan', defaultZone: 'top', supportsColor: true },
       { id: 'showcase', label: 'Vitrine (pódio e estatísticas)', defaultZone: 'center' },
       {
@@ -206,7 +215,7 @@ function defaultElementSettings(
   index: number,
 ): LayoutElementSettings {
   return {
-    visible: true,
+    visible: !definition.defaultHidden,
     zone: definition.defaultZone,
     order: index * 10,
     align: 'center',

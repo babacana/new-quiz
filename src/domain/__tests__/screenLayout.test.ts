@@ -38,6 +38,12 @@ describe('screenLayout', () => {
         .elements.statusMessage?.visible,
     ).toBe(true);
 
+    // Logo estilizada da Tela de Descanso é opcional: oculta até ser ativada, e só ativada vira override salvo
+    expect(resolveScreenLayout(undefined, 'idle').zones.top).not.toContain('stylizedLogo');
+    const shown = updateLayoutElement(undefined, 'idle', 'stylizedLogo', { visible: true });
+    expect(shown.screens.idle?.elements).toEqual({ stylizedLogo: { visible: true } });
+    expect(resolveScreenLayout(shown, 'idle').zones.top).toEqual(['logo', 'stylizedLogo', 'slogan']);
+
     const idle = resolveScreenLayout(undefined, 'idle');
     expect(idle.zones).toEqual({
       top: ['logo', 'slogan'],

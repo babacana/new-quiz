@@ -112,6 +112,33 @@ describe('TotemApp (Interface do Totem)', () => {
     vi.restoreAllMocks();
   });
 
+  it('Tela de Descanso: a logo estilizada da CAESB começa oculta e aparece quando ativada no layout', async () => {
+    const hidden = createUiTestRig();
+    const first = render(<TotemApp engine={hidden.engine} />);
+    await waitFor(() => expect(document.getElementById('idle-screen')).not.toBeNull());
+    expect(document.querySelector('[data-layout-element="stylizedLogo"]')).toBeNull();
+    first.unmount();
+
+    const { engine } = createUiTestRig({
+      eventOverrides: {
+        customizations: {
+          ...DEFAULT_EVENT_CONFIG.customizations,
+          layout: {
+            version: 1,
+            screens: { idle: { elements: { stylizedLogo: { visible: true, scalePercent: 120 } } } },
+          },
+        },
+      },
+    });
+    render(<TotemApp engine={engine} />);
+    await waitFor(() =>
+      expect(document.querySelector('#idle-screen [data-layout-element="stylizedLogo"]')).not.toBeNull(),
+    );
+    const item = document.querySelector('#idle-screen [data-layout-element="stylizedLogo"]')!;
+    expect(item.querySelector('img')?.getAttribute('src')).toBe('/assets/logo-estilizada.png');
+    expect((item as HTMLElement).style.fontSize).toBe('120%');
+  });
+
   it('aplica o layout configurado no Evento (zonas, tamanho, cor) e mantém o padrão sem layout', async () => {
     const { engine } = createUiTestRig({
       eventOverrides: {
