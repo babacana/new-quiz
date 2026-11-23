@@ -741,6 +741,9 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const eventLayout = snapshot.event.customizations.layout;
   const initialLayout = useMemo(() => resolveScreenLayout(eventLayout, 'initial'), [eventLayout]);
   const idleLayout = useMemo(() => resolveScreenLayout(eventLayout, 'idle'), [eventLayout]);
+  const quizLayout = useMemo(() => resolveScreenLayout(eventLayout, 'quiz'), [eventLayout]);
+  const resultLayout = useMemo(() => resolveScreenLayout(eventLayout, 'result'), [eventLayout]);
+  const rankingLayout = useMemo(() => resolveScreenLayout(eventLayout, 'ranking'), [eventLayout]);
   const { eventWindow } = snapshot;
   const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
   const showPairingModal =
@@ -800,6 +803,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
         <TotemQuizScreen
           active={snapshot.screen === 'quiz-screen'}
+          layout={quizLayout}
           engine={engine}
           logoSrc={logoSrc}
           currentQuestion={currentQuestion}
@@ -822,6 +826,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
         <TotemResultScreen
           active={snapshot.screen === 'result-screen'}
+          layout={resultLayout}
           logoSrc={logoSrc}
           texts={texts}
           lastResult={snapshot.lastResult}
@@ -836,6 +841,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
 
         <TotemRankingScreen
           active={snapshot.screen === 'ranking-screen'}
+          layout={rankingLayout}
           logoSrc={logoSrc}
           texts={texts}
           ranking={snapshot.ranking}

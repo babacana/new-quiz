@@ -312,6 +312,51 @@ body.totem-fullscreen-mode {
   gap: 0.5em;
 }
 
+/* Elementos flutuantes (ex.: botão Desistir) ficam no canto da tela e só aceitam deslocamento */
+.layout-item-floating {
+  position: absolute;
+  top: 0.7em;
+  left: 0.7em;
+  width: auto;
+  z-index: 10;
+  padding: 0 !important;
+}
+
+.layout-item-floating .btn-give-up {
+  position: static;
+}
+
+#quiz-screen .screen-content.layout-zones {
+  height: auto;
+  justify-content: space-between;
+}
+
+#quiz-screen .layout-zone-center {
+  gap: 1.1em;
+  justify-content: space-evenly;
+}
+
+#result-screen .screen-content.layout-zones {
+  height: 100%;
+  margin: 0;
+  justify-content: space-between;
+}
+
+#ranking-screen .layout-zone-center {
+  justify-content: flex-start;
+  flex: 1 1 0;
+}
+
+#ranking-screen .layout-item[data-layout-element='list'] {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+#ranking-screen #ranking-list {
+  flex: 1 1 0;
+  max-height: 62cqh;
+}
+
 /* Tela de Descanso do Totem — sem sobreposição entre showcase e chamada à ação */
 #idle-screen {
   justify-content: center;

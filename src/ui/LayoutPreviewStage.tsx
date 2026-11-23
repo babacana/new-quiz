@@ -4,9 +4,18 @@ import {
   type LayoutScreenId,
   type ResolvedScreenLayout,
 } from '../domain/screenLayout';
-import type { EventCustomizations, EventWindowState, RankingEntry } from '../domain/types';
+import type {
+  ActiveQuestionState,
+  EventCustomizations,
+  EventWindowState,
+  MatchResultSummary,
+  RankingEntry,
+} from '../domain/types';
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
+import { TotemQuizScreen } from './totem/TotemQuizScreen';
+import { TotemRankingScreen } from './totem/TotemRankingScreen';
+import { TotemResultScreen } from './totem/TotemResultScreen';
 import { buildThemeCssVariables, resolvePreviewVisualAssets } from './themeCss';
 
 export interface LayoutPreviewStageProps {
@@ -16,6 +25,8 @@ export interface LayoutPreviewStageProps {
   width: number;
   height: number;
   highlightedElementId?: string | null;
+  /** Tela de Quiz: mostra a pergunta já respondida (botão Próxima Pergunta). */
+  quizAnswered?: boolean;
   onSelectElement?: (elementId: string) => void;
   /** Arraste na prévia: novo deslocamento (em % do palco) do elemento. */
   onMoveElement?: (elementId: string, offsetXPercent: number, offsetYPercent: number) => void;
@@ -36,6 +47,59 @@ const SAMPLE_RANKING: RankingEntry[] = [
   playedAt: '2026-01-01T12:00:00.000Z',
 }));
 
+const SAMPLE_RANKING_FULL: RankingEntry[] = Array.from({ length: 10 }, (_, index) => ({
+  position: index + 1,
+  matchId: `sample-full-${index}`,
+  participantName: ['ANA SOUZA', 'BRUNO LIMA', 'CARLA DIAS', 'DIEGO ROCHA', 'ELISA MOURA', 'FABIO NUNES', 'GISELE ALVES', 'HUGO PAIVA', 'IRIS COSTA', 'JOAO REIS'][index]!,
+  participantPhone: '',
+  score: 10 - Math.floor(index / 3),
+  totalQuestions: 10,
+  timeSeconds: 94 + index * 7,
+  playedAt: '2026-01-01T12:00:00.000Z',
+}));
+
+const SAMPLE_RESULT: MatchResultSummary = {
+  matchId: 'sample-result',
+  participantName: 'MARIA CLARA',
+  participantPhone: '',
+  score: 10,
+  totalQuestions: 10,
+  timeSeconds: 96,
+  wonPrize: true,
+  prizeStatus: 'delivered',
+  rankingPosition: 1,
+  isTop3: true,
+  isPerfectScore: true,
+  canShowIncorrectAnswers: true,
+  incorrectAnswers: [],
+};
+
+function buildSampleQuestion(answered: boolean): ActiveQuestionState {
+  const labels = [
+    'Tratamento e distribuição de água potável',
+    'Geração de energia elétrica',
+    'Coleta de resíduos sólidos',
+    'Transporte público urbano',
+  ];
+  return {
+    index: 2,
+    total: 10,
+    question: {
+      id: 1,
+      text: 'Qual é o principal serviço prestado pela CAESB?',
+      difficulty: 'moderado',
+      originalOptions: labels as [string, string, string, string],
+      originalCorrectIndex: 0,
+      shuffledOptions: labels.map((text, idx) => ({ text, isCorrect: idx === 0, originalIndex: idx })),
+    },
+    hasAnswered: answered,
+    isTimedOut: false,
+    selectedOptionIndex: answered ? 0 : null,
+    revealedCorrectOptionIndex: answered ? 0 : null,
+    advanceButtonLabel: 'Próxima Pergunta',
+  } as ActiveQuestionState;
+}
+
 const NOOP = () => undefined;
 const NOOP_REF = { current: null };
 
@@ -47,6 +111,7 @@ export function LayoutPreviewStage({
   width,
   height,
   highlightedElementId,
+  quizAnswered = false,
   onSelectElement,
   onMoveElement,
 }: LayoutPreviewStageProps) {
@@ -170,7 +235,7 @@ export function LayoutPreviewStage({
                 />
               )}
 
-              {screenId === 'initial' ? (
+              {screenId === 'initial' && (
                 <TotemInitialScreen
                   active
                   layout={layout}
@@ -196,7 +261,9 @@ export function LayoutPreviewStage({
                   onVirtualKeyPress={NOOP}
                   onVirtualKeyboardResizingChange={NOOP}
                 />
-              ) : (
+              )}
+
+              {screenId === 'idle' && (
                 <TotemIdleScreen
                   active
                   layout={layout}
@@ -209,6 +276,56 @@ export function LayoutPreviewStage({
                   totalMatchesCount={SAMPLE_RANKING.length}
                   idleSlideIndex={0}
                   onWake={NOOP}
+                />
+              )}
+
+              {screenId === 'quiz' && (
+                <TotemQuizScreen
+                  active
+                  layout={layout}
+                  highlightedElementId={highlightedElementId}
+                  engine={null}
+                  logoSrc={logoSrc}
+                  currentQuestion={buildSampleQuestion(quizAnswered)}
+                  matchStartedAtMs={null}
+                  elapsedMatchSeconds={47}
+                  totalQuestionMs={30000}
+                  isSoundEnabled={false}
+                  isAdvancing={false}
+                  autoAdvanceRemaining={null}
+                  onSelectOption={NOOP}
+                  onAdvanceQuestion={NOOP}
+                  onRequestGiveUp={NOOP}
+                  onElapsedMatchSecondsChange={NOOP}
+                  onTimeAlertVisualChange={NOOP}
+                  onQuestionTimeout={NOOP}
+                />
+              )}
+
+              {screenId === 'result' && (
+                <TotemResultScreen
+                  active
+                  layout={layout}
+                  highlightedElementId={highlightedElementId}
+                  logoSrc={logoSrc}
+                  texts={texts}
+                  lastResult={SAMPLE_RESULT}
+                  backgroundSyncNotice="Resultado salvo neste Totem; sincronizando em segundo plano."
+                  onShowIncorrectAnswers={NOOP}
+                  onOpenRanking={NOOP}
+                  onPlayAgain={NOOP}
+                />
+              )}
+
+              {screenId === 'ranking' && (
+                <TotemRankingScreen
+                  active
+                  layout={layout}
+                  highlightedElementId={highlightedElementId}
+                  logoSrc={logoSrc}
+                  texts={texts}
+                  ranking={SAMPLE_RANKING_FULL}
+                  onBackToInitial={NOOP}
                 />
               )}
             </div>

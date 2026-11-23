@@ -2,7 +2,7 @@
 // Guardado de forma esparsa em `customizations.layout` (jsonb do Evento): só o que foi alterado é
 // salvo, então Eventos antigos (sem layout) continuam idênticos ao visual original.
 
-export type LayoutScreenId = 'initial' | 'idle';
+export type LayoutScreenId = 'initial' | 'idle' | 'quiz' | 'result' | 'ranking';
 export type LayoutZone = 'top' | 'center' | 'bottom';
 export type LayoutAlign = 'start' | 'center' | 'end';
 
@@ -47,6 +47,8 @@ export interface LayoutElementDefinition {
   /** Elemento indispensável para o Totem funcionar: não pode ser ocultado. */
   required?: boolean;
   supportsColor?: boolean;
+  /** Posicionado de forma absoluta no canto da tela: sem zona, só deslocamento. */
+  floating?: boolean;
 }
 
 export interface LayoutScreenDefinition {
@@ -93,6 +95,65 @@ export const LAYOUT_SCREENS: readonly LayoutScreenDefinition[] = [
         required: true,
         supportsColor: true,
       },
+    ],
+  },
+  {
+    id: 'quiz',
+    label: 'Tela de Quiz',
+    elements: [
+      { id: 'logo', label: 'Logotipo', defaultZone: 'top' },
+      {
+        id: 'progress',
+        label: 'Cabeçalho (dificuldade, contador, progresso e tempo)',
+        defaultZone: 'top',
+      },
+      { id: 'question', label: 'Texto da pergunta', defaultZone: 'center', required: true, supportsColor: true },
+      { id: 'options', label: 'Alternativas', defaultZone: 'center', required: true },
+      {
+        id: 'timeBar',
+        label: 'Barra de tempo da pergunta',
+        hint: 'Também controla o tempo esgotado da pergunta.',
+        defaultZone: 'center',
+        required: true,
+      },
+      {
+        id: 'postControls',
+        label: 'Botão Próxima Pergunta',
+        hint: 'Aparece depois de responder. Use "Após responder" na prévia para posicioná-lo.',
+        defaultZone: 'center',
+        required: true,
+      },
+      { id: 'giveUp', label: 'Botão Desistir (×)', defaultZone: 'top', floating: true },
+    ],
+  },
+  {
+    id: 'result',
+    label: 'Tela de Resultado',
+    elements: [
+      { id: 'logo', label: 'Logotipo', defaultZone: 'center' },
+      { id: 'participantName', label: 'Nome do Participante', defaultZone: 'center', supportsColor: true },
+      { id: 'prizeMessage', label: 'Mensagem de Brinde', defaultZone: 'center' },
+      {
+        id: 'syncNotice',
+        label: 'Aviso de sincronização',
+        hint: 'Aparece só quando há sincronização pendente.',
+        defaultZone: 'center',
+      },
+      { id: 'summary', label: 'Desempenho, tempo e ranking', defaultZone: 'center', supportsColor: true },
+      { id: 'allCorrect', label: 'Mensagem de gabarito perfeito', defaultZone: 'center' },
+      { id: 'incorrectButton', label: 'Botão "Onde Eu Errei?"', defaultZone: 'center' },
+      { id: 'rankingButton', label: 'Botão Ver Ranking', defaultZone: 'center' },
+      { id: 'playAgainButton', label: 'Botão Jogar Novamente', defaultZone: 'center', required: true },
+    ],
+  },
+  {
+    id: 'ranking',
+    label: 'Tela de Ranking',
+    elements: [
+      { id: 'logo', label: 'Logotipo', defaultZone: 'center' },
+      { id: 'title', label: 'Título', defaultZone: 'center', supportsColor: true },
+      { id: 'list', label: 'Lista do Ranking', defaultZone: 'center', required: true },
+      { id: 'backButton', label: 'Botão Voltar ao Início', defaultZone: 'center', required: true },
     ],
   },
 ] as const;
@@ -429,6 +490,71 @@ export const LAYOUT_PRESETS: readonly LayoutPresetDefinition[] = [
       slogan: { zone: 'center', order: 10 },
       showcase: { visible: false },
       callToAction: { zone: 'bottom' },
+    },
+  },
+  {
+    id: 'quiz-default',
+    name: 'Padrão',
+    description: 'Visual original: logo e cabeçalho no topo, pergunta e alternativas ao centro.',
+    screenId: 'quiz',
+    elements: {},
+  },
+  {
+    id: 'quiz-options-bottom',
+    name: 'Alternativas na base',
+    description: 'Pergunta ao centro e alternativas e barra de tempo coladas embaixo, mais fáceis de tocar.',
+    screenId: 'quiz',
+    elements: {
+      options: { zone: 'bottom', order: 0 },
+      timeBar: { zone: 'bottom', order: 10 },
+      postControls: { zone: 'bottom', order: 20 },
+    },
+  },
+  {
+    id: 'quiz-focus',
+    name: 'Foco na pergunta',
+    description: 'Sem logotipo, com a pergunta em destaque.',
+    screenId: 'quiz',
+    elements: {
+      logo: { visible: false },
+      question: { scalePercent: 120 },
+    },
+  },
+  {
+    id: 'result-default',
+    name: 'Padrão (tudo centralizado)',
+    description: 'Visual original da Tela de Resultado.',
+    screenId: 'result',
+    elements: {},
+  },
+  {
+    id: 'result-actions-bottom',
+    name: 'Botões na base',
+    description: 'Resultado ao centro e botões de ação na base da tela.',
+    screenId: 'result',
+    elements: {
+      logo: { zone: 'top', order: 0 },
+      incorrectButton: { zone: 'bottom', order: 0 },
+      rankingButton: { zone: 'bottom', order: 10 },
+      playAgainButton: { zone: 'bottom', order: 20 },
+    },
+  },
+  {
+    id: 'ranking-default',
+    name: 'Padrão',
+    description: 'Visual original do Ranking.',
+    screenId: 'ranking',
+    elements: {},
+  },
+  {
+    id: 'ranking-header-top',
+    name: 'Cabeçalho no topo, botão na base',
+    description: 'Logo e título no alto, lista ao centro e botão Voltar fixo na base.',
+    screenId: 'ranking',
+    elements: {
+      logo: { zone: 'top', order: 0 },
+      title: { zone: 'top', order: 10 },
+      backButton: { zone: 'bottom', order: 0 },
     },
   },
 ];
