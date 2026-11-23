@@ -9,7 +9,7 @@ import {
   TIMEOUT_OPTION_TEXT,
 } from '../defaults';
 import { hashEventPhone } from '../phoneHash';
-import type { Clock, RandomSource } from '../ports';
+import { TotemNotRecognizedError, type Clock, type RandomSource } from '../ports';
 import {
   TotemSessionEngine,
   formatPhoneMask,
@@ -1619,6 +1619,49 @@ describe('TotemSessionEngine', () => {
       expect(persistedConfig?.pinCode).toBe('2580');
       expect(persistedConfig?.deviceToken).toBe('tok-pareado-1');
       expect(engine.getSnapshot().initialized).toBe(false);
+    });
+
+    it('volta à tela de Pareamento quando a nuvem deixa de reconhecer o Totem (excluído no painel)', async () => {
+      const customEvent: EventConfig = {
+        ...DEFAULT_EVENT_CONFIG,
+        id: '00000000-0000-4000-8000-000000000444',
+        name: 'Evento Totem Excluído',
+        slug: 'evento-totem-excluido',
+      };
+      const { cloudGateway, localStore } = createHarness({ online: true });
+      cloudGateway.seedEvent(customEvent, buildQuestionPool({ facil: 2, moderado: 1, dificil: 0 }));
+
+      const pairedEngine = new TotemSessionEngine({
+        localStore,
+        cloudGateway,
+        clock: new FakeClock(),
+        random: new DeterministicRandomSource('88888888'),
+        requirePairing: true,
+      });
+      const pendingSnap = await pairedEngine.initialize();
+      const [registered] = await cloudGateway.listTotems();
+      await cloudGateway.authorizeTotemPairing({
+        id: registered.id,
+        pairingCode: pendingSnap.pairing.pairingCode!,
+        deviceToken: 'tok-excluido',
+        name: 'Totem Excluído',
+        pinCode: '1234',
+        eventId: customEvent.id,
+      });
+      expect(pairedEngine.getSnapshot().pairing.status).toBe('paired');
+
+      // A nuvem passa a responder que não conhece mais este Totem.
+      cloudGateway.publishTotemHeartbeat = async () => {
+        throw new TotemNotRecognizedError();
+      };
+      const snap = await pairedEngine.sendHeartbeat();
+
+      expect(snap.pairing.isPaired).toBe(false);
+      expect(snap.pairing.status).toBe('awaiting_authorization');
+      expect(snap.pairing.pairingCode).toMatch(/^[A-Z0-9]{6}$/);
+      const persisted = await localStore.getTotemConfig();
+      expect(persisted?.deviceToken).toBeNull();
+      expect(persisted?.totemId).not.toBe(registered.id);
     });
 
     it('ativa Pareamento por link de ativação ou código pré-autorizado e rejeita código inválido', async () => {
