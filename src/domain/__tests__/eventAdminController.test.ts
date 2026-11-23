@@ -393,6 +393,35 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
   });
 
   describe('Importação e Exportação do Banco de Questões (JSON e CSV)', () => {
+    it('reimporta a planilha pelo ID mesmo após editar o enunciado', async () => {
+      const { controller } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+      const { default: ExcelJS } = await import('exceljs');
+      const original = await controller.listAllQuestions();
+      const exported = await controller.exportQuestionsXlsx();
+      expect(await controller.previewQuestionsXlsx(exported)).toEqual([]);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(exported);
+      const sheet = workbook.worksheets[0];
+      const id = Number(sheet.getCell('A2').value);
+      sheet.getCell('B2').value = 'Questão revisada sobre captação e distribuição.';
+      const originalAnswer = sheet.getCell('G3').value;
+      sheet.getCell('G3').value = 'Z';
+      await expect(controller.importQuestionsXlsx(await workbook.xlsx.writeBuffer()))
+        .rejects.toThrow(/Linha 3.*Resposta correta/);
+      expect(await controller.listAllQuestions()).toEqual(original);
+      sheet.getCell('G3').value = originalAnswer;
+      const file = await workbook.xlsx.writeBuffer();
+      expect(await controller.previewQuestionsXlsx(file)).toEqual([
+        { id, text: 'Questão revisada sobre captação e distribuição.' },
+      ]);
+      await controller.importQuestionsXlsx(file);
+      const updated = await controller.listAllQuestions();
+      expect(updated).toHaveLength(original.length);
+      expect(updated.find((question) => question.id === id)?.text)
+        .toBe('Questão revisada sobre captação e distribuição.');
+    }, 30_000);
+
     it('exporta e importa JSON e CSV escolhendo entre adicionar/mesclar ou substituir tudo', async () => {
       const { controller } = createAdminHarness();
       await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');

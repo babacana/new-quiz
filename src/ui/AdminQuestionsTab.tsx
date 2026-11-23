@@ -121,6 +121,14 @@ export function AdminQuestionsTab({
   const [importFormat, setImportFormat] = useState<'json' | 'csv'>('json');
   const [importMode, setImportMode] = useState<QuestionsImportMode>('merge');
   const [importContent, setImportContent] = useState('');
+  const [isWorkbookOpen, setIsWorkbookOpen] = useState(false);
+  const [workbookFile, setWorkbookFile] = useState<File | null>(null);
+  const [workbookReview, setWorkbookReview] = useState<{
+    data: ArrayBuffer;
+    changes: Array<{ id: number; text: string }>;
+  } | null>(null);
+  const [workbookError, setWorkbookError] = useState('');
+  const [workbookBusy, setWorkbookBusy] = useState(false);
 
   const refreshList = useCallback(async () => {
     try {
@@ -262,16 +270,23 @@ export function AdminQuestionsTab({
     }
   };
 
-  const handleExport = async (format: 'json' | 'csv') => {
+  const handleExport = async (format: 'json' | 'csv' | 'xlsx') => {
     try {
       const content =
         format === 'json'
           ? await controller.exportQuestionsJson()
-          : await controller.exportQuestionsCsv();
+          : format === 'csv'
+            ? await controller.exportQuestionsCsv()
+            : await controller.exportQuestionsXlsx();
+      const mimeTypes = {
+        json: 'application/json',
+        csv: 'text/csv;charset=utf-8;',
+        xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      };
       triggerFileDownload(
         `banco-questoes.${format}`,
         content,
-        format === 'json' ? 'application/json' : 'text/csv;charset=utf-8;',
+        mimeTypes[format],
       );
       onStatusMessage(
         'success',
@@ -282,6 +297,33 @@ export function AdminQuestionsTab({
         'error',
         error instanceof Error ? error.message : 'Erro ao exportar questões.',
       );
+    }
+  };
+
+  const handleWorkbookSubmit = async () => {
+    if (!workbookFile || workbookBusy) return;
+    setWorkbookBusy(true);
+    setWorkbookError('');
+    try {
+      if (!workbookReview) {
+        const data = await workbookFile.arrayBuffer();
+        const changes = await controller.previewQuestionsXlsx(data);
+        setWorkbookReview({ data, changes });
+        return;
+      }
+
+      const count = await controller.importQuestionsXlsx(workbookReview.data, workbookReview.changes);
+      setIsWorkbookOpen(false);
+      await refreshList();
+      await onQuestionsChanged();
+      onStatusMessage('success', `${count} questão(ões) atualizada(s) pela planilha.`);
+    } catch (error) {
+      setWorkbookReview(null);
+      const message = error instanceof Error ? error.message : 'Erro ao importar planilha.';
+      setWorkbookError(message);
+      if (workbookReview) onStatusMessage('error', message);
+    } finally {
+      setWorkbookBusy(false);
     }
   };
 
@@ -440,6 +482,19 @@ export function AdminQuestionsTab({
           >
             <Plus className="h-4 w-4" />
             Nova Questão
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => void handleExport('xlsx')}>
+            <Download className="h-4 w-4" />
+            Baixar planilha (.xlsx)
+          </Button>
+          <Button type="button" variant="outline" size="sm" onClick={() => {
+            setWorkbookFile(null);
+            setWorkbookReview(null);
+            setWorkbookError('');
+            setIsWorkbookOpen(true);
+          }}>
+            <Upload className="h-4 w-4" />
+            Importar planilha (.xlsx)
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => void handleExport('json')}>
             <Download className="h-4 w-4" />
@@ -880,6 +935,53 @@ export function AdminQuestionsTab({
           <DialogFooter>
             <Button type="button" onClick={() => setPreviewData(null)}>
               Fechar Pré-visualização
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isWorkbookOpen} onOpenChange={(open) => {
+        if (!workbookBusy) setIsWorkbookOpen(open);
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Importar planilha de questões</DialogTitle>
+            <DialogDescription>
+              Envie a planilha baixada do banco. Preserve a aba Questões, o cabeçalho e os IDs.
+              A importação atualiza questões existentes.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="workbook-file">Arquivo Excel (.xlsx)</Label>
+            <Input id="workbook-file" type="file" accept=".xlsx" disabled={workbookBusy}
+              onChange={(event) => {
+                setWorkbookFile(event.target.files?.[0] ?? null);
+                setWorkbookReview(null);
+                setWorkbookError('');
+              }}
+            />
+            {workbookError && (
+              <p role="alert" className="whitespace-pre-line text-sm text-destructive">{workbookError}</p>
+            )}
+            {workbookReview && (
+              <div className="space-y-2" aria-live="polite">
+                <p>{workbookReview.changes.length
+                  ? `${workbookReview.changes.length} questão(ões) a atualizar.`
+                  : 'A planilha não contém alterações.'}</p>
+                {workbookReview.changes.length > 0 && (
+                  <ul className="max-h-48 list-disc overflow-y-auto pl-5 text-sm">
+                    {workbookReview.changes.map(({ id, text }) => <li key={id}>#{id} {text}</li>)}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={workbookBusy}
+              onClick={() => setIsWorkbookOpen(false)}>Fechar</Button>
+            <Button type="button" onClick={() => void handleWorkbookSubmit()}
+              disabled={workbookBusy || !workbookFile || workbookReview?.changes.length === 0}>
+              {workbookBusy ? 'Processando…' : workbookReview ? 'Confirmar alterações' : 'Revisar planilha'}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { type AdminDomainContext, escapeCsvField } from './adminContext';
 import type { EventCatalogModule } from './eventCatalogModule';
+import { readQuestionWorkbook, writeQuestionWorkbook } from './questionWorkbook';
 
 const VALID_DIFFICULTIES: readonly DifficultyLevel[] = ['facil', 'moderado', 'dificil'];
 
@@ -403,6 +404,62 @@ export class QuestionBankModule {
 
     // The UTF-8 BOM lets Excel recognize the encoding when opening the file directly.
     return '\uFEFF' + [header, ...lines].join('\n');
+  }
+
+  async exportQuestionsXlsx(): Promise<ArrayBuffer> {
+    return writeQuestionWorkbook(await this.listAllQuestions());
+  }
+
+  async previewQuestionsXlsx(file: ArrayBuffer): Promise<Array<{ id: number; text: string }>> {
+    const changes = await this.getWorkbookChanges(file);
+    return changes.map(({ id, text }) => ({ id, text }));
+  }
+
+  async importQuestionsXlsx(file: ArrayBuffer, reviewed?: Array<{ id: number; text: string }>): Promise<number> {
+    const changes = await this.getWorkbookChanges(file);
+    if (reviewed && JSON.stringify(reviewed) !== JSON.stringify(changes.map(({ id, text }) => ({ id, text })))) {
+      throw new Error('O banco mudou desde a revisão. Revise a planilha novamente.');
+    }
+
+    for (const question of changes) {
+      await this.updateQuestion(question.id, question);
+    }
+    return changes.length;
+  }
+
+  private async getWorkbookChanges(file: ArrayBuffer): Promise<Question[]> {
+    const existing = new Map((await this.listAllQuestions()).map((question) => [question.id, question]));
+    const ids = new Set<number>();
+    const changes: Question[] = [];
+    await readQuestionWorkbook(file, ([rawId, text, a, b, c, d, answer, level, tags, disabled]) => {
+      const id = /^\d+$/.test(rawId) ? Number(rawId) : NaN;
+      const current = existing.get(id);
+      if (!current) throw new Error('Informe o ID de uma questão existente.');
+      if (ids.has(id)) throw new Error(`ID ${id} repetido.`);
+      ids.add(id);
+
+      const correctIndex = ['A', 'B', 'C', 'D'].indexOf(answer.toUpperCase());
+      if (correctIndex < 0) throw new Error('Escolha A, B, C ou D em Resposta correta.');
+      const difficulty = VALID_DIFFICULTIES.find((value) =>
+        value === level.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase(),
+      );
+      if (!difficulty) throw new Error('Escolha Fácil, Moderado ou Difícil em Dificuldade.');
+      const status = disabled.toLowerCase();
+      if (status !== 'sim' && status !== 'não') throw new Error('Escolha Sim ou Não em Desativada.');
+      const question: Question = {
+        id, text, options: [a, b, c, d], correctIndex, difficulty,
+        tags: tags === current.tags.join('; ') ? current.tags : normalizeTags(tags.split(';')),
+        isDisabled: status === 'sim',
+      };
+      validateQuestionInput(question);
+      if (text !== current.text || question.options.some((option, index) => option !== current.options[index])
+        || correctIndex !== current.correctIndex || difficulty !== current.difficulty
+        || question.isDisabled !== current.isDisabled
+        || JSON.stringify(question.tags) !== JSON.stringify(current.tags)) {
+        changes.push(question);
+      }
+    });
+    return changes;
   }
 
   async importQuestionsJson(

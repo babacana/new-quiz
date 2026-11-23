@@ -227,6 +227,18 @@ export class EventAdminController {
     return this.questionBankModule.exportQuestionsCsv(eventId);
   }
 
+  exportQuestionsXlsx(): Promise<ArrayBuffer> {
+    return this.questionBankModule.exportQuestionsXlsx();
+  }
+
+  previewQuestionsXlsx(file: ArrayBuffer): Promise<Array<{ id: number; text: string }>> {
+    return this.questionBankModule.previewQuestionsXlsx(file);
+  }
+
+  importQuestionsXlsx(file: ArrayBuffer, reviewed?: Array<{ id: number; text: string }>): Promise<number> {
+    return this.questionBankModule.importQuestionsXlsx(file, reviewed);
+  }
+
   importQuestionsJson(
     jsonContent: string,
     mode: QuestionsImportMode,

@@ -87,7 +87,7 @@ export function formatLastSeenPtBr(isoString: string | null): string {
 }
 
 // Dispara download local de texto (CSV/JSON) no navegador com proteção para ambientes sem objectURL.
-export function triggerFileDownload(filename: string, content: string, mimeType: string): void {
+export function triggerFileDownload(filename: string, content: string | ArrayBuffer, mimeType: string): void {
   if (typeof URL.createObjectURL !== 'function') {
     return;
   }
