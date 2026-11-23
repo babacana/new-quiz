@@ -17,6 +17,8 @@ export interface LayoutPreviewStageProps {
   height: number;
   highlightedElementId?: string | null;
   onSelectElement?: (elementId: string) => void;
+  /** Arraste na prévia: novo deslocamento (em % do palco) do elemento. */
+  onMoveElement?: (elementId: string, offsetXPercent: number, offsetYPercent: number) => void;
 }
 
 const SAMPLE_RANKING: RankingEntry[] = [
@@ -46,7 +48,15 @@ export function LayoutPreviewStage({
   height,
   highlightedElementId,
   onSelectElement,
+  onMoveElement,
 }: LayoutPreviewStageProps) {
+  const dragRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    baseX: number;
+    baseY: number;
+  } | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
   const [hostWidth, setHostWidth] = useState(0);
 
@@ -94,9 +104,41 @@ export function LayoutPreviewStage({
     <div ref={hostRef} className="w-full">
       <div
         data-testid="layout-preview-frame"
-        className="relative mx-auto overflow-hidden rounded-lg border border-border shadow-xs"
+        className="relative mx-auto touch-none overflow-hidden rounded-lg border border-border shadow-xs"
         style={{ width: Math.round(width * scale), height: Math.round(height * scale) }}
         onMouseDownCapture={(event) => event.preventDefault()}
+        onPointerDownCapture={(event) => {
+          const item = (event.target as HTMLElement).closest<HTMLElement>('[data-layout-element]');
+          const id = item?.dataset.layoutElement;
+          if (!id || !onMoveElement) {
+            return;
+          }
+          const current = layout.elements[id];
+          dragRef.current = {
+            id,
+            startX: event.clientX,
+            startY: event.clientY,
+            baseX: current?.offsetXPercent ?? 0,
+            baseY: current?.offsetYPercent ?? 0,
+          };
+          onSelectElement?.(id);
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const drag = dragRef.current;
+          if (!drag || !onMoveElement || scale <= 0) {
+            return;
+          }
+          const dx = ((event.clientX - drag.startX) / (scale * stage.width)) * 100;
+          const dy = ((event.clientY - drag.startY) / (scale * stage.height)) * 100;
+          onMoveElement(drag.id, drag.baseX + dx, drag.baseY + dy);
+        }}
+        onPointerUp={() => {
+          dragRef.current = null;
+        }}
+        onPointerCancel={() => {
+          dragRef.current = null;
+        }}
         onClickCapture={(event) => {
           event.preventDefault();
           event.stopPropagation();

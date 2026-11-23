@@ -870,6 +870,12 @@ describe('AdminApp — Layout das Telas', () => {
     await user.click(within(screen.getByTestId('layout-element-logo')).getByText('Logotipo'));
     fireEvent.change(screen.getByLabelText(/Tamanho \(100%\)/), { target: { value: '150' } });
 
+    fireEvent.change(screen.getByLabelText(/Deslocar na vertical/), { target: { value: '5' } });
+    const logoItem = document.querySelector(
+      '[data-testid="layout-preview-stage"] [data-layout-element="logo"]',
+    ) as HTMLElement;
+    expect(logoItem.style.transform).toBe('translate(0cqw, 5cqh)');
+
     await user.click(screen.getByRole('button', { name: 'Salvar Layout' }));
     expect(await screen.findByText(/Layout das telas salvo/i)).toBeInTheDocument();
 
@@ -879,7 +885,7 @@ describe('AdminApp — Layout das Telas', () => {
     });
     expect(savedEvent?.customizations.layout?.screens.idle?.elements).toMatchObject({
       showcase: { visible: false },
-      logo: { scalePercent: 150 },
+      logo: { scalePercent: 150, offsetYPercent: 5 },
     });
     // Salvar o layout não altera a aparência
     expect(savedEvent?.customizations.colors.quizMainBackground).toBe('#002244');

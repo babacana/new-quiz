@@ -36,6 +36,10 @@ function buildItemStyle(settings: LayoutElementSettings, elementId: string): CSS
     style['--quiz-main-text-color'] = settings.textColor;
     style['--quiz-highlight-color'] = settings.textColor;
   }
+  if (settings.offsetXPercent !== 0 || settings.offsetYPercent !== 0) {
+    // Relativo ao palco (cqw/cqh): o deslocamento acompanha qualquer resolução.
+    style.transform = `translate(${settings.offsetXPercent}cqw, ${settings.offsetYPercent}cqh)`;
+  }
   // A chamada da Tela de Descanso aplica a escala no próprio tamanho de fonte (ver totem.css).
   if (settings.scalePercent !== 100 && elementId !== 'callToAction') {
     style.fontSize = `${settings.scalePercent}%`;

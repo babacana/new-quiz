@@ -107,6 +107,14 @@ describe('screenLayout', () => {
     expect(mergeEventCustomizations(DEFAULT_CUSTOMIZATIONS, {})).not.toHaveProperty('layout');
   });
 
+  it('limita e arredonda o deslocamento fino', () => {
+    const layout = updateLayoutElement(undefined, 'idle', 'logo', {
+      offsetXPercent: 123,
+      offsetYPercent: -3.14159,
+    });
+    expect(layout.screens.idle?.elements?.logo).toEqual({ offsetXPercent: 50, offsetYPercent: -3.1 });
+  });
+
   it('calcula o palco 9:16 centralizado como o Totem real', () => {
     expect(computeStageSize(1080, 1920)).toEqual({ width: 1080, height: 1920 });
     expect(computeStageSize(1920, 1080)).toEqual({ width: 607.5, height: 1080 });

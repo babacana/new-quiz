@@ -509,6 +509,59 @@ export function AdminLayoutTab({
                   </div>
                 </div>
 
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="layout-offset-x">
+                      Deslocar na horizontal ({selectedSettings.offsetXPercent}%)
+                    </Label>
+                    <input
+                      id="layout-offset-x"
+                      type="range"
+                      min={LAYOUT_LIMITS.offsetPercent.min}
+                      max={LAYOUT_LIMITS.offsetPercent.max}
+                      step={0.5}
+                      value={selectedSettings.offsetXPercent}
+                      className="w-full accent-primary"
+                      onChange={(e) =>
+                        patchElement(selectedDefinition.id, { offsetXPercent: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="layout-offset-y">
+                      Deslocar na vertical ({selectedSettings.offsetYPercent}%)
+                    </Label>
+                    <input
+                      id="layout-offset-y"
+                      type="range"
+                      min={LAYOUT_LIMITS.offsetPercent.min}
+                      max={LAYOUT_LIMITS.offsetPercent.max}
+                      step={0.5}
+                      value={selectedSettings.offsetYPercent}
+                      className="w-full accent-primary"
+                      onChange={(e) =>
+                        patchElement(selectedDefinition.id, { offsetYPercent: Number(e.target.value) })
+                      }
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    Percentual da largura/altura da tela, então vale para qualquer resolução. Você
+                    também pode arrastar o elemento direto na prévia.
+                  </p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="sm:col-span-2 sm:justify-self-start"
+                    disabled={selectedSettings.offsetXPercent === 0 && selectedSettings.offsetYPercent === 0}
+                    onClick={() =>
+                      patchElement(selectedDefinition.id, { offsetXPercent: 0, offsetYPercent: 0 })
+                    }
+                  >
+                    Zerar deslocamento
+                  </Button>
+                </div>
+
                 {selectedDefinition.supportsColor && (
                   <div className="flex flex-wrap items-center gap-3">
                     <label className="flex items-center gap-2 text-sm">
@@ -638,6 +691,17 @@ export function AdminLayoutTab({
                 height={resolution.height}
                 highlightedElementId={selectedElementId}
                 onSelectElement={setSelectedElementId}
+                onMoveElement={(id, x, y) => {
+                  // Arrastar não pode empurrar o elemento para fora dos limites salvos.
+                  setDraft((current) =>
+                    updateLayoutElement(current, screenId, id, {
+                      offsetXPercent: x,
+                      offsetYPercent: y,
+                    }),
+                  );
+                  setIsDirty(true);
+                  navigationGuard.markDirty('layout', true);
+                }}
               />
             </CardContent>
           </Card>

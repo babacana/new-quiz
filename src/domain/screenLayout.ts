@@ -11,6 +11,7 @@ export const LAYOUT_ZONES: readonly LayoutZone[] = ['top', 'center', 'bottom'];
 export const LAYOUT_LIMITS = {
   scalePercent: { min: 50, max: 200 },
   spaceEm: { min: 0, max: 8 },
+  offsetPercent: { min: -50, max: 50 },
 } as const;
 
 export interface LayoutElementSettings {
@@ -22,6 +23,9 @@ export interface LayoutElementSettings {
   scalePercent: number;
   spaceBeforeEm: number;
   spaceAfterEm: number;
+  /** Deslocamento fino em % da largura/altura do palco (relativo: acompanha a resolução). */
+  offsetXPercent: number;
+  offsetYPercent: number;
   /** Cor de texto própria do elemento; `null` mantém a cor do tema. */
   textColor: string | null;
 }
@@ -116,6 +120,10 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, value));
 }
 
+function roundTenth(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 function defaultElementSettings(
   definition: LayoutElementDefinition,
   index: number,
@@ -128,6 +136,8 @@ function defaultElementSettings(
     scalePercent: 100,
     spaceBeforeEm: 0,
     spaceAfterEm: 0,
+    offsetXPercent: 0,
+    offsetYPercent: 0,
     textColor: null,
   };
 }
@@ -140,7 +150,7 @@ function sanitizeElement(
   if (!raw || typeof raw !== 'object') {
     return base;
   }
-  const { scalePercent, spaceEm } = LAYOUT_LIMITS;
+  const { scalePercent, spaceEm, offsetPercent } = LAYOUT_LIMITS;
   return {
     visible: definition.required ? true : typeof raw.visible === 'boolean' ? raw.visible : base.visible,
     zone: LAYOUT_ZONES.includes(raw.zone as LayoutZone) ? (raw.zone as LayoutZone) : base.zone,
@@ -152,6 +162,12 @@ function sanitizeElement(
     scalePercent: clampNumber(raw.scalePercent, scalePercent.min, scalePercent.max, base.scalePercent),
     spaceBeforeEm: clampNumber(raw.spaceBeforeEm, spaceEm.min, spaceEm.max, base.spaceBeforeEm),
     spaceAfterEm: clampNumber(raw.spaceAfterEm, spaceEm.min, spaceEm.max, base.spaceAfterEm),
+    offsetXPercent: roundTenth(
+      clampNumber(raw.offsetXPercent, offsetPercent.min, offsetPercent.max, base.offsetXPercent),
+    ),
+    offsetYPercent: roundTenth(
+      clampNumber(raw.offsetYPercent, offsetPercent.min, offsetPercent.max, base.offsetYPercent),
+    ),
     textColor:
       raw.textColor === null
         ? null
