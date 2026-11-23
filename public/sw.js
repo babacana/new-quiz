@@ -6,6 +6,7 @@ const APP_SHELL_URLS = [
   '/manifest.webmanifest',
   '/favicon.ico',
   '/assets/logo.png',
+  '/assets/logo-estilizada.png',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
   ...BUILD_ASSETS,

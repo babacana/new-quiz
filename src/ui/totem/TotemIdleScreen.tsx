@@ -131,6 +131,13 @@ export function TotemIdleScreen({
             </div>
           </div>
           ),
+          stylizedLogo: (
+            <img
+              src="/assets/logo-estilizada.png"
+              alt="CAESB"
+              className="event-logo idle-stylized-logo"
+            />
+          ),
           callToAction: (
         <h2
           id="idle-call-to-action"
