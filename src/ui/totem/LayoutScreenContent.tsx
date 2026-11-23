@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import {
   LAYOUT_ZONES,
+  getScreenDefinition,
   resolveScreenLayout,
   type LayoutElementSettings,
   type ResolvedScreenLayout,
@@ -56,6 +57,11 @@ export function LayoutScreenContent({
   className,
 }: LayoutScreenContentProps) {
   const resolved = layout ?? resolveScreenLayout(undefined, screenId);
+  const floatingIds = new Set(
+    getScreenDefinition(screenId)
+      .elements.filter((element) => element.floating)
+      .map((element) => element.id),
+  );
 
   return (
     <div className={`screen-content layout-zones ${className ?? ''}`.trim()} data-layout-screen={screenId}>
@@ -70,9 +76,13 @@ export function LayoutScreenContent({
             return (
               <div
                 key={elementId}
-                className={
-                  highlightedElementId === elementId ? 'layout-item is-highlighted' : 'layout-item'
-                }
+                className={[
+                  'layout-item',
+                  floatingIds.has(elementId) ? 'layout-item-floating' : '',
+                  highlightedElementId === elementId ? 'is-highlighted' : '',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
                 data-layout-element={elementId}
                 style={buildItemStyle(settings, elementId)}
               >

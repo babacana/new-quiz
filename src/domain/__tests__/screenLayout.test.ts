@@ -115,6 +115,32 @@ describe('screenLayout', () => {
     expect(layout.screens.idle?.elements?.logo).toEqual({ offsetXPercent: 50, offsetYPercent: -3.1 });
   });
 
+  it('cobre Quiz, Resultado e Ranking e mantém elementos essenciais visíveis', () => {
+    const quiz = resolveScreenLayout(undefined, 'quiz');
+    expect(quiz.zones.top).toEqual(['logo', 'progress', 'giveUp']);
+    expect(quiz.zones.center).toEqual(['question', 'options', 'timeBar', 'postControls']);
+    const tampered = {
+      version: 1,
+      screens: {
+        quiz: { elements: { options: { visible: false }, timeBar: { visible: false }, postControls: { visible: false } } },
+        result: { elements: { playAgainButton: { visible: false } } },
+        ranking: { elements: { list: { visible: false }, backButton: { visible: false } } },
+      },
+    };
+    expect(resolveScreenLayout(tampered as never, 'quiz').zones.center).toContain('options');
+    expect(resolveScreenLayout(tampered as never, 'quiz').zones.center).toContain('timeBar');
+    expect(resolveScreenLayout(tampered as never, 'result').zones.center).toContain('playAgainButton');
+    expect(resolveScreenLayout(tampered as never, 'ranking').zones.center).toEqual(
+      expect.arrayContaining(['list', 'backButton']),
+    );
+    expect(Object.keys(sanitizeEventLayout(tampered).screens).sort()).toEqual(['quiz', 'ranking', 'result']);
+    expect(resolveScreenLayout(applyLayoutPreset(undefined, 'quiz-options-bottom'), 'quiz').zones.bottom).toEqual([
+      'options',
+      'timeBar',
+      'postControls',
+    ]);
+  });
+
   it('calcula o palco 9:16 centralizado como o Totem real', () => {
     expect(computeStageSize(1080, 1920)).toEqual({ width: 1080, height: 1920 });
     expect(computeStageSize(1920, 1080)).toEqual({ width: 607.5, height: 1080 });

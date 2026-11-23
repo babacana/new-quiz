@@ -1,5 +1,7 @@
 import type { EventCustomizationTexts, RankingEntry } from '../../domain/types';
+import type { ResolvedScreenLayout } from '../../domain/screenLayout';
 import { EventLogoImage } from '../EventLogoImage';
+import { LayoutScreenContent } from './LayoutScreenContent';
 import { formatTimeMMSS } from '../formatters';
 
 export interface TotemRankingScreenProps {
@@ -8,6 +10,10 @@ export interface TotemRankingScreenProps {
   texts: EventCustomizationTexts;
   ranking: RankingEntry[];
   onBackToInitial: () => void;
+  /** Layout resolvido do Evento; sem ele usa a distribuição padrão. */
+  layout?: ResolvedScreenLayout;
+  /** Elemento destacado no editor de layout do ADM. */
+  highlightedElementId?: string | null;
 }
 
 // Tela de Ranking Geral do Evento ordenada por pontuação e menor tempo de resposta.
@@ -17,6 +23,8 @@ export function TotemRankingScreen({
   texts,
   ranking,
   onBackToInitial,
+  layout,
+  highlightedElementId,
 }: TotemRankingScreenProps) {
   return (
     <section
@@ -24,33 +32,37 @@ export function TotemRankingScreen({
       className={`screen ${active ? 'active' : ''}`}
       aria-hidden={!active}
     >
-      <div className="screen-content">
-        <EventLogoImage src={logoSrc} />
-        <h2>{texts.rankingScreenTitle}</h2>
-        <ol id="ranking-list" className="ranking-list-shared-style">
-          {ranking.length === 0 ? (
-            <li>Nenhum participante no ranking ainda.</li>
-          ) : (
-            ranking.map((entry) => (
-              <li key={entry.matchId}>
-                <span>
-                  {entry.position}. <span className="rank-name">{entry.participantName}</span>
-                </span>
-                <span className="rank-score">{entry.score} Acertos</span>
-                <span className="rank-time">{formatTimeMMSS(entry.timeSeconds)}</span>
-              </li>
-            ))
-          )}
-        </ol>
-        <button
-          id="back-to-initial-btn"
-          type="button"
-          className="btn"
-          onClick={onBackToInitial}
-        >
-          {texts.rankingScreenBackButton}
-        </button>
-      </div>
+      <LayoutScreenContent
+        screenId="ranking"
+        layout={layout}
+        highlightedElementId={highlightedElementId}
+        elements={{
+          logo: <EventLogoImage src={logoSrc} />,
+          title: <h2>{texts.rankingScreenTitle}</h2>,
+          list: (
+            <ol id="ranking-list" className="ranking-list-shared-style">
+              {ranking.length === 0 ? (
+                <li>Nenhum participante no ranking ainda.</li>
+              ) : (
+                ranking.map((entry) => (
+                  <li key={entry.matchId}>
+                    <span>
+                      {entry.position}. <span className="rank-name">{entry.participantName}</span>
+                    </span>
+                    <span className="rank-score">{entry.score} Acertos</span>
+                    <span className="rank-time">{formatTimeMMSS(entry.timeSeconds)}</span>
+                  </li>
+                ))
+              )}
+            </ol>
+          ),
+          backButton: (
+            <button id="back-to-initial-btn" type="button" className="btn" onClick={onBackToInitial}>
+              {texts.rankingScreenBackButton}
+            </button>
+          ),
+        }}
+      />
     </section>
   );
 }

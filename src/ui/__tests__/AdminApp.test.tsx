@@ -890,4 +890,55 @@ describe('AdminApp — Layout das Telas', () => {
     // Salvar o layout não altera a aparência
     expect(savedEvent?.customizations.colors.quizMainBackground).toBe('#002244');
   });
+
+  it('edita Quiz, Resultado e Ranking: modelo, estado respondido e ocultação respeitando elementos essenciais', async () => {
+    const { cloudGateway, controller } = createAdminUiHarness();
+    render(<AdminApp controller={controller} />);
+    const user = await signInThroughUi('admin@caesb.df.gov.br', 'CAESB2025!');
+    await user.click(await screen.findByRole('button', { name: 'Layout das Telas' }));
+    await screen.findByRole('heading', { name: 'Layout das Telas do Totem' });
+
+    const previewZone = (zone: string) =>
+      document.querySelector(`[data-testid="layout-preview-stage"] [data-layout-zone="${zone}"]`)!;
+
+    await user.click(screen.getByRole('tab', { name: 'Tela de Quiz' }));
+    expect(previewZone('bottom').querySelector('#options-container')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /Alternativas na base/ }));
+    expect(previewZone('bottom').querySelector('#options-container')).not.toBeNull();
+    expect(previewZone('center').querySelector('#question-text')).not.toBeNull();
+    expect(document.querySelector('#next-question-btn')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Após responder' }));
+    expect(previewZone('bottom').querySelector('#next-question-btn')).not.toBeNull();
+    expect(
+      within(screen.getByTestId('layout-element-options')).getByRole('button', {
+        name: 'Ocultar Alternativas',
+      }),
+    ).toBeDisabled();
+    await user.click(
+      within(screen.getByTestId('layout-element-giveUp')).getByRole('button', {
+        name: 'Ocultar Botão Desistir (×)',
+      }),
+    );
+    expect(document.querySelector('[data-testid="layout-preview-stage"] #give-up-btn')).toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: 'Tela de Resultado' }));
+    await user.click(screen.getByRole('button', { name: /Botões na base/ }));
+    expect(previewZone('bottom').querySelector('#restart-quiz-btn')).not.toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: 'Tela de Ranking' }));
+    expect(previewZone('center').querySelector('#ranking-list')).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: /Cabeçalho no topo, botão na base/ }));
+    expect(previewZone('bottom').querySelector('#back-to-initial-btn')).not.toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Salvar Layout' }));
+    expect(await screen.findByText(/Layout das telas salvo/i)).toBeInTheDocument();
+    const [savedEvent] = await cloudGateway.listEvents();
+    const screens = savedEvent?.customizations.layout?.screens;
+    expect(screens?.quiz?.elements).toMatchObject({
+      options: { zone: 'bottom' },
+      giveUp: { visible: false },
+    });
+    expect(screens?.result?.elements).toMatchObject({ playAgainButton: { zone: 'bottom' } });
+    expect(screens?.ranking?.elements).toMatchObject({ backButton: { zone: 'bottom' } });
+  });
 });

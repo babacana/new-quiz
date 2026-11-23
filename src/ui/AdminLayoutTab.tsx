@@ -139,6 +139,7 @@ export function AdminLayoutTab({
   const [screenId, setScreenId] = useState<LayoutScreenId>('initial');
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [mobilePane, setMobilePane] = useState<'editor' | 'preview'>('editor');
+  const [quizAnswered, setQuizAnswered] = useState(false);
   const [resolution, setResolution] = useState<ResolutionChoice>(loadResolutionChoice);
 
   const resetFromEvent = useCallback(
@@ -378,6 +379,9 @@ export function AdminLayoutTab({
                         >
                           {definition.label}
                         </button>
+                        {definition.floating ? (
+                          <span className="text-xs text-muted-foreground">Fixo no canto</span>
+                        ) : (
                         <Segmented
                           label={`Zona de ${definition.label}`}
                           value={zone}
@@ -389,7 +393,10 @@ export function AdminLayoutTab({
                             updateDraft(moveLayoutElementToZone(draft, screenId, definition.id, next))
                           }
                         />
+                        )}
                         <div className="inline-flex gap-1">
+                          {!definition.floating && (
+                            <>
                           <Button
                             type="button"
                             variant="outline"
@@ -412,6 +419,8 @@ export function AdminLayoutTab({
                           >
                             <ChevronDown className="h-4 w-4" />
                           </Button>
+                            </>
+                          )}
                           <Button
                             type="button"
                             variant="outline"
@@ -683,7 +692,23 @@ export function AdminLayoutTab({
                 </div>
               </div>
 
+              {screenId === 'quiz' && (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Label>Estado da pergunta na prévia</Label>
+                  <Segmented
+                    label="Estado da pergunta na prévia"
+                    value={quizAnswered ? 'answered' : 'open'}
+                    options={[
+                      { value: 'open', label: 'Antes de responder' },
+                      { value: 'answered', label: 'Após responder' },
+                    ]}
+                    onChange={(next) => setQuizAnswered(next === 'answered')}
+                  />
+                </div>
+              )}
+
               <LayoutPreviewStage
+                quizAnswered={quizAnswered}
                 screenId={screenId}
                 customizations={previewCustomizations}
                 layout={resolved}
