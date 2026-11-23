@@ -729,24 +729,41 @@ body.totem-fullscreen-mode {
   transition: width 0.3s ease-out;
 }
 
+/* Distribuição vertical equilibrada: logo e cabeçalho no topo, conteúdo centralizado no espaço restante */
+#quiz-screen {
+  padding-top: 2cqh;
+  padding-bottom: 3cqh;
+}
+
+#quiz-screen .event-logo {
+  margin-top: 1.2em;
+  margin-bottom: 1.4em;
+  max-height: 14cqh;
+}
+
 #quiz-screen .screen-content {
-  padding: 0.55em 1.1em 1.1em;
+  padding: 0.55em 1.1em 0.5em;
   margin: 0 auto;
-  flex-grow: 1;
-  justify-content: flex-start;
+  flex: 1 1 0;
+  min-height: 0;
+  justify-content: center;
   overflow-y: auto;
 }
 
 #question-area {
   width: 100%;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: space-evenly;
+  gap: 1.1em;
 }
 
 #question-text {
-  margin-top: 0.75em;
-  margin-bottom: 1.05em;
+  margin-top: 0;
+  margin-bottom: 0;
+  text-shadow: 0 0.08em 0.35em rgba(0, 10, 40, 0.75);
   font-size: var(--question-text-font-size);
   line-height: 1.42;
   width: 100%;
@@ -759,7 +776,7 @@ body.totem-fullscreen-mode {
   flex-direction: column;
   justify-content: flex-start;
   width: 100%;
-  margin-bottom: 0.7em;
+  margin-bottom: 0;
 }
 
 #options-container .option {
@@ -768,7 +785,7 @@ body.totem-fullscreen-mode {
   align-items: center;
   gap: 0.8em;
   padding: 0.78em 0.9em;
-  margin-bottom: 0.65em;
+  margin-bottom: 0.8em;
   font-size: 1em;
   background-color: var(--quiz-option-bg);
   color: var(--quiz-option-text);
@@ -797,10 +814,16 @@ body.totem-fullscreen-mode {
   border-color: var(--error-color-darker);
 }
 
+/* Alternativas não escolhidas ficam travadas, mas continuam legíveis (sem opacidade que "lava" o texto sobre o fundo) */
 #options-container .option.disabled,
 #options-container.options-really-dimmed .option {
   pointer-events: none;
-  opacity: 0.45;
+}
+
+#options-container .option.disabled:not(.correct):not(.incorrect),
+#options-container.options-really-dimmed .option:not(.correct):not(.incorrect) {
+  background-color: rgba(255, 255, 255, 0.82);
+  color: #1b2a44;
 }
 
 #options-container .option.correct.disabled,
@@ -831,15 +854,22 @@ body.totem-fullscreen-mode {
 .question-time-bar-row {
   display: flex;
   align-items: center;
-  gap: 0.65em;
+  gap: 0.8em;
   width: 100%;
-  margin: 0.85em 0;
+  margin: 0;
+  padding: 0.6em 0.9em;
+  box-sizing: border-box;
+  background-color: rgba(0, 20, 50, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 0.7em;
+  box-shadow: 0 0.2em 0.6em rgba(0, 0, 0, 0.35);
 }
 
 #question-time-bar-container {
   flex: 1;
-  height: 0.82em;
-  background-color: rgba(0, 0, 0, 0.25);
+  height: 1em;
+  background-color: rgba(255, 255, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 999px;
   overflow: hidden;
   position: relative;
@@ -858,21 +888,21 @@ body.totem-fullscreen-mode {
   min-width: 3em;
   text-align: right;
   font-weight: 800;
-  font-size: 1em;
+  font-size: 1.35em;
   font-variant-numeric: tabular-nums;
   line-height: 1;
 }
 
 .question-time-countdown.countdown-normal {
-  color: var(--quiz-highlight-color);
+  color: #ffffff;
 }
 
 .question-time-countdown.countdown-warning {
-  color: var(--warning-color-default);
+  color: #ffd54a;
 }
 
 .question-time-countdown.countdown-critical {
-  color: var(--error-color-default);
+  color: #ff8a80;
 }
 
 #post-question-controls {
@@ -882,15 +912,20 @@ body.totem-fullscreen-mode {
   justify-content: center;
   gap: 0.7em;
   width: 100%;
-  margin-top: 1em;
-  margin-bottom: 0.55em;
+  margin: 0;
 }
 
 #timeout-message-text {
-  color: var(--warning-color-default);
-  font-size: 1.05em;
-  font-weight: bold;
-  line-height: 1.35;
+  margin: 0;
+  padding: 0.45em 0.95em;
+  color: #ffd54a;
+  background-color: rgba(0, 20, 50, 0.88);
+  border: 1px solid rgba(255, 213, 74, 0.7);
+  border-radius: 0.6em;
+  font-size: 1.15em;
+  font-weight: 800;
+  line-height: 1.3;
+  box-shadow: 0 0.2em 0.6em rgba(0, 0, 0, 0.35);
 }
 
 #post-question-controls #next-question-btn {
