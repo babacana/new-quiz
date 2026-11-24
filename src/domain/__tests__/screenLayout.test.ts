@@ -170,3 +170,32 @@ describe('screenLayout', () => {
     expect(computeStageSize(390, 844)).toEqual({ width: 390, height: 844 });
   });
 });
+
+describe('margem de segurança (TV com overscan)', () => {
+  it('é limitada, arredondada e some quando todos os lados são 0', async () => {
+    const { sanitizeSafeMargin, setLayoutSafeMargin, safeMarginCssVars, hasSafeMargin } =
+      await import('../screenLayout');
+    expect(sanitizeSafeMargin({ topPercent: 0, rightPercent: 0, bottomPercent: 0, leftPercent: 0 })).toBeUndefined();
+    expect(sanitizeSafeMargin({ topPercent: 99, bottomPercent: 2.34, leftPercent: -3 })).toEqual({
+      topPercent: 15,
+      rightPercent: 0,
+      bottomPercent: 2.3,
+      leftPercent: 0,
+    });
+    expect(safeMarginCssVars(undefined)).toEqual({});
+    const layout = setLayoutSafeMargin(undefined, { topPercent: 4, rightPercent: 0, bottomPercent: 5, leftPercent: 0 });
+    expect(hasSafeMargin(layout.safeMargin)).toBe(true);
+    expect(safeMarginCssVars(layout.safeMargin)['--totem-safe-bottom']).toBe('5vh');
+  });
+
+  it('sobrevive a edições de elementos, modelos e restauração de tela', async () => {
+    const { setLayoutSafeMargin, updateLayoutElement, resetScreenLayout, applyLayoutPreset, sanitizeEventLayout } =
+      await import('../screenLayout');
+    let layout = setLayoutSafeMargin(undefined, { topPercent: 3, rightPercent: 3, bottomPercent: 3, leftPercent: 3 });
+    layout = updateLayoutElement(layout, 'initial', 'logo', { scalePercent: 120 });
+    expect(layout.safeMargin?.topPercent).toBe(3);
+    layout = applyLayoutPreset(layout, 'quiz-options-bottom');
+    layout = resetScreenLayout(layout, 'initial');
+    expect(sanitizeEventLayout(layout).safeMargin).toEqual(layout.safeMargin);
+  });
+});

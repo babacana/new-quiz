@@ -122,6 +122,24 @@ body.totem-fullscreen-mode {
   }
 }
 
+/* Margem de segurança (TV com overscan): reduz o palco para dentro da área realmente visível. Só vale quando o
+   Evento define margem; sem ela nada muda. O fundo do Evento continua preenchendo a tela toda. */
+.quiz-container.has-safe-margin {
+  box-sizing: border-box;
+  padding: var(--totem-safe-top, 0) var(--totem-safe-right, 0) var(--totem-safe-bottom, 0)
+    var(--totem-safe-left, 0);
+}
+
+@media (min-aspect-ratio: 9/16) {
+  .quiz-container.has-safe-margin:not(.in-simulator) .totem-stage {
+    width: min(
+      100%,
+      calc((100dvh - var(--totem-safe-top, 0px) - var(--totem-safe-bottom, 0px)) * 9 / 16)
+    );
+    height: 100%;
+  }
+}
+
 /* Simulador isolado dentro do painel administrativo */
 .dev-simulator-viewport .quiz-container {
   width: 100%;
