@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { resolveScreenLayout } from '../domain/screenLayout';
+import { resolveScreenLayout, safeMarginCssVars } from '../domain/screenLayout';
 import type {
   ActiveQuestionState,
   EventSettings,
@@ -152,6 +152,7 @@ export function LayoutPreviewApp() {
   const { customizations, screenId, showConditional } = state;
   const { texts } = customizations;
   const themeStyle = buildThemeCssVariables(customizations);
+  const safeMarginVars = safeMarginCssVars(customizations.layout?.safeMargin);
   const { logoSrc, backgroundSrc } = resolvePreviewVisualAssets(customizations);
   const lgpdNoticeText =
     state.lgpdNoticeText.trim() ||
@@ -218,8 +219,8 @@ export function LayoutPreviewApp() {
 
   return (
     <div
-      className="quiz-container"
-      style={{ ...themeStyle, touchAction: 'none' }}
+      className={`quiz-container${Object.keys(safeMarginVars).length > 0 ? ' has-safe-margin' : ''}`}
+      style={{ ...themeStyle, ...safeMarginVars, touchAction: 'none' }}
       data-testid="layout-preview-container"
       onMouseDownCapture={(event) => event.preventDefault()}
       onClickCapture={(event) => {

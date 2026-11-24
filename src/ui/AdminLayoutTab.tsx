@@ -12,6 +12,9 @@ import {
   resetScreenLayout,
   resolveScreenLayout,
   updateLayoutElement,
+  setLayoutSafeMargin,
+  SAFE_MARGIN_LIMITS,
+  type SafeMargin,
   type EventLayout,
   type LayoutAlign,
   type LayoutElementDefinition,
@@ -243,6 +246,11 @@ export function AdminLayoutTab({
           </button>
         ))}
       </div>
+
+      <SafeMarginCard
+        margin={draft?.safeMargin ?? ZERO_SAFE_MARGIN}
+        onChange={(margin) => updateDraft(setLayoutSafeMargin(draft, margin))}
+      />
 
       <div
         data-testid="layout-mobile-toggle"
@@ -662,5 +670,56 @@ export function AdminLayoutTab({
         </div>
       )}
     </div>
+  );
+}
+
+const ZERO_SAFE_MARGIN: SafeMargin = { topPercent: 0, rightPercent: 0, bottomPercent: 0, leftPercent: 0 };
+
+const SAFE_MARGIN_SIDES: ReadonlyArray<{ key: keyof SafeMargin; label: string }> = [
+  { key: 'topPercent', label: 'Topo' },
+  { key: 'bottomPercent', label: 'Base' },
+  { key: 'leftPercent', label: 'Esquerda' },
+  { key: 'rightPercent', label: 'Direita' },
+];
+
+// Para TVs que cortam as bordas (overscan): encolhe o conteúdo para dentro da área realmente visível.
+function SafeMarginCard({
+  margin,
+  onChange,
+}: {
+  margin: SafeMargin;
+  onChange: (margin: SafeMargin) => void;
+}) {
+  return (
+    <Card data-testid="layout-safe-margin">
+      <CardHeader>
+        <CardTitle className="text-base">Margem de segurança (TV que corta as bordas)</CardTitle>
+        <CardDescription>
+          Se a TV corta o topo, a base ou as laterais, aumente a margem do lado cortado. Todas as telas
+          encolhem para caber na área visível; o fundo continua preenchendo a tela. Em 0% nada muda.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {SAFE_MARGIN_SIDES.map(({ key, label }) => (
+            <div key={key} className="space-y-1.5">
+              <Label htmlFor={`safe-margin-${key}`}>
+                {label} ({margin[key]}%)
+              </Label>
+              <input
+                id={`safe-margin-${key}`}
+                type="range"
+                min={SAFE_MARGIN_LIMITS.min}
+                max={SAFE_MARGIN_LIMITS.max}
+                step={0.5}
+                value={margin[key]}
+                onChange={(event) => onChange({ ...margin, [key]: Number(event.target.value) })}
+                className="w-full"
+              />
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

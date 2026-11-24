@@ -34,9 +34,21 @@ export interface ScreenLayoutOverrides {
   elements?: Record<string, Partial<LayoutElementSettings>>;
 }
 
+/** Margem de segurança (% da tela) para TVs que cortam as bordas da imagem (overscan). */
+export interface SafeMargin {
+  topPercent: number;
+  rightPercent: number;
+  bottomPercent: number;
+  leftPercent: number;
+}
+
+export const SAFE_MARGIN_LIMITS = { min: 0, max: 15 } as const;
+
 export interface EventLayout {
   version: 1;
   screens: Partial<Record<LayoutScreenId, ScreenLayoutOverrides>>;
+  /** Ausente (ou tudo zero) = tela inteira, como no visual original. */
+  safeMargin?: SafeMargin;
 }
 
 export interface LayoutElementDefinition {
@@ -320,7 +332,59 @@ export function sanitizeEventLayout(raw: unknown): EventLayout {
       screens[screen.id] = { elements: toSparseElements(screen.id, resolved) };
     }
   }
-  return { version: 1, screens };
+  const safeMargin = sanitizeSafeMargin((raw as { safeMargin?: unknown }).safeMargin);
+  return { version: 1, screens, ...(safeMargin ? { safeMargin } : {}) };
+}
+
+// Normaliza a margem de segurança; devolve undefined quando não há margem (todos os lados em 0).
+export function sanitizeSafeMargin(raw: unknown): SafeMargin | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+  const value = raw as Partial<Record<keyof SafeMargin, unknown>>;
+  const side = (input: unknown) =>
+    roundTenth(clampNumber(input, SAFE_MARGIN_LIMITS.min, SAFE_MARGIN_LIMITS.max, 0));
+  const margin: SafeMargin = {
+    topPercent: side(value.topPercent),
+    rightPercent: side(value.rightPercent),
+    bottomPercent: side(value.bottomPercent),
+    leftPercent: side(value.leftPercent),
+  };
+  return hasSafeMargin(margin) ? margin : undefined;
+}
+
+export function hasSafeMargin(margin: SafeMargin | null | undefined): margin is SafeMargin {
+  return Boolean(
+    margin &&
+      (margin.topPercent > 0 ||
+        margin.rightPercent > 0 ||
+        margin.bottomPercent > 0 ||
+        margin.leftPercent > 0),
+  );
+}
+
+// Variáveis CSS da margem (top/bottom em vh, left/right em vw); vazio quando não há margem.
+export function safeMarginCssVars(margin: SafeMargin | null | undefined): Record<string, string> {
+  if (!hasSafeMargin(margin)) {
+    return {};
+  }
+  return {
+    '--totem-safe-top': `${margin.topPercent}vh`,
+    '--totem-safe-right': `${margin.rightPercent}vw`,
+    '--totem-safe-bottom': `${margin.bottomPercent}vh`,
+    '--totem-safe-left': `${margin.leftPercent}vw`,
+  };
+}
+
+// Define a margem de segurança sem tocar nas posições dos elementos.
+export function setLayoutSafeMargin(
+  layout: EventLayout | null | undefined,
+  margin: SafeMargin,
+): EventLayout {
+  const { safeMargin: _previous, ...rest } = layout ?? EMPTY_EVENT_LAYOUT;
+  void _previous;
+  const next = sanitizeSafeMargin(margin);
+  return { ...structuredClone(rest), version: 1, ...(next ? { safeMargin: next } : {}) };
 }
 
 function toSparseElements(
@@ -377,6 +441,7 @@ function replaceScreenElements(
       ...(layout?.screens ?? {}),
       [screenId]: { elements: toSparseElements(screenId, sanitized) },
     },
+    ...(layout?.safeMargin ? { safeMargin: layout.safeMargin } : {}),
   };
 }
 
@@ -442,7 +507,7 @@ export function resetScreenLayout(
 ): EventLayout {
   const screens = { ...(layout?.screens ?? {}) };
   delete screens[screenId];
-  return { version: 1, screens };
+  return { version: 1, screens, ...(layout?.safeMargin ? { safeMargin: layout.safeMargin } : {}) };
 }
 
 export function isScreenLayoutCustomized(
@@ -613,6 +678,7 @@ export function applyLayoutPreset(
         ? { [preset.screenId]: { elements: toSparseElements(preset.screenId, resolved) } }
         : {}),
     },
+    ...(layout?.safeMargin ? { safeMargin: layout.safeMargin } : {}),
   };
 }
 
@@ -625,6 +691,7 @@ export interface PreviewResolution {
 
 export const PREVIEW_RESOLUTIONS: readonly PreviewResolution[] = [
   { id: 'totem-1080x1920', label: 'Totem retrato · 1080 × 1920', width: 1080, height: 1920 },
+  { id: 'tv-768x1366', label: 'TV retrato · 768 × 1366', width: 768, height: 1366 },
   { id: 'hd-720x1280', label: 'Retrato HD · 720 × 1280', width: 720, height: 1280 },
   { id: 'fhd-1920x1080', label: 'Full HD paisagem · 1920 × 1080', width: 1920, height: 1080 },
   { id: 'tablet-768x1024', label: 'Tablet retrato · 768 × 1024', width: 768, height: 1024 },

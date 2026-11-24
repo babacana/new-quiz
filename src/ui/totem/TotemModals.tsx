@@ -388,6 +388,14 @@ export function TotemModals({
                   {formatLastSeenPtBr(diagnostics.lastHeartbeatAt)}
                 </dd>
               </div>
+              <div>
+                <dt>Área visível (viewport)</dt>
+                <dd id="diagnostics-viewport">{describeViewport()}</dd>
+              </div>
+              <div>
+                <dt>Tela física / zoom</dt>
+                <dd id="diagnostics-screen">{describeScreen()}</dd>
+              </div>
             </dl>
 
             {diagnosticsSyncMessage && (
@@ -428,4 +436,20 @@ export function TotemModals({
       )}
     </>
   );
+}
+
+// Ajuda a descobrir por que a TV corta a imagem: compara a área que o navegador diz ter com a tela real.
+function describeViewport(): string {
+  if (typeof window === 'undefined') {
+    return '-';
+  }
+  return `${window.innerWidth} × ${window.innerHeight} px`;
+}
+
+function describeScreen(): string {
+  if (typeof window === 'undefined') {
+    return '-';
+  }
+  const ratio = Math.round(window.devicePixelRatio * 100) / 100;
+  return `${window.screen.width} × ${window.screen.height} px · zoom ${ratio}×`;
 }

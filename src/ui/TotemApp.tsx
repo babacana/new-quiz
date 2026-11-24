@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DexieLocalStore } from '../adapters/dexieLocalStore';
 import { CryptoRandomSource, SystemClock } from '../adapters/systemAdapters';
-import { resolveScreenLayout } from '../domain/screenLayout';
+import { resolveScreenLayout, safeMarginCssVars } from '../domain/screenLayout';
 import { extractPairingCodeFromInput } from '../domain/pairingUtils';
 import {
   TotemSessionEngine,
@@ -724,6 +724,10 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   };
 
   const containerClasses = ['quiz-container'];
+  const safeMarginVars = safeMarginCssVars(snapshot.event.customizations.layout?.safeMargin);
+  if (Object.keys(safeMarginVars).length > 0) {
+    containerClasses.push('has-safe-margin');
+  }
   if (isInSimulator) {
     containerClasses.push('in-simulator');
   }
@@ -760,7 +764,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const diagnostics = activeModal?.type === 'diagnostics' ? engine.getLocalDiagnostics() : null;
 
   return (
-    <div className={containerClasses.join(' ')} style={themeStyle}>
+    <div className={containerClasses.join(' ')} style={{ ...themeStyle, ...safeMarginVars }}>
       <div className="totem-stage">
         {backgroundSrc && (
           <div
