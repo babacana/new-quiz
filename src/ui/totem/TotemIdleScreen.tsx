@@ -5,6 +5,7 @@ import type {
   RankingEntry,
 } from '../../domain/types';
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
+import { useLanguage } from '../../i18n';
 import { EventLogoImage } from '../EventLogoImage';
 import { formatTimeMMSS } from '../formatters';
 import { StylizedLogoImage } from './StylizedLogoImage';
@@ -40,6 +41,7 @@ export function TotemIdleScreen({
   layout,
   highlightedElementId,
 }: TotemIdleScreenProps) {
+  const { t, td } = useLanguage();
   return (
     <section
       id="idle-screen"
@@ -62,12 +64,12 @@ export function TotemIdleScreen({
         highlightedElementId={highlightedElementId}
         elements={{
           logo: <EventLogoImage src={logoSrc} />,
-          slogan: <p className="slogan">{texts.initialScreenSlogan}</p>,
+          slogan: <p className="slogan">{td(texts.initialScreenSlogan)}</p>,
           showcase: eventWindow.isBlocked ? null : (
 <div className="idle-showcase-card" aria-live="off">
             {idleSlideIndex === 0 && (
               <div className="idle-showcase-slide" data-testid="idle-slide-podium">
-                <span className="idle-showcase-kicker">Pódio ao Vivo · Top 3</span>
+                <span className="idle-showcase-kicker">{t('idle.podiumKicker')}</span>
                 {ranking.length > 0 ? (
                   <ol className="idle-podium-list">
                     {ranking.slice(0, 3).map((entry, idx) => (
@@ -84,7 +86,7 @@ export function TotemIdleScreen({
                   </ol>
                 ) : (
                   <p className="idle-showcase-highlight">
-                    Ninguém no pódio ainda — seja o 1º a liderar o ranking! 🏆
+                    {t('idle.podiumEmpty')}
                   </p>
                 )}
               </div>
@@ -92,32 +94,33 @@ export function TotemIdleScreen({
 
             {idleSlideIndex === 1 && (
               <div className="idle-showcase-slide" data-testid="idle-slide-challenge">
-                <span className="idle-showcase-kicker">Desafio do Estande</span>
+                <span className="idle-showcase-kicker">{t('idle.challengeKicker')}</span>
                 <p className="idle-showcase-big-number">
                   {totalMatchesCount}{' '}
                   <span>
-                    {totalMatchesCount === 1 ? 'participação' : 'participações'} no ranking
+                    {totalMatchesCount === 1 ? t('idle.participationOne') : t('idle.participationMany')}{' '}
+                    {t('idle.inRanking')}
                   </span>
                 </p>
                 <p className="idle-showcase-sub">
-                  Acerte a partir de {settings.minScoreForPrize} questões e conquiste seu brinde!
+                  {t('idle.challengeHint', { n: settings.minScoreForPrize })}
                 </p>
               </div>
             )}
 
             {idleSlideIndex === 2 && (
               <div className="idle-showcase-slide" data-testid="idle-slide-stats">
-                <span className="idle-showcase-kicker">Como Funciona</span>
+                <span className="idle-showcase-kicker">{t('idle.howItWorksKicker')}</span>
                 <div className="idle-stats-pills">
                   <span className="idle-stat-pill">
-                    <strong>{settings.numberOfQuestions}</strong> perguntas
+                    <strong>{settings.numberOfQuestions}</strong> {t('idle.questions')}
                   </span>
                   <span className="idle-stat-pill">
-                    <strong>{settings.timePerQuestion}s</strong> por questão
+                    <strong>{settings.timePerQuestion}s</strong> {t('idle.perQuestion')}
                   </span>
                 </div>
                 <p className="idle-showcase-sub">
-                  Quanto mais rápido e preciso, melhor sua posição no pódio!
+                  {t('idle.fasterHint')}
                 </p>
               </div>
             )}
@@ -138,9 +141,9 @@ export function TotemIdleScreen({
           id="idle-call-to-action"
           className={!eventWindow.isBlocked ? 'idle-cta-animated' : undefined}
         >
-          {eventWindow.idleCallToActionTitle}
+          {td(eventWindow.idleCallToActionTitle)}
           {eventWindow.idleCallToActionSubtitle && (
-            <small>{eventWindow.idleCallToActionSubtitle}</small>
+            <small>{td(eventWindow.idleCallToActionSubtitle)}</small>
           )}
         </h2>
           ),

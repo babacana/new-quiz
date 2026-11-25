@@ -22,6 +22,7 @@ import { createTotemCloudPort } from './cloudFactory';
 import { playTotemSound } from './soundEffects';
 import { buildThemeCssVariables } from './themeCss';
 import type { TimeAlertVisualUpdate } from './totem/QuestionTimerBar';
+import { DEFAULT_LANGUAGE, HTML_LANG, LanguageProvider, type Language } from '../i18n';
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
 import { TotemClosedScreen } from './totem/TotemClosedScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
@@ -80,6 +81,14 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const [nameInput, setNameInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
   const [activeModal, setActiveModal] = useState<ActiveTotemModal>(null);
+  const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
+
+  // Ao voltar para a Tela de Descanso o próximo Participante começa de novo em português.
+  useEffect(() => {
+    if (snapshot.screen === 'idle-screen') {
+      setLanguage(DEFAULT_LANGUAGE);
+    }
+  }, [snapshot.screen]);
 
   useEffect(() => {
     if (!simulatorModalRequest) {
@@ -764,7 +773,12 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const diagnostics = activeModal?.type === 'diagnostics' ? engine.getLocalDiagnostics() : null;
 
   return (
-    <div className={containerClasses.join(' ')} style={{ ...themeStyle, ...safeMarginVars }}>
+    <LanguageProvider language={language} onLanguageChange={setLanguage}>
+    <div
+      className={containerClasses.join(' ')}
+      style={{ ...themeStyle, ...safeMarginVars }}
+      lang={HTML_LANG[language]}
+    >
       <div className="totem-stage">
         {backgroundSrc && (
           <div
@@ -914,5 +928,6 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         />
       </div>
     </div>
+    </LanguageProvider>
   );
 }

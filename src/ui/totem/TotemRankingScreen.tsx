@@ -1,5 +1,6 @@
 import type { EventCustomizationTexts, RankingEntry } from '../../domain/types';
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
+import { useLanguage } from '../../i18n';
 import { EventLogoImage } from '../EventLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
 import { formatTimeMMSS } from '../formatters';
@@ -26,6 +27,7 @@ export function TotemRankingScreen({
   layout,
   highlightedElementId,
 }: TotemRankingScreenProps) {
+  const { t, td } = useLanguage();
   return (
     <section
       id="ranking-screen"
@@ -38,18 +40,18 @@ export function TotemRankingScreen({
         highlightedElementId={highlightedElementId}
         elements={{
           logo: <EventLogoImage src={logoSrc} />,
-          title: <h2>{texts.rankingScreenTitle}</h2>,
+          title: <h2>{td(texts.rankingScreenTitle)}</h2>,
           list: (
             <ol id="ranking-list" className="ranking-list-shared-style">
               {ranking.length === 0 ? (
-                <li>Nenhum participante no ranking ainda.</li>
+                <li>{t('ranking.empty')}</li>
               ) : (
                 ranking.map((entry) => (
                   <li key={entry.matchId}>
                     <span>
                       {entry.position}. <span className="rank-name">{entry.participantName}</span>
                     </span>
-                    <span className="rank-score">{entry.score} Acertos</span>
+                    <span className="rank-score">{t('ranking.hits', { n: entry.score })}</span>
                     <span className="rank-time">{formatTimeMMSS(entry.timeSeconds)}</span>
                   </li>
                 ))
@@ -58,7 +60,7 @@ export function TotemRankingScreen({
           ),
           backButton: (
             <button id="back-to-initial-btn" type="button" className="btn" onClick={onBackToInitial}>
-              {texts.rankingScreenBackButton}
+              {td(texts.rankingScreenBackButton)}
             </button>
           ),
         }}

@@ -470,6 +470,46 @@ describe('TotemApp (Interface do Totem)', () => {
     }
   });
 
+  it('troca o idioma pelas bandeiras, traduz textos padrão e volta ao português na Tela de Descanso', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { engine } = createUiTestRig({ settingsOverrides: { idleTimeoutSeconds: 20, fadeOutLeadTimeSeconds: 5 } });
+      render(<TotemApp engine={engine} />);
+      await waitFor(() => expect(document.getElementById('idle-screen')).not.toBeNull());
+      await act(async () => {
+        fireEvent.touchStart(document.getElementById('idle-screen')!);
+      });
+      expect(document.getElementById('initial-screen')).toHaveClass('active');
+      expect(screen.getByText('Iniciar Quiz')).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Español' }));
+      });
+      expect(screen.getByLabelText('Nombre')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Iniciar Quiz' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Ver Ranking' })).toBeInTheDocument();
+
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'English' }));
+      });
+      expect(screen.getByLabelText('Name')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Start Quiz' })).toBeInTheDocument();
+
+      // Ociosidade: volta para a Tela de Descanso e reinicia em português.
+      await act(async () => {
+        vi.advanceTimersByTime(21_000);
+      });
+      expect(document.getElementById('idle-screen')).toHaveClass('active');
+      await act(async () => {
+        fireEvent.touchStart(document.getElementById('idle-screen')!);
+      });
+      expect(screen.getByLabelText('Nome')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Iniciar Quiz' })).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reinicia ociosidade em eventos confiáveis do document e bloqueia reinício durante resize do teclado', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
