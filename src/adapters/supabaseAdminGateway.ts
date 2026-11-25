@@ -324,6 +324,8 @@ export class SupabaseAdminGateway implements AdminCloudPort {
       difficulty: question.difficulty,
       tags: question.tags,
       is_disabled: question.isDisabled,
+      // Só envia quando há tradução: mantém o salvamento compatível com bancos ainda sem a coluna.
+      ...(question.translations ? { translations: question.translations } : {}),
     };
   }
 

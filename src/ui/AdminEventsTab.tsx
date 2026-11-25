@@ -3,6 +3,11 @@ import { Calendar, Copy, LayoutDashboard, Plus, Power, SlidersHorizontal } from 
 import { DEFAULT_SETTINGS } from '../domain/defaults';
 import type { EventAdminController } from '../domain/eventAdminController';
 import type { EventConfig } from '../domain/types';
+import {
+  CONTENT_LANGUAGES,
+  CONTENT_LANGUAGE_LABELS,
+  getLanguageCompleteness,
+} from '../domain/translations';
 import { Button } from './components/ui/button';
 import { EventStatusBadge } from './components/EventStatusBadge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -122,13 +127,36 @@ export function AdminEventsTab({
     }
   };
 
+  // Aviso (não bloqueante) ao ativar com traduções incompletas: o que faltar aparece em português.
+  const describeIncompleteTranslations = async (event: EventConfig): Promise<string> => {
+    try {
+      const questions = await controller.listAllQuestions(event.id);
+      const parts = CONTENT_LANGUAGES.flatMap((language) => {
+        const status = getLanguageCompleteness(questions, event.customizations, event.settings, language);
+        if (status.isComplete) {
+          return [];
+        }
+        const missingQuestions = status.questions.missing + status.questions.partial;
+        return [`${CONTENT_LANGUAGE_LABELS[language]}: ${missingQuestions} pergunta(s) e ${status.texts.missing} texto(s) sem tradução`];
+      });
+      return parts.length > 0
+        ? ` Atenção, traduções incompletas (aparecem em português): ${parts.join('; ')}.`
+        : '';
+    } catch {
+      return '';
+    }
+  };
+
   const handleToggleActive = async (ev: EventConfig) => {
     try {
       const updated = await controller.setEventActive(ev.id, !ev.isActive);
       await onEventsChanged(updated.id);
+      const translationWarning = updated.isActive
+        ? await describeIncompleteTranslations(updated)
+        : '';
       onStatusMessage(
         'success',
-        `Evento "${updated.name}" ${updated.isActive ? 'ativado' : 'encerrado'} com sucesso.`,
+        `Evento "${updated.name}" ${updated.isActive ? 'ativado' : 'encerrado'} com sucesso.${translationWarning}`,
       );
     } catch (error) {
       onStatusMessage(

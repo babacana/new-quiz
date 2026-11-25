@@ -1,3 +1,3 @@
 export * from './core';
-export { useLanguage, type LanguageContextValue } from './context';
+export { useLanguage, type LanguageContextValue, type EventTextSource } from './context';
 export { LanguageProvider } from './LanguageProvider';

@@ -89,7 +89,7 @@ export function TotemInitialScreen({
           slogan: <p className="slogan">{td(texts.initialScreenSlogan)}</p>,
           statusMessage:
             eventWindow.initialScreenMessage !== null ? (
-              <p id="event-status-message">{eventWindow.initialScreenMessage}</p>
+              <p id="event-status-message">{td(eventWindow.initialScreenMessage)}</p>
             ) : null,
           intro: <p>{t('initial.intro')}</p>,
           nameField: (
@@ -126,7 +126,7 @@ export function TotemInitialScreen({
           ),
           lgpd: lgpdNoticeText?.trim() ? (
             <p id="lgpd-notice-text" className="lgpd-notice-text">
-              {lgpdNoticeText.trim()}
+              {td(lgpdNoticeText.trim())}
             </p>
           ) : null,
           startButton: (

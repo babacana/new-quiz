@@ -10,6 +10,21 @@ export interface DifficultyPercentages {
   dificil: number;
 }
 
+/** Idiomas de conteúdo traduzível pelo ADM (o português é sempre o texto original). */
+export type ContentLanguage = 'en' | 'es';
+
+export interface QuestionTranslation {
+  text: string;
+  options: [string, string, string, string];
+}
+
+export type QuestionTranslations = Partial<Record<ContentLanguage, QuestionTranslation>>;
+
+/** Chaves de texto do Evento que aceitam tradução (textos da personalização + aviso LGPD). */
+export type EventTextKey = keyof EventCustomizationTexts | 'lgpdNoticeText';
+export type EventTextTranslations = Partial<Record<EventTextKey, string>>;
+export type EventTranslations = Partial<Record<ContentLanguage, EventTextTranslations>>;
+
 export interface EventSettings {
   numberOfQuestions: number;
   timePerQuestion: number;
@@ -30,6 +45,8 @@ export interface EventSettings {
   lgpdNoticeText?: string;
   requireManualPrizeConfirmation: boolean;
   prizeStockLimit: number | null;
+  /** Esconde no Totem a bandeira de idioma com tradução incompleta (padrão: mostra e cai para português). */
+  hideIncompleteLanguages?: boolean;
 }
 
 export interface EventCustomizationTexts {
@@ -145,6 +162,8 @@ export interface EventCustomizations {
   visualIdentity: EventVisualIdentity;
   /** Posição dos elementos das telas do Totem; ausente em Eventos antigos (usa o layout padrão). */
   layout?: EventLayout;
+  /** Traduções EN/ES dos textos do Evento; ausente em Eventos antigos. */
+  translations?: EventTranslations;
 }
 
 export interface EventConfig {
@@ -169,6 +188,8 @@ export interface Question {
   difficulty: DifficultyLevel;
   tags: string[];
   isDisabled: boolean;
+  /** Traduções EN/ES; o português (text/options) é o original e o fallback. */
+  translations?: QuestionTranslations;
 }
 
 export interface PreparedOption {
@@ -184,6 +205,7 @@ export interface PreparedQuestion {
   originalOptions: [string, string, string, string];
   originalCorrectIndex: number;
   shuffledOptions: PreparedOption[];
+  translations?: QuestionTranslations;
 }
 
 export interface MatchAnswer {
@@ -310,6 +332,9 @@ export interface IncorrectAnswerReviewItem {
   questionText: string;
   selectedOptionText: string;
   correctOptionText: string;
+  /** Alternativas originais (PT) e traduções, para exibir o gabarito no idioma do Participante. */
+  options?: [string, string, string, string];
+  translations?: QuestionTranslations;
 }
 
 export type TimeBarPhase = 'normal' | 'warning' | 'critical';
@@ -452,6 +477,7 @@ export interface EventCustomizationsPatch {
   fontSizes?: Partial<EventCustomizationFontSizes>;
   visualIdentity?: Partial<EventVisualIdentity>;
   layout?: EventLayout;
+  translations?: EventTranslations;
 }
 
 export interface EventUpsertInput {
@@ -485,6 +511,7 @@ export interface QuestionUpsertInput {
   difficulty: DifficultyLevel;
   tags?: string[];
   isDisabled?: boolean;
+  translations?: QuestionTranslations;
 }
 
 export type QuestionStatusFilter = 'all' | 'active' | 'disabled';
@@ -497,6 +524,8 @@ export interface QuestionFilterOptions {
   status?: QuestionStatusFilter;
   tags?: string[];
   eventId?: string;
+  /** Só perguntas sem tradução completa no idioma. */
+  missingTranslation?: ContentLanguage;
   sortBy?: QuestionSortField;
   sortDirection?: SortDirection;
   page?: number;
@@ -515,6 +544,8 @@ export interface PaginatedQuestionsResult {
     disabled: number;
     byDifficulty: Record<DifficultyLevel, number>;
   };
+  /** Progresso das traduções entre as questões ativas. */
+  translations: Record<ContentLanguage, { total: number; complete: number; partial: number; missing: number }>;
 }
 
 export type QuestionsImportMode = 'merge' | 'replace';

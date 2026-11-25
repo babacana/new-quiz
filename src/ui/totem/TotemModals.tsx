@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react';
 import { useLanguage } from '../../i18n';
+import { pickQuestionTranslation } from '../../domain/translations';
 import type {
   TotemLocalDiagnostics,
   TotemSessionSnapshot,
@@ -82,7 +83,7 @@ export function TotemModals({
               {t('modal.attention')}
             </h3>
             <p id="alert-message" className="modal-text">
-              {activeModal.message}
+              {td(activeModal.message)}
             </p>
             <button
               id="alert-ok-btn"
@@ -109,19 +110,26 @@ export function TotemModals({
               {td(texts.modalIncorrectAnswersTitle)}
             </h3>
             <div id="incorrect-answers-list" className="modal-scrollable-content">
-              {snapshot.lastResult.incorrectAnswers.map((item) => (
+              {snapshot.lastResult.incorrectAnswers.map((item) => {
+                const translation = pickQuestionTranslation(item.translations, language);
+                const localize = (text: string) => {
+                  const index = item.options?.indexOf(text) ?? -1;
+                  return translation && index >= 0 ? translation.options[index]! : text;
+                };
+                return (
                 <div key={item.questionId} className="question-review-item">
-                  <h4>{item.questionText}</h4>
+                  <h4>{translation?.text ?? item.questionText}</h4>
                   <p className="participant-answer">
                     <span className="review-label">{t('modal.yourAnswer')}</span>
-                    <span className="review-value-participant">{item.selectedOptionText}</span>
+                    <span className="review-value-participant">{localize(item.selectedOptionText)}</span>
                   </p>
                   <p className="correct-answer-review">
                     <span className="review-label">{t('modal.correctAnswer')}</span>
-                    <span className="review-value-correct">{item.correctOptionText}</span>
+                    <span className="review-value-correct">{localize(item.correctOptionText)}</span>
                   </p>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <button
               id="close-incorrect-answers-modal-btn"

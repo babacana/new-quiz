@@ -65,7 +65,7 @@ export function TotemResultScreen({
             ),
             syncNotice: backgroundSyncNotice ? (
               <p className="result-sync-notice" role="status">
-                {backgroundSyncNotice}
+                {td(backgroundSyncNotice)}
               </p>
             ) : null,
             summary: (

@@ -1,4 +1,5 @@
 import { paginateItems } from '../operationalRules';
+import { getQuestionTranslationState, summarizeQuestionTranslations } from '../translations';
 import type {
   DifficultyLevel,
   PaginatedQuestionsResult,
@@ -74,6 +75,7 @@ function buildQuestionEntity(id: number, input: QuestionUpsertInput): Question {
     difficulty: input.difficulty,
     tags: input.tags ?? [],
     isDisabled: input.isDisabled ?? false,
+    ...(input.translations ? { translations: input.translations } : {}),
   };
 }
 
@@ -233,6 +235,7 @@ export class QuestionBankModule {
       options: normalizeQuestionOptions(input.options),
       tags: input.tags !== undefined ? normalizeTags(input.tags) : current.tags,
       isDisabled: input.isDisabled ?? current.isDisabled,
+      translations: 'translations' in input ? input.translations : current.translations,
     };
     validateQuestionInput(normalized);
 
@@ -294,6 +297,11 @@ export class QuestionBankModule {
       filter.difficulties && filter.difficulties.length > 0 ? new Set(filter.difficulties) : null;
     const requiredTags = normalizeTags(filter.tags);
     const status = filter.status ?? 'all';
+    const activeQuestions = questions.filter((q) => !q.isDisabled);
+    const translations = {
+      en: summarizeQuestionTranslations(activeQuestions, 'en'),
+      es: summarizeQuestionTranslations(activeQuestions, 'es'),
+    };
 
     const filtered = questions.filter((question) => {
       if (status === 'active' && question.isDisabled) {
@@ -303,6 +311,12 @@ export class QuestionBankModule {
         return false;
       }
       if (difficultiesSet && !difficultiesSet.has(question.difficulty)) {
+        return false;
+      }
+      if (
+        filter.missingTranslation &&
+        getQuestionTranslationState(question, filter.missingTranslation) === 'complete'
+      ) {
         return false;
       }
       if (
@@ -355,6 +369,7 @@ export class QuestionBankModule {
       currentPage: page.currentPage,
       pageSize: page.pageSize,
       counts,
+      translations,
     };
   }
 

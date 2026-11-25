@@ -1089,6 +1089,11 @@ export class TotemSessionEngine {
     return this.getSnapshot();
   }
 
+  // Questões do Evento no Totem (sem clonar), usadas para saber quais idiomas estão completos.
+  getEventQuestions(): readonly Question[] {
+    return this.questions;
+  }
+
   getPreparedQuestions(): PreparedQuestion[] {
     if (!this.activeMatch) {
       return [];
@@ -1245,6 +1250,13 @@ export class TotemSessionEngine {
         questionText: answer.questionText,
         selectedOptionText: answer.selectedOptionText,
         correctOptionText: answer.correctOptionText,
+        options: [...answer.options] as IncorrectAnswerReviewItem['options'],
+        ...(match.questions.find((question) => question.id === answer.questionId)?.translations
+          ? {
+              translations: match.questions.find((question) => question.id === answer.questionId)
+                ?.translations,
+            }
+          : {}),
       }));
 
     const currentStock = this.totemConfig.event.prizeStockRemaining;
@@ -1574,6 +1586,7 @@ export class TotemSessionEngine {
       originalOptions: [...question.options],
       originalCorrectIndex: question.correctIndex,
       shuffledOptions: this.random.shuffle(options),
+      ...(question.translations ? { translations: structuredClone(question.translations) } : {}),
     };
   }
 

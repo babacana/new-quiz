@@ -2,6 +2,7 @@ import type { TotemSessionEngine } from '../../domain/totemSessionEngine';
 import type { ActiveQuestionState } from '../../domain/types';
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
 import { useLanguage } from '../../i18n';
+import { pickQuestionTranslation } from '../../domain/translations';
 import { EventLogoImage } from '../EventLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
 import { formatTimeMMSS } from '../formatters';
@@ -54,7 +55,10 @@ export function TotemQuizScreen({
   layout,
   highlightedElementId,
 }: TotemQuizScreenProps) {
-  const { t, td } = useLanguage();
+  const { t, td, language } = useLanguage();
+  const translation = currentQuestion
+    ? pickQuestionTranslation(currentQuestion.question.translations, language)
+    : null;
   return (
     <section
       id="quiz-screen"
@@ -95,7 +99,7 @@ export function TotemQuizScreen({
                 </span>
               </div>
             ),
-            question: <h3 id="question-text">{currentQuestion.question.text}</h3>,
+            question: <h3 id="question-text">{translation?.text ?? currentQuestion.question.text}</h3>,
             options: (
               <div
                 id="options-container"
@@ -126,7 +130,9 @@ export function TotemQuizScreen({
                       <span className="option-letter" aria-hidden="true">
                         {OPTION_LETTERS[idx] ?? idx + 1}
                       </span>
-                      <span className="option-label">{option.text}</span>
+                      <span className="option-label">
+                        {translation?.options[option.originalIndex] ?? option.text}
+                      </span>
                     </button>
                   );
                 })}

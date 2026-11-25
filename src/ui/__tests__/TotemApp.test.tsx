@@ -50,6 +50,7 @@ function createUiTestRig(options?: {
   nowIso?: string;
   eventOverrides?: Partial<EventConfig>;
   settingsOverrides?: Partial<EventConfig['settings']>;
+  questionTranslations?: Record<number, Question['translations']>;
 }) {
   const clock = new UiTestClock(options?.nowIso);
   const random = new UiTestRandom();
@@ -93,7 +94,15 @@ function createUiTestRig(options?: {
     },
   ];
 
-  cloudGateway.seedEvent(event, questions);
+  cloudGateway.seedEvent(
+    event,
+    questions.map((question) => ({
+      ...question,
+      ...(options?.questionTranslations?.[question.id]
+        ? { translations: options.questionTranslations[question.id] }
+        : {}),
+    })),
+  );
 
   const engine = new TotemSessionEngine({
     localStore,
@@ -508,6 +517,73 @@ describe('TotemApp (Interface do Totem)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('mostra pergunta, alternativas e mensagens no idioma escolhido e cai para português sem tradução', async () => {
+    const user = userEvent.setup();
+    const { engine } = createUiTestRig({
+      numberOfQuestions: 2,
+      questionTranslations: {
+        101: {
+          en: {
+            text: 'What is the acronym of the DF sanitation company?',
+            options: ['CAESB-en', 'SABESP-en', 'COPASA-en', 'SANEPAR-en'],
+          },
+        },
+        // 102 só tem o enunciado: tradução incompleta, a pergunta inteira fica em português.
+        102: { en: { text: 'Only the statement', options: ['', '', '', ''] } },
+      },
+    });
+    render(<TotemApp engine={engine} />);
+
+    await user.click(await screen.findByRole('button', { name: 'English' }));
+    // Mensagem do engine traduzida no modal de aviso.
+    await user.click(screen.getByRole('button', { name: 'Start Quiz' }));
+    expect(await screen.findByText('Please fill in your name.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'OK' }));
+
+    await user.type(screen.getByLabelText('Name'), 'maria');
+    await user.type(screen.getByLabelText('Phone'), '6133224455');
+    await user.click(screen.getByRole('button', { name: 'Start Quiz' }));
+
+    await waitFor(() => expect(document.getElementById('quiz-screen')).toHaveClass('active'));
+    const seen: string[] = [];
+    for (let step = 0; step < 2; step += 1) {
+      const text = document.getElementById('question-text')!.textContent ?? '';
+      seen.push(text);
+      if (text.startsWith('What is the acronym')) {
+        expect(screen.getByText('CAESB-en')).toBeInTheDocument();
+        expect(screen.queryByText('CAESB')).toBeNull();
+      } else {
+        expect(text).toBe('Qual o telefone da Central de Atendimento da Caesb?');
+        expect(screen.getByText('193')).toBeInTheDocument();
+      }
+      await user.click(document.querySelector('#options-container .option') as HTMLElement);
+      await user.click(document.getElementById('next-question-btn')!);
+    }
+    expect(seen.some((text) => text.startsWith('What is'))).toBe(true);
+    expect(seen).toContain('Qual o telefone da Central de Atendimento da Caesb?');
+  });
+
+  it('esconde a bandeira de idioma incompleto quando configurado e mostra todas por padrão', async () => {
+    const complete = {
+      text: 'Q',
+      options: ['a', 'b', 'c', 'd'] as [string, string, string, string],
+    };
+    const hidden = createUiTestRig({
+      settingsOverrides: { hideIncompleteLanguages: true },
+      questionTranslations: { 101: { en: complete }, 102: { en: complete } },
+    });
+    const first = render(<TotemApp engine={hidden.engine} />);
+    expect(await screen.findByRole('button', { name: 'English' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Español' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Português' })).toBeInTheDocument();
+    first.unmount();
+
+    const shown = createUiTestRig();
+    render(<TotemApp engine={shown.engine} />);
+    expect(await screen.findByRole('button', { name: 'Español' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument();
   });
 
   it('reinicia ociosidade em eventos confiáveis do document e bloqueia reinício durante resize do teclado', async () => {

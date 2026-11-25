@@ -619,6 +619,17 @@ export function AdminSettingsTab({
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
+                checked={formState.settings.hideIncompleteLanguages ?? false}
+                onChange={(e) =>
+                  updateSettingsField('hideIncompleteLanguages', e.target.checked)
+                }
+                className="h-4 w-4 rounded border-input"
+              />
+              Esconder bandeira de idioma com tradução incompleta
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
                 checked={formState.settings.enableTimeAlertBorderPulse}
                 onChange={(e) =>
                   updateSettingsField('enableTimeAlertBorderPulse', e.target.checked)
