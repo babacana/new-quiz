@@ -1,8 +1,7 @@
 -- ============================================================
 -- Traduções EN/ES das perguntas (Banco de Questões).
 -- Aditiva e retrocompatível: a coluna tem padrão '{}' e o app antigo continua funcionando.
--- Só a coluna: as funções quiz_totem_pull_event_snapshot e quiz_replace_all_questions não existem no
--- PRCE, então esta migração não as cria nem altera (esta versão já foi aplicada lá).
+-- Só a coluna; as funções que levam o campo ao Totem estão em 20261125000002.
 -- Formato: {"en": {"text": "...", "options": ["a","b","c","d"]}, "es": {...}}
 -- Os textos do Evento traduzidos ficam em quiz_events.customizations.translations (jsonb existente),
 -- sem mudança de schema.
