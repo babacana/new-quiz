@@ -492,12 +492,18 @@ describe('TotemApp (Interface do Totem)', () => {
       expect(screen.getByText('Iniciar Quiz')).toBeInTheDocument();
 
       await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Português' }));
+      });
+      await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: 'Español' }));
       });
       expect(screen.getByLabelText('Nombre')).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Iniciar Quiz' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Ver Ranking' })).toBeInTheDocument();
 
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Español' }));
+      });
       await act(async () => {
         fireEvent.click(screen.getByRole('button', { name: 'English' }));
       });
@@ -536,7 +542,8 @@ describe('TotemApp (Interface do Totem)', () => {
     });
     render(<TotemApp engine={engine} />);
 
-    await user.click(await screen.findByRole('button', { name: 'English' }));
+    await user.click(await screen.findByRole('button', { name: 'Português' }));
+    await user.click(screen.getByRole('button', { name: 'English' }));
     // Mensagem do engine traduzida no modal de aviso.
     await user.click(screen.getByRole('button', { name: 'Start Quiz' }));
     expect(await screen.findByText('Please fill in your name.')).toBeInTheDocument();
@@ -570,19 +577,21 @@ describe('TotemApp (Interface do Totem)', () => {
       text: 'Q',
       options: ['a', 'b', 'c', 'd'] as [string, string, string, string],
     };
+    const user = userEvent.setup();
     const hidden = createUiTestRig({
       settingsOverrides: { hideIncompleteLanguages: true },
       questionTranslations: { 101: { en: complete }, 102: { en: complete } },
     });
     const first = render(<TotemApp engine={hidden.engine} />);
-    expect(await screen.findByRole('button', { name: 'English' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Português' }));
+    expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Español' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Português' })).toBeInTheDocument();
     first.unmount();
 
     const shown = createUiTestRig();
     render(<TotemApp engine={shown.engine} />);
-    expect(await screen.findByRole('button', { name: 'Español' })).toBeInTheDocument();
+    await user.click(await screen.findByRole('button', { name: 'Português' }));
+    expect(screen.getByRole('button', { name: 'Español' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'English' })).toBeInTheDocument();
   });
 
