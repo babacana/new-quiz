@@ -525,12 +525,14 @@ describe('TotemSessionEngine', () => {
           questionText: q1.question.text,
           selectedOptionText: wrongText,
           correctOptionText: correctTextQ1,
+          options: q1.question.originalOptions,
         },
         {
           questionId: q2.question.id,
           questionText: q2.question.text,
           selectedOptionText: TIMEOUT_OPTION_TEXT,
           correctOptionText: correctTextQ2,
+          options: q2.question.originalOptions,
         },
       ]);
     });

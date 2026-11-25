@@ -1,9 +1,12 @@
 import type { RefObject } from 'react';
+import type { Language } from '../../i18n';
 import { formatPhoneMask, normalizeParticipantName } from '../../domain/totemSessionEngine';
 import type { EventCustomizationTexts, EventWindowState } from '../../domain/types';
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
+import { useLanguage } from '../../i18n';
 import { EventLogoImage } from '../EventLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
+import { LanguageSelector } from './LanguageSelector';
 import {
   VirtualKeyboard,
   type VirtualKeyboardField,
@@ -32,6 +35,8 @@ export interface TotemInitialScreenProps {
   onVirtualKeyPress: (key: string) => void;
   onVirtualKeyboardResizingChange: (isResizing: boolean) => void;
   onVirtualKeyboardClose?: () => void;
+  /** Idiomas oferecidos na tela; sem a prop, todos. */
+  availableLanguages?: readonly Language[];
   /** Layout resolvido do Evento; sem ele usa a distribuição padrão. */
   layout?: ResolvedScreenLayout;
   /** Elemento destacado no editor de layout do ADM. */
@@ -64,36 +69,39 @@ export function TotemInitialScreen({
   onVirtualKeyboardClose,
   layout,
   highlightedElementId,
+  availableLanguages,
 }: TotemInitialScreenProps) {
+  const { t, td, language } = useLanguage();
   return (
     <section
       id="initial-screen"
       className={`screen ${active ? 'active' : ''}`}
       aria-hidden={!active}
     >
+      {active && <LanguageSelector languages={availableLanguages} />}
       <LayoutScreenContent
         screenId="initial"
         layout={layout}
         highlightedElementId={highlightedElementId}
         elements={{
           logo: <EventLogoImage src={logoSrc} />,
-          title: <h2>{texts.initialScreenTitle}</h2>,
-          slogan: <p className="slogan">{texts.initialScreenSlogan}</p>,
+          title: <h2>{td(texts.initialScreenTitle)}</h2>,
+          slogan: <p className="slogan">{td(texts.initialScreenSlogan)}</p>,
           statusMessage:
             eventWindow.initialScreenMessage !== null ? (
-              <p id="event-status-message">{eventWindow.initialScreenMessage}</p>
+              <p id="event-status-message">{td(eventWindow.initialScreenMessage)}</p>
             ) : null,
-          intro: <p>Preencha seus dados para começar:</p>,
+          intro: <p>{t('initial.intro')}</p>,
           nameField: (
             <div className="form-group">
-              <label htmlFor="nome">Nome</label>
+              <label htmlFor="nome">{t('initial.nameLabel')}</label>
               <input
                 ref={nameInputRef}
                 id="nome"
                 name="nome"
                 type="text"
                 autoComplete="off"
-                placeholder={texts.inputNamePlaceholder}
+                placeholder={td(texts.inputNamePlaceholder)}
                 value={nameInput}
                 onFocus={() => onFieldFocus('nome')}
                 onChange={(event) => onNameChange(normalizeParticipantName(event.target.value))}
@@ -102,14 +110,14 @@ export function TotemInitialScreen({
           ),
           phoneField: (
             <div className="form-group">
-              <label htmlFor="telefone">Telefone</label>
+              <label htmlFor="telefone">{t('initial.phoneLabel')}</label>
               <input
                 ref={phoneInputRef}
                 id="telefone"
                 name="telefone"
                 type="tel"
                 autoComplete="off"
-                placeholder={texts.inputPhonePlaceholder}
+                placeholder={td(texts.inputPhonePlaceholder)}
                 value={phoneInput}
                 onFocus={() => onFieldFocus('telefone')}
                 onChange={(event) => onPhoneChange(formatPhoneMask(event.target.value))}
@@ -118,7 +126,7 @@ export function TotemInitialScreen({
           ),
           lgpd: lgpdNoticeText?.trim() ? (
             <p id="lgpd-notice-text" className="lgpd-notice-text">
-              {lgpdNoticeText.trim()}
+              {td(lgpdNoticeText.trim())}
             </p>
           ) : null,
           startButton: (
@@ -130,7 +138,7 @@ export function TotemInitialScreen({
               hidden={shouldHideStartButton}
               onClick={onStartQuiz}
             >
-              {texts.initialScreenStartButton}
+              {td(texts.initialScreenStartButton)}
             </button>
           ),
           rankingButton: (
@@ -140,7 +148,7 @@ export function TotemInitialScreen({
               className="btn-secondary"
               onClick={onOpenRanking}
             >
-              {texts.initialScreenRankingButton}
+              {td(texts.initialScreenRankingButton)}
             </button>
           ),
         }}
@@ -154,6 +162,7 @@ export function TotemInitialScreen({
         onKeyPress={onVirtualKeyPress}
         onResizingChange={onVirtualKeyboardResizingChange}
         onClose={onVirtualKeyboardClose}
+        language={language}
       />
     </section>
   );

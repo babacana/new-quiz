@@ -1,3 +1,4 @@
+import { DEFAULT_QUESTION_TRANSLATIONS } from './defaultQuestionTranslations';
 import type { EventConfig, EventCustomizations, EventSettings, Question } from './types';
 
 export const DEFAULT_EVENT_ID = '00000000-0000-4000-8000-000000000001';
@@ -100,7 +101,7 @@ export const DEFAULT_EVENT_CONFIG: EventConfig = {
 };
 
 // Conjunto inicial de questões embarcado para garantir operação imediata mesmo 100% offline.
-export const DEFAULT_QUIZ_QUESTIONS: Question[] = [
+const BASE_QUIZ_QUESTIONS: Question[] = [
   {
     id: 1,
     text: 'O que significa a sigla Caesb?',
@@ -259,3 +260,9 @@ export const DEFAULT_QUIZ_QUESTIONS: Question[] = [
     isDisabled: true,
   },
 ];
+
+export const DEFAULT_QUIZ_QUESTIONS: Question[] = BASE_QUIZ_QUESTIONS.map((question) =>
+  DEFAULT_QUESTION_TRANSLATIONS[question.id]
+    ? { ...question, translations: DEFAULT_QUESTION_TRANSLATIONS[question.id] }
+    : question,
+);

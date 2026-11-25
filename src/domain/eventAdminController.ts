@@ -11,6 +11,7 @@ import {
   normalizeTags,
   validateQuestionInput,
 } from './admin/questionBankModule';
+import { TranslationModule } from './admin/translationModule';
 import { StaffAuthModule } from './admin/staffAuthModule';
 import { StandOperationsModule } from './admin/standOperationsModule';
 import { TotemFleetModule } from './admin/totemFleetModule';
@@ -73,6 +74,7 @@ export class EventAdminController {
   private readonly standOperationsModule: StandOperationsModule;
   private readonly totemFleetModule: TotemFleetModule;
   private readonly backupModule: BackupModule;
+  private readonly translationModule: TranslationModule;
 
   constructor(deps: EventAdminControllerDependencies) {
     this.authModule = new StaffAuthModule(deps.cloudGateway);
@@ -89,6 +91,11 @@ export class EventAdminController {
     this.standOperationsModule = new StandOperationsModule(context, this.catalogModule);
     this.totemFleetModule = new TotemFleetModule(context);
     this.backupModule = new BackupModule(context, this.catalogModule);
+    this.translationModule = new TranslationModule(
+      context,
+      this.catalogModule,
+      this.questionBankModule,
+    );
   }
 
   login(email: string, password: string): Promise<AuthSession> {
@@ -225,6 +232,19 @@ export class EventAdminController {
 
   exportQuestionsCsv(eventId?: string): Promise<string> {
     return this.questionBankModule.exportQuestionsCsv(eventId);
+  }
+
+  // Traduções EN/ES (planilha) das perguntas e dos textos do Evento.
+  exportTranslationsXlsx(eventId: string): Promise<ArrayBuffer> {
+    return this.translationModule.exportTranslationsXlsx(eventId);
+  }
+
+  previewTranslationsXlsx(file: ArrayBuffer, eventId: string) {
+    return this.translationModule.previewTranslationsXlsx(file, eventId);
+  }
+
+  importTranslationsXlsx(file: ArrayBuffer, eventId: string) {
+    return this.translationModule.importTranslationsXlsx(file, eventId);
   }
 
   exportQuestionsXlsx(): Promise<ArrayBuffer> {

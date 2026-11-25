@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import type { EventAdminController } from '../domain/eventAdminController';
 import type {
+  ContentLanguage,
   DifficultyLevel,
   PaginatedQuestionsResult,
   PreparedQuestion,
@@ -19,6 +20,9 @@ import type {
   QuestionsImportMode,
   SortDirection,
 } from '../domain/types';
+import { QuestionTranslationBadges } from './TranslationBadges';
+import { describeSummary } from './translationLabels';
+import { CONTENT_LANGUAGES } from '../domain/translations';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
 import {
@@ -80,6 +84,7 @@ export function AdminQuestionsTab({
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [difficultyFilter, setDifficultyFilter] = useState<'all' | DifficultyLevel>('all');
   const [statusFilter, setStatusFilter] = useState<QuestionStatusFilter>('all');
+  const [translationFilter, setTranslationFilter] = useState<'all' | ContentLanguage>('all');
   const [sortBy, setSortBy] = useState<QuestionSortField>('id');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
   const [page, setPage] = useState(1);
@@ -109,6 +114,10 @@ export function AdminQuestionsTab({
       disabled: 0,
       byDifficulty: { facil: 0, moderado: 0, dificil: 0 },
     },
+    translations: {
+      en: { total: 0, complete: 0, partial: 0, missing: 0 },
+      es: { total: 0, complete: 0, partial: 0, missing: 0 },
+    },
   });
 
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -136,6 +145,7 @@ export function AdminQuestionsTab({
         search: debouncedSearch,
         difficulties: difficultyFilter === 'all' ? undefined : [difficultyFilter],
         status: statusFilter,
+        missingTranslation: translationFilter === 'all' ? undefined : translationFilter,
         sortBy,
         sortDirection,
         page,
@@ -158,6 +168,7 @@ export function AdminQuestionsTab({
     sortBy,
     sortDirection,
     statusFilter,
+    translationFilter,
   ]);
 
   useEffect(() => {
@@ -517,10 +528,21 @@ export function AdminQuestionsTab({
         </div>
       </div>
 
+      <p className="text-sm text-muted-foreground" data-testid="translation-counters">
+        Traduções (questões ativas):{' '}
+        {CONTENT_LANGUAGES.map((language, index) => (
+          <span key={language}>
+            {index > 0 ? ' · ' : ''}
+            {describeSummary(language, queryResult.translations[language], 'traduzidas')}
+          </span>
+        ))}
+        . Para traduzir, use Aparência &gt; Traduções do Evento.
+      </p>
+
       {/* Barra de busca e filtros */}
       <Card>
         <CardContent className="pt-6 space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <div className="relative sm:col-span-2 lg:col-span-1">
               <Search className="pointer-events-none absolute top-2.5 left-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -546,6 +568,20 @@ export function AdminQuestionsTab({
               <option value="facil">Fácil</option>
               <option value="moderado">Moderado</option>
               <option value="dificil">Difícil</option>
+            </Select>
+
+            <Select
+              id="question-translation-filter"
+              aria-label="Filtrar por tradução"
+              value={translationFilter}
+              onChange={(e) => {
+                setTranslationFilter(e.target.value as 'all' | ContentLanguage);
+                setPage(1);
+              }}
+            >
+              <option value="all">Todas as traduções</option>
+              <option value="en">Sem tradução em EN</option>
+              <option value="es">Sem tradução em ES</option>
             </Select>
 
             <Select
@@ -677,7 +713,12 @@ export function AdminQuestionsTab({
                           {renderQuestionTags(q.tags)}
                         </td>
                         <td className="px-4 py-3 align-top">{renderDifficultyPill(q.difficulty)}</td>
-                        <td className="px-4 py-3 align-top">{renderStatusPill(q)}</td>
+                        <td className="px-4 py-3 align-top">
+                          <div className="flex flex-col items-start gap-1">
+                            {renderStatusPill(q)}
+                            <QuestionTranslationBadges question={q} />
+                          </div>
+                        </td>
                         <td className="px-4 py-3 align-top">{renderQuestionActions(q)}</td>
                       </tr>
                     ))}
@@ -709,6 +750,7 @@ export function AdminQuestionsTab({
                     </div>
                   </div>
                   <p className="text-sm font-medium leading-snug">{q.text}</p>
+                  <QuestionTranslationBadges question={q} />
                   {renderQuestionTags(q.tags)}
                   {renderQuestionActions(q, true)}
                 </CardContent>

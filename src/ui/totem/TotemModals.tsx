@@ -1,4 +1,6 @@
 import type { FormEvent } from 'react';
+import { useLanguage } from '../../i18n';
+import { pickQuestionTranslation } from '../../domain/translations';
 import type {
   TotemLocalDiagnostics,
   TotemSessionSnapshot,
@@ -64,6 +66,7 @@ export function TotemModals({
   onCloseModal,
 }: TotemModalsProps) {
   const texts = snapshot.event.customizations.texts;
+  const { t, td, language } = useLanguage();
 
   return (
     <>
@@ -77,10 +80,10 @@ export function TotemModals({
         >
           <div className="modal-content">
             <h3 id="alert-modal-title" className="modal-title">
-              Atenção
+              {t('modal.attention')}
             </h3>
             <p id="alert-message" className="modal-text">
-              {activeModal.message}
+              {td(activeModal.message)}
             </p>
             <button
               id="alert-ok-btn"
@@ -88,7 +91,7 @@ export function TotemModals({
               className="btn modal-close-btn"
               onClick={onCloseModal}
             >
-              OK
+              {t('modal.ok')}
             </button>
           </div>
         </div>
@@ -104,22 +107,29 @@ export function TotemModals({
         >
           <div className="modal-content">
             <h3 id="incorrect-answers-modal-title" className="modal-title">
-              {texts.modalIncorrectAnswersTitle}
+              {td(texts.modalIncorrectAnswersTitle)}
             </h3>
             <div id="incorrect-answers-list" className="modal-scrollable-content">
-              {snapshot.lastResult.incorrectAnswers.map((item) => (
+              {snapshot.lastResult.incorrectAnswers.map((item) => {
+                const translation = pickQuestionTranslation(item.translations, language);
+                const localize = (text: string) => {
+                  const index = item.options?.indexOf(text) ?? -1;
+                  return translation && index >= 0 ? translation.options[index]! : text;
+                };
+                return (
                 <div key={item.questionId} className="question-review-item">
-                  <h4>{item.questionText}</h4>
+                  <h4>{translation?.text ?? item.questionText}</h4>
                   <p className="participant-answer">
-                    <span className="review-label">Sua resposta: </span>
-                    <span className="review-value-participant">{item.selectedOptionText}</span>
+                    <span className="review-label">{t('modal.yourAnswer')}</span>
+                    <span className="review-value-participant">{localize(item.selectedOptionText)}</span>
                   </p>
                   <p className="correct-answer-review">
-                    <span className="review-label">Resposta correta: </span>
-                    <span className="review-value-correct">{item.correctOptionText}</span>
+                    <span className="review-label">{t('modal.correctAnswer')}</span>
+                    <span className="review-value-correct">{localize(item.correctOptionText)}</span>
                   </p>
                 </div>
-              ))}
+                );
+              })}
             </div>
             <button
               id="close-incorrect-answers-modal-btn"
@@ -127,7 +137,7 @@ export function TotemModals({
               className="btn modal-close-btn"
               onClick={onCloseModal}
             >
-              Fechar
+              {t('modal.close')}
             </button>
           </div>
         </div>
@@ -143,13 +153,13 @@ export function TotemModals({
         >
           <div className="modal-content">
             <h3 id="winner-already-modal-title" className="modal-title">
-              {texts.modalAlreadyWonTitle}
+              {td(texts.modalAlreadyWonTitle)}
             </h3>
             <p id="winner-already-main-message" className="modal-text">
-              {texts.modalAlreadyWonMessage}
+              {td(texts.modalAlreadyWonMessage)}
             </p>
             <p id="winner-already-timestamp" className="modal-timestamp">
-              {formatAwardedAtPtBr(snapshot.alreadyWonModal.awardedAt)}
+              {formatAwardedAtPtBr(snapshot.alreadyWonModal.awardedAt, language)}
             </p>
             <button
               id="close-winner-already-modal-btn"
@@ -157,7 +167,7 @@ export function TotemModals({
               className="btn modal-close-btn"
               onClick={onDismissWinnerAlready}
             >
-              Entendi!
+              {t('modal.understood')}
             </button>
           </div>
         </div>
@@ -173,13 +183,13 @@ export function TotemModals({
         >
           <div className="modal-content">
             <h3 id="top3-modal-title" className="modal-title">
-              ✨ Resultado Espetacular! ✨
+              {t('modal.top3Title')}
             </h3>
             <div id="top3-modal-message-content">
               <p>
-                Parabéns, <strong>{snapshot.lastResult.participantName}</strong>!
+                {t('modal.top3Congrats', { name: snapshot.lastResult.participantName })}
               </p>
-              <p>Você garantiu um lugar entre os melhores desempenhos do Evento!</p>
+              <p>{t('modal.top3Message')}</p>
               <p>
                 <span className="msg-rank-highlight">
                   TOP {snapshot.lastResult.rankingPosition}
@@ -192,7 +202,7 @@ export function TotemModals({
               className="btn modal-close-btn"
               onClick={onCloseModal}
             >
-              OK!
+              {t('modal.top3Ok')}
             </button>
           </div>
         </div>
@@ -208,10 +218,10 @@ export function TotemModals({
         >
           <div className="modal-content">
             <h3 id="confirm-modal-title" className="modal-title">
-              Confirmação
+              {t('modal.confirmTitle')}
             </h3>
             <p id="confirm-message" className="modal-text">
-              Tem certeza que deseja desistir do quiz? Seu progresso atual não será salvo.
+              {t('modal.giveUpMessage')}
             </p>
             <div className="modal-actions">
               <button
@@ -220,7 +230,7 @@ export function TotemModals({
                 className="btn btn-danger"
                 onClick={onConfirmGiveUp}
               >
-                Sair
+                {t('modal.leave')}
               </button>
               <button
                 id="confirm-cancel-btn"
@@ -228,7 +238,7 @@ export function TotemModals({
                 className="btn-secondary"
                 onClick={onCloseModal}
               >
-                Cancelar
+                {t('modal.cancel')}
               </button>
             </div>
           </div>

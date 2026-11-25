@@ -43,22 +43,28 @@ export function formatTimeMMSS(totalSeconds: number): string {
 }
 
 // Formata data/hora ISO para exibição amigável na Trava de Brinde (dd/MM/yyyy às HH:mm).
-export function formatAwardedAtPtBr(isoString: string): string {
+export function formatAwardedAtPtBr(isoString: string, language: 'pt' | 'en' | 'es' = 'pt'): string {
   const dateObj = new Date(isoString);
   if (Number.isNaN(dateObj.getTime())) {
     return isoString;
   }
-  const datePart = dateObj.toLocaleDateString('pt-BR', {
+  const locale = language === 'pt' ? 'pt-BR' : language === 'en' ? 'en-US' : 'es-ES';
+  const datePart = dateObj.toLocaleDateString(locale, {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
   });
-  const timePart = dateObj.toLocaleTimeString('pt-BR', {
+  const timePart = dateObj.toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   });
-  return `Participação em: ${datePart} às ${timePart}`;
+  const templates = {
+    pt: `Participação em: ${datePart} às ${timePart}`,
+    en: `Played on: ${datePart} at ${timePart}`,
+    es: `Participación el: ${datePart} a las ${timePart}`,
+  };
+  return templates[language];
 }
 
 // Formata data/hora ISO em pt-BR (dd/MM/yyyy HH:mm:ss).

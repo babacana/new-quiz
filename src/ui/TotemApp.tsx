@@ -22,6 +22,8 @@ import { createTotemCloudPort } from './cloudFactory';
 import { playTotemSound } from './soundEffects';
 import { buildThemeCssVariables } from './themeCss';
 import type { TimeAlertVisualUpdate } from './totem/QuestionTimerBar';
+import { DEFAULT_LANGUAGE, HTML_LANG, LANGUAGES, LanguageProvider, type Language } from '../i18n';
+import { CONTENT_LANGUAGES, getLanguageCompleteness } from '../domain/translations';
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
 import { TotemClosedScreen } from './totem/TotemClosedScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
@@ -80,6 +82,14 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const [nameInput, setNameInput] = useState('');
   const [phoneInput, setPhoneInput] = useState('');
   const [activeModal, setActiveModal] = useState<ActiveTotemModal>(null);
+  const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
+
+  // Ao voltar para a Tela de Descanso o próximo Participante começa de novo em português.
+  useEffect(() => {
+    if (snapshot.screen === 'idle-screen') {
+      setLanguage(DEFAULT_LANGUAGE);
+    }
+  }, [snapshot.screen]);
 
   useEffect(() => {
     if (!simulatorModalRequest) {
@@ -758,13 +768,43 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
   const resultLayout = useMemo(() => resolveScreenLayout(eventLayout, 'result'), [eventLayout]);
   const rankingLayout = useMemo(() => resolveScreenLayout(eventLayout, 'ranking'), [eventLayout]);
   const { eventWindow } = snapshot;
+  const eventTexts = {
+    texts: { ...texts, lgpdNoticeText: snapshot.event.settings.lgpdNoticeText } as Record<
+      string,
+      string | undefined
+    >,
+    translations: snapshot.event.customizations.translations,
+  };
+  // Por padrão todas as bandeiras aparecem (o que faltar cai para português); o ADM pode esconder as incompletas.
+  const availableLanguages: Language[] = snapshot.event.settings.hideIncompleteLanguages
+    ? LANGUAGES.filter(
+        (code) =>
+          code === 'pt' ||
+          (CONTENT_LANGUAGES.includes(code) &&
+            getLanguageCompleteness(
+              engine.getEventQuestions(),
+              snapshot.event.customizations,
+              snapshot.event.settings,
+              code as 'en' | 'es',
+            ).isComplete),
+      )
+    : [...LANGUAGES];
   const shouldHideStartButton = eventWindow.isBlocked && eventWindow.status === 'after';
   const showPairingModal =
     snapshot.pairing.status === 'awaiting_authorization' || activeModal?.type === 'pairing';
   const diagnostics = activeModal?.type === 'diagnostics' ? engine.getLocalDiagnostics() : null;
 
   return (
-    <div className={containerClasses.join(' ')} style={{ ...themeStyle, ...safeMarginVars }}>
+    <LanguageProvider
+      language={language}
+      onLanguageChange={setLanguage}
+      eventTexts={eventTexts}
+    >
+    <div
+      className={containerClasses.join(' ')}
+      style={{ ...themeStyle, ...safeMarginVars }}
+      lang={HTML_LANG[language]}
+    >
       <div className="totem-stage">
         {backgroundSrc && (
           <div
@@ -813,6 +853,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
           onVirtualKeyPress={handleVirtualKeyPress}
           onVirtualKeyboardResizingChange={handleKeyboardResizingChange}
           onVirtualKeyboardClose={handleVirtualKeyboardClose}
+          availableLanguages={availableLanguages}
         />
 
         <TotemClosedScreen
@@ -822,6 +863,7 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
           texts={texts}
           eventWindow={eventWindow}
           onOpenRanking={() => void handleOpenRanking()}
+          availableLanguages={availableLanguages}
         />
 
         <TotemQuizScreen
@@ -914,5 +956,6 @@ export function TotemApp({ engine: injectedEngine, simulatorModalRequest }: Tote
         />
       </div>
     </div>
+    </LanguageProvider>
   );
 }

@@ -18,7 +18,9 @@ import type {
   PredefinedThemeId,
   VisualAssetKind,
 } from '../domain/types';
+import { AdminTranslationsPanel } from './AdminTranslationsPanel';
 import { CustomizationPreview } from './CustomizationPreview';
+import { CONTENT_LANGUAGES, getEventTextStatuses } from '../domain/translations';
 import { VisualAssetLibrary } from './VisualAssetLibrary';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -343,6 +345,16 @@ export function AdminCustomizationTab({
     );
   }
 
+  // Selos EN/ES ⚠ nos campos de texto ainda sem tradução (usa o rascunho atual).
+  const textStatusByLanguage = CONTENT_LANGUAGES.map((language) => ({
+    language,
+    statuses: getEventTextStatuses(
+      { texts: draft.texts, translations: draft.translations },
+      targetEvent.settings,
+      language,
+    ),
+  }));
+
   const opacityPercent = Math.round(draft.visualIdentity.customBackgroundOpacity * 100);
 
   return (
@@ -659,7 +671,20 @@ export function AdminCustomizationTab({
               <div className="grid gap-3 sm:grid-cols-2">
                 {TEXT_FIELD_LABELS.map(({ key, label }) => (
                   <div key={key} className="space-y-1.5">
-                    <Label htmlFor={`text-${key}`}>{label}</Label>
+                    <Label htmlFor={`text-${key}`} className="flex flex-wrap items-center gap-2">
+                      {label}
+                      {textStatusByLanguage.map(({ language, statuses }) =>
+                        statuses.find((status) => status.key === key)?.state === 'missing' ? (
+                          <span
+                            key={language}
+                            title={`Sem tradução em ${language.toUpperCase()}: aparece em português`}
+                            className="rounded-full bg-amber-500/15 px-1.5 text-xs font-medium text-amber-800 dark:text-amber-300"
+                          >
+                            {language.toUpperCase()} ⚠
+                          </span>
+                        ) : null,
+                      )}
+                    </Label>
                     <Input
                       id={`text-${key}`}
                       type="text"
@@ -676,6 +701,15 @@ export function AdminCustomizationTab({
               </div>
             </CardContent>
           </Card>
+
+          {/* Sub-seção 5: Traduções EN/ES (planilha) */}
+          <AdminTranslationsPanel
+            controller={controller}
+            event={targetEvent}
+            hasUnsavedChanges={isDirty}
+            onEventsChanged={onEventsChanged}
+            onStatusMessage={onStatusMessage}
+          />
         </div>
 
         {/* Coluna de Preview ao Vivo Isolado */}

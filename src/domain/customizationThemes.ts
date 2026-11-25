@@ -1,5 +1,6 @@
 import { DEFAULT_CUSTOMIZATIONS } from './defaults';
 import { sanitizeEventLayout } from './screenLayout';
+import { sanitizeEventTranslations } from './translations';
 import type {
   CustomizationSection,
   EventCustomizations,
@@ -101,6 +102,11 @@ export function mergeEventCustomizations(
       : base.layout !== undefined
         ? { layout: base.layout }
         : {}),
+    ...(patch?.translations !== undefined
+      ? { translations: sanitizeEventTranslations(patch.translations) }
+      : base.translations !== undefined
+        ? { translations: base.translations }
+        : {}),
   };
 }
 
@@ -117,6 +123,7 @@ export function applyPredefinedTheme(
 
   return {
     ...(base.layout !== undefined ? { layout: base.layout } : {}),
+    ...(base.translations !== undefined ? { translations: base.translations } : {}),
     texts: options.includeTexts ? presetClone.texts : base.texts,
     colors: presetClone.colors,
     fontSizes: presetClone.fontSizes,
@@ -141,7 +148,11 @@ export function restoreDefaultCustomizations(
   const defaults = structuredClone(DEFAULT_CUSTOMIZATIONS);
   if (section === 'all') {
     // O layout das telas tem editor próprio e não é afetado pela restauração visual.
-    return current.layout !== undefined ? { ...defaults, layout: current.layout } : defaults;
+    return {
+      ...defaults,
+      ...(current.layout !== undefined ? { layout: current.layout } : {}),
+      ...(current.translations !== undefined ? { translations: current.translations } : {}),
+    };
   }
 
   const next = structuredClone(current);

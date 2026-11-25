@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -429,5 +429,83 @@ describe('AccessibilityControls', () => {
     expect(decreaseBtn).toBeDisabled();
     expect(increaseBtn).toBeEnabled();
     expect(onInteraction).toHaveBeenCalledTimes(16);
+  });
+});
+
+describe('VirtualKeyboard por idioma', () => {
+  function renderNameKeyboard(language: 'pt' | 'en' | 'es', onKeyPress = vi.fn()) {
+    render(
+      <VirtualKeyboard
+        activeField="nome"
+        enabled={true}
+        heightVh={DEFAULT_KEYBOARD_HEIGHT_VH}
+        onHeightVhChange={vi.fn()}
+        onKeyPress={onKeyPress}
+        language={language}
+      />,
+    );
+    return onKeyPress;
+  }
+
+  it('usa Ç em português, nada extra em inglês e Ñ em espanhol', () => {
+    const { unmount } = render(
+      <VirtualKeyboard
+        activeField="nome"
+        enabled={true}
+        heightVh={DEFAULT_KEYBOARD_HEIGHT_VH}
+        onHeightVhChange={vi.fn()}
+        onKeyPress={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Ç' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'APAGAR' })).toBeInTheDocument();
+    unmount();
+
+    const en = render(
+      <VirtualKeyboard
+        activeField="nome"
+        enabled={true}
+        heightVh={DEFAULT_KEYBOARD_HEIGHT_VH}
+        onHeightVhChange={vi.fn()}
+        onKeyPress={vi.fn()}
+        language="en"
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Ç' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Ñ' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'DELETE' })).toBeInTheDocument();
+    en.unmount();
+
+    renderNameKeyboard('es');
+    expect(screen.getByRole('button', { name: 'Ñ' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'BORRAR' })).toBeInTheDocument();
+  });
+
+  it('em espanhol: toque curto digita a vogal e toque longo oferece vogais acentuadas e Ü', () => {
+    vi.useFakeTimers();
+    try {
+      const onKeyPress = renderNameKeyboard('es');
+      const keyU = screen.getByRole('button', { name: 'U' });
+
+      fireEvent.pointerDown(keyU);
+      fireEvent.pointerUp(keyU);
+      fireEvent.click(keyU);
+      expect(onKeyPress).toHaveBeenLastCalledWith('U');
+
+      fireEvent.pointerDown(keyU);
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      fireEvent.pointerUp(keyU);
+      fireEvent.click(keyU);
+      expect(onKeyPress).toHaveBeenCalledTimes(1);
+
+      expect(screen.getByRole('button', { name: 'Ú' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Ü' }));
+      expect(onKeyPress).toHaveBeenLastCalledWith('Ü');
+      expect(screen.queryByRole('button', { name: 'Ú' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

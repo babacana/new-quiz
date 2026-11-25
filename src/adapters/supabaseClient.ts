@@ -1,6 +1,7 @@
 import { createClient, type RealtimeChannel, type SupabaseClient } from '@supabase/supabase-js';
 import { DEFAULT_CUSTOMIZATIONS, DEFAULT_SETTINGS } from '../domain/defaults';
 import { sanitizeEventLayout } from '../domain/screenLayout';
+import { sanitizeEventTranslations, sanitizeQuestionTranslations } from '../domain/translations';
 import type {
   DifficultyLevel,
   EventConfig,
@@ -52,6 +53,8 @@ export interface SupabaseQuestionRow {
   difficulty: DifficultyLevel;
   tags: string[];
   is_disabled: boolean;
+  /** Coluna adicionada pela migração de traduções; ausente em bancos ainda não migrados. */
+  translations?: unknown;
 }
 
 export interface SupabaseMatchRow {
@@ -206,6 +209,9 @@ export function mapEventRow(row: SupabaseEventRow): EventConfig {
       ...(rawCustomizations.layout !== undefined
         ? { layout: sanitizeEventLayout(rawCustomizations.layout) }
         : {}),
+      ...(sanitizeEventTranslations(rawCustomizations.translations) !== undefined
+        ? { translations: sanitizeEventTranslations(rawCustomizations.translations) }
+        : {}),
     },
     configVersion: row.config_version,
   };
@@ -220,6 +226,9 @@ export function mapQuestionRow(row: SupabaseQuestionRow): Question {
     difficulty: row.difficulty,
     tags: row.tags ?? [],
     isDisabled: row.is_disabled,
+    ...(sanitizeQuestionTranslations(row.translations) !== undefined
+      ? { translations: sanitizeQuestionTranslations(row.translations) }
+      : {}),
   };
 }
 

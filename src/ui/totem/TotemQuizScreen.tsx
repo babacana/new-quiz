@@ -1,9 +1,11 @@
 import type { TotemSessionEngine } from '../../domain/totemSessionEngine';
 import type { ActiveQuestionState } from '../../domain/types';
 import type { ResolvedScreenLayout } from '../../domain/screenLayout';
+import { useLanguage } from '../../i18n';
+import { pickQuestionTranslation } from '../../domain/translations';
 import { EventLogoImage } from '../EventLogoImage';
 import { LayoutScreenContent } from './LayoutScreenContent';
-import { DIFFICULTY_LABELS, formatTimeMMSS } from '../formatters';
+import { formatTimeMMSS } from '../formatters';
 import { QuestionTimerBar, type TimeAlertVisualUpdate } from './QuestionTimerBar';
 
 const OPTION_LETTERS = ['A', 'B', 'C', 'D'] as const;
@@ -53,6 +55,10 @@ export function TotemQuizScreen({
   layout,
   highlightedElementId,
 }: TotemQuizScreenProps) {
+  const { t, td, language } = useLanguage();
+  const translation = currentQuestion
+    ? pickQuestionTranslation(currentQuestion.question.translations, language)
+    : null;
   return (
     <section
       id="quiz-screen"
@@ -72,7 +78,7 @@ export function TotemQuizScreen({
                   id="question-difficulty-tag"
                   className={`question-difficulty-tag difficulty-${currentQuestion.question.difficulty}`}
                 >
-                  {DIFFICULTY_LABELS[currentQuestion.question.difficulty]}
+                  {t(`difficulty.${currentQuestion.question.difficulty}`)}
                 </div>
 
                 <span id="question-counter" className="quiz-counter">
@@ -93,7 +99,7 @@ export function TotemQuizScreen({
                 </span>
               </div>
             ),
-            question: <h3 id="question-text">{currentQuestion.question.text}</h3>,
+            question: <h3 id="question-text">{translation?.text ?? currentQuestion.question.text}</h3>,
             options: (
               <div
                 id="options-container"
@@ -124,7 +130,9 @@ export function TotemQuizScreen({
                       <span className="option-letter" aria-hidden="true">
                         {OPTION_LETTERS[idx] ?? idx + 1}
                       </span>
-                      <span className="option-label">{option.text}</span>
+                      <span className="option-label">
+                        {translation?.options[option.originalIndex] ?? option.text}
+                      </span>
                     </button>
                   );
                 })}
@@ -146,7 +154,7 @@ export function TotemQuizScreen({
               />
             ) : currentQuestion.hasAnswered ? null : (
               <div className="question-time-bar-row">
-                <div id="question-time-bar-container" aria-label="Tempo restante da questão">
+                <div id="question-time-bar-container" aria-label={t('quiz.timeRemaining')}>
                   <div id="question-time-bar-fill" style={{ width: '65%' }} />
                 </div>
                 <span id="question-time-countdown" className="question-time-countdown countdown-normal">
@@ -156,7 +164,7 @@ export function TotemQuizScreen({
             ),
             postControls: currentQuestion.hasAnswered ? (
               <div id="post-question-controls">
-                {currentQuestion.isTimedOut && <p id="timeout-message-text">Tempo Esgotado!</p>}
+                {currentQuestion.isTimedOut && <p id="timeout-message-text">{t('quiz.timeUp')}</p>}
                 <button
                   id="next-question-btn"
                   type="button"
@@ -165,8 +173,8 @@ export function TotemQuizScreen({
                   onClick={onAdvanceQuestion}
                 >
                   {autoAdvanceRemaining !== null
-                    ? `${currentQuestion.advanceButtonLabel} (${autoAdvanceRemaining}s)`
-                    : currentQuestion.advanceButtonLabel}
+                    ? `${td(currentQuestion.advanceButtonLabel)} (${autoAdvanceRemaining}s)`
+                    : td(currentQuestion.advanceButtonLabel)}
                 </button>
               </div>
             ) : null,
@@ -175,8 +183,8 @@ export function TotemQuizScreen({
                 id="give-up-btn"
                 type="button"
                 className="btn-give-up"
-                title="Desistir do Quiz"
-                aria-label="Desistir do Quiz"
+                title={t('quiz.giveUp')}
+                aria-label={t('quiz.giveUp')}
                 onClick={onRequestGiveUp}
               >
                 &times;
