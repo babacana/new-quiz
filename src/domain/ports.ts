@@ -34,6 +34,9 @@ export class TotemNotRecognizedError extends Error {
 }
 
 // Fonte determinística de tempo para permitir testes sem dependência de timers reais.
+/** Recarrega a página do Totem descartando caches do navegador (equivale a Ctrl+Shift+R). */
+export type HardRefreshAction = () => Promise<void> | void;
+
 export interface Clock {
   now(): number;
   toISOString(ms?: number): string;

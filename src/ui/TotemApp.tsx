@@ -27,6 +27,7 @@ import { CONTENT_LANGUAGES, getLanguageCompleteness } from '../domain/translatio
 import { TotemIdleScreen } from './totem/TotemIdleScreen';
 import { TotemClosedScreen } from './totem/TotemClosedScreen';
 import { TotemInitialScreen } from './totem/TotemInitialScreen';
+import { performHardRefresh } from '../pwa/hardRefresh';
 import { type ActiveTotemModal, TotemModals } from './totem/TotemModals';
 import { TotemQuizScreen } from './totem/TotemQuizScreen';
 import { TotemRankingScreen } from './totem/TotemRankingScreen';
@@ -70,6 +71,7 @@ function createDefaultEngine(): TotemSessionEngine {
     clock: new SystemClock(),
     random: new CryptoRandomSource(),
     requirePairing: true,
+    hardRefresh: () => performHardRefresh(),
   });
 }
 

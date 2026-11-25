@@ -158,6 +158,16 @@ export class TotemFleetModule {
     });
   }
 
+  async hardRefreshTotems(
+    target: { totemId?: string; eventId?: string },
+  ): Promise<RemoteCommandPayload> {
+    return this.dispatchRemoteCommand({
+      type: 'HARD_REFRESH',
+      targetTotemId: target.totemId ?? null,
+      targetEventId: target.eventId ?? null,
+    });
+  }
+
   async reloadTotemScreen(
     target: { totemId?: string; eventId?: string },
     targetScreen: 'initial-screen' | 'idle-screen' = 'initial-screen',

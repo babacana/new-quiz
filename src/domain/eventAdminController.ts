@@ -314,6 +314,12 @@ export class EventAdminController {
     return this.totemFleetModule.forceSyncTotems(target);
   }
 
+  hardRefreshTotems(
+    target: { totemId?: string; eventId?: string },
+  ): Promise<RemoteCommandPayload> {
+    return this.totemFleetModule.hardRefreshTotems(target);
+  }
+
   reloadTotemScreen(
     target: { totemId?: string; eventId?: string },
     targetScreen: 'initial-screen' | 'idle-screen' = 'initial-screen',

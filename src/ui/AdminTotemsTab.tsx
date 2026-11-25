@@ -5,6 +5,7 @@ import {
   Copy,
   Link2,
   Monitor,
+  MonitorUp,
   RefreshCw,
   RotateCcw,
   Send,
@@ -45,7 +46,8 @@ type ReloadTargetScreen = 'initial-screen' | 'idle-screen';
 type PendingBatchCommand =
   | { type: 'switch-event'; targetEventId: string; newEventId: string }
   | { type: 'force-sync'; targetEventId: string }
-  | { type: 'reload-screen'; targetEventId: string; screen: ReloadTargetScreen };
+  | { type: 'reload-screen'; targetEventId: string; screen: ReloadTargetScreen }
+  | { type: 'hard-refresh'; targetEventId: string };
 
 function resolveValidEventId(currentId: string, events: EventConfig[]): string {
   return currentId && events.some((e) => e.id === currentId) ? currentId : (events[0]?.id ?? '');
@@ -201,6 +203,13 @@ export function AdminTotemsTab({
       await handleRunCommand(
         () => controller.forceSyncTotems({ eventId: cmd.targetEventId }),
         'Comando FORCE_SYNC enviado para os Totens do Evento.',
+      );
+      return;
+    }
+    if (cmd.type === 'hard-refresh') {
+      await handleRunCommand(
+        () => controller.hardRefreshTotems({ eventId: cmd.targetEventId }),
+        'Comando HARD_REFRESH enviado para os Totens do Evento.',
       );
       return;
     }
@@ -551,6 +560,19 @@ export function AdminTotemsTab({
                                   >
                                     Forçar Sincronização
                                   </Button>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() =>
+                                      void handleRunCommand(
+                                        () => controller.hardRefreshTotems({ totemId: totem.id }),
+                                        `Comando Atualizar Totem enviado para "${totem.name}".`,
+                                      )
+                                    }
+                                  >
+                                    Atualizar Totem
+                                  </Button>
                                 </div>
 
                                 <div className="flex items-center gap-1.5">
@@ -798,6 +820,20 @@ export function AdminTotemsTab({
               <RotateCcw className="h-4 w-4" />
               Reiniciar Tela do Evento
             </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={!batchTargetEventId}
+              onClick={() =>
+                setPendingBatchCommand({
+                  type: 'hard-refresh',
+                  targetEventId: batchTargetEventId,
+                })
+              }
+            >
+              <MonitorUp className="h-4 w-4" />
+              Atualizar Totens do Evento
+            </Button>
           </div>
         </CardContent>
       </Card>
@@ -913,6 +949,22 @@ export function AdminTotemsTab({
                 <RefreshCw className="h-4 w-4" />
                 Forçar Sincronização
               </Button>
+
+              <Button
+                type="button"
+                variant="secondary"
+                className="w-full"
+                onClick={() => {
+                  void handleRunCommand(
+                    () => controller.hardRefreshTotems({ totemId: mobileCommandTotem.id }),
+                    `Comando Atualizar Totem enviado para "${mobileCommandTotem.name}".`,
+                  );
+                  setMobileCommandTotem(null);
+                }}
+              >
+                <MonitorUp className="h-4 w-4" />
+                Atualizar Totem (hard refresh)
+              </Button>
             </div>
           )}
           <DialogFooter>
@@ -956,6 +1008,11 @@ export function AdminTotemsTab({
                     ? 'Tela de Descanso'
                     : 'Tela Inicial'
                 }.`}
+              {pendingBatchCommand?.type === 'hard-refresh' &&
+                `Todos os Totens do Evento "${
+                  eventNameById.get(pendingBatchCommand.targetEventId) ??
+                  pendingBatchCommand.targetEventId
+                }" recarregarão a página inteira e baixarão a versão mais recente do sistema. Partidas em andamento terminam antes.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
