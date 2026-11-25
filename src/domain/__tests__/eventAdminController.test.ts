@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { InMemoryCloudGateway } from '../../adapters/inMemoryCloudGateway';
 import { InMemoryLocalStore } from '../../adapters/inMemoryLocalStore';
 import { DEFAULT_EVENT_ID } from '../defaults';
@@ -717,6 +717,38 @@ describe('EventAdminController (T4 - Autenticação, Multi-Evento e Banco de Que
       await controller.forceSyncTotems({ totemId: totem.id });
       expect(totemEngine.getSnapshot().pendingSyncCount).toBe(0);
       expect(cloudGateway.getSyncedMatches(eventB.id)).toHaveLength(1);
+    });
+
+    it('executa HARD_REFRESH imediatamente quando ocioso e só depois da Partida quando em andamento', async () => {
+      const { controller, cloudGateway, clock, random } = createAdminHarness();
+      await controller.login('admin@caesb.df.gov.br', 'CAESB2025!');
+      const hardRefresh = vi.fn();
+
+      const totemEngine = new TotemSessionEngine({
+        localStore: new InMemoryLocalStore(),
+        cloudGateway,
+        clock,
+        random,
+        requirePairing: true,
+        hardRefresh,
+      });
+      const pending = await totemEngine.initialize();
+      const totem = await controller.authorizeTotemPairing({
+        pairingCode: pending.pairing.pairingCode!,
+        name: 'Totem Hard Refresh',
+        pinCode: '4321',
+        eventId: DEFAULT_EVENT_ID,
+      });
+
+      await controller.hardRefreshTotems({ totemId: totem.id });
+      expect(hardRefresh).toHaveBeenCalledTimes(1);
+
+      // Em Partida: o comando aguarda o término e não interrompe o Participante.
+      await totemEngine.startMatch('CARLA', '(61) 96666-3344');
+      await controller.hardRefreshTotems({ eventId: DEFAULT_EVENT_ID });
+      expect(hardRefresh).toHaveBeenCalledTimes(1);
+      await totemEngine.giveUpMatch();
+      expect(hardRefresh).toHaveBeenCalledTimes(2);
     });
 
     it('difere CONFIG_UPDATED e SWITCH_EVENT durante Partida em andamento e aplica ao finalizar sem interromper o Participante', async () => {

@@ -634,6 +634,7 @@ export type RemoteCommandType =
   | 'SWITCH_EVENT'
   | 'FORCE_SYNC'
   | 'RELOAD_SCREEN'
+  | 'HARD_REFRESH'
   | 'CONFIG_UPDATED';
 
 export interface RemoteCommandPayload {

@@ -15,6 +15,7 @@ import { hashEventPhone } from './phoneHash';
 import type {
   Clock,
   CloudEventSnapshot,
+  HardRefreshAction,
   LocalStore,
   RandomSource,
   TotemCloudPort,
@@ -97,6 +98,8 @@ export interface TotemSessionEngineDependencies {
   clock: Clock;
   random: RandomSource;
   requirePairing?: boolean;
+  /** Executa o recarregamento completo da página; ausente em testes e no simulador. */
+  hardRefresh?: HardRefreshAction;
 }
 
 interface ActiveMatchInternal {
@@ -120,6 +123,7 @@ export class TotemSessionEngine {
   private readonly clock: Clock;
   private readonly random: RandomSource;
   private readonly requirePairing: boolean;
+  private readonly hardRefresh?: HardRefreshAction;
   private readonly syncManager: TotemSyncManager;
 
   private initialized = false;
@@ -160,6 +164,7 @@ export class TotemSessionEngine {
     this.clock = deps.clock;
     this.random = deps.random;
     this.requirePairing = deps.requirePairing ?? false;
+    this.hardRefresh = deps.hardRefresh;
     this.syncManager = new TotemSyncManager({
       localStore: deps.localStore,
       cloudGateway: deps.cloudGateway,
@@ -759,6 +764,17 @@ export class TotemSessionEngine {
 
     if (command.type === 'RELOAD_SCREEN') {
       this.transitionWithCleanState(command.targetScreen ?? 'initial-screen');
+      return;
+    }
+
+    if (command.type === 'HARD_REFRESH') {
+      // Envia a fila pendente antes de descartar a página; a fila vive no IndexedDB e sobrevive ao reload.
+      try {
+        await this.syncPendingQueue();
+      } catch {
+        // Sem rede a fila permanece local e é enviada após o recarregamento.
+      }
+      await this.hardRefresh?.();
       return;
     }
 

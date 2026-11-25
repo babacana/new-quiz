@@ -116,6 +116,7 @@ O esquema do banco de dados em nuvem seguirá as decisões dos ADRs 0001 a 0005:
     - `SWITCH_EVENT`: atualiza o `eventId` vinculado, baixa o novo pacote de configurações/questões/imagens e reinicia na tela inicial/descanso.
     - `FORCE_SYNC`: dispara imediatamente o envio da `syncQueue` e a atualização de `totemConfig` / `localQuestions` / `localPrizeWinners` / `localLockouts`.
     - `RELOAD_SCREEN`: retorna o Totem imediatamente para a tela inicial ou de descanso.
+    - `HARD_REFRESH`: recarrega a página inteira do Totem (equivale a Ctrl+Shift+R), removendo Service Worker e caches do app shell para baixar a versão publicada mais recente; a fila local (IndexedDB) é preservada e enviada antes do reload.
     - `CONFIG_UPDATED`: notifica os Totens do Evento de que configurações, questões, tema ou listas de bloqueio/premiação mudaram (aplicando a atualização imediatamente se o Totem estiver em `idle-screen` ou `initial-screen`, ou aguardando o término da Partida em andamento para não interromper um Participante que está jogando).
 
 ### 4. Preservação Integral dos Comportamentos de UX do Totem e Admin
@@ -142,7 +143,7 @@ Os testes devem verificar exclusivamente o **comportamento externo observável**
      - Contagem de tempo por questão, tratamento de resposta correta, resposta incorreta e tempo esgotado (`Tempo esgotado`), revelação condicional de gabarito (`showCorrectAnswerOnWrong`) e lista de revisão *"Onde Eu Errei?"*.
      - Concessão de Brinde com status `Entregue` (quando a confirmação manual está desabilitada no Evento) vs. `Aguardando Retirada` (quando habilitada), decremento de estoque de Brindes e identificação de Top 3 no Ranking.
      - Operação 100% offline: realização de múltiplas Partidas com o `CloudGateway` simulando desconexão, persistência na `syncQueue` local e sincronização idempotente quando a conexão é restaurada.
-     - Recebimento de comandos remotos (`SWITCH_EVENT`, `FORCE_SYNC`, `RELOAD_SCREEN`, `CONFIG_UPDATED`) sem interromper uma Partida em andamento até que ela termine.
+     - Recebimento de comandos remotos (`SWITCH_EVENT`, `FORCE_SYNC`, `RELOAD_SCREEN`, `HARD_REFRESH`, `CONFIG_UPDATED`) sem interromper uma Partida em andamento até que ela termine.
 2. **Costura 2 — `EventAdminController` (e integração Multi-Totem via `InMemoryCloudGateway`):**
    - **Comportamentos testados:**
      - Criação, edição e clonagem de Eventos e isolamento de Ranking, Participantes e Trava de Brinde entre Eventos distintos.

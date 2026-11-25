@@ -128,6 +128,14 @@ describe('Issue #15 — Totens, Equipe & Sistema', () => {
       await screen.findByText(/Comando FORCE_SYNC enviado para os Totens do Evento/i),
     ).toBeInTheDocument();
 
+    // Hard refresh remoto em lote
+    await user.click(screen.getByRole('button', { name: 'Atualizar Totens do Evento' }));
+    const refreshDialog = await screen.findByRole('dialog');
+    await user.click(within(refreshDialog).getByRole('button', { name: 'Confirmar Envio' }));
+    expect(
+      await screen.findByText(/Comando HARD_REFRESH enviado para os Totens do Evento/i),
+    ).toBeInTheDocument();
+
     // Telemetria ao vivo atualiza quando Totem entra em Partida
     await act(async () => {
       await totemEngine.startMatch('MARINA', '(61) 99999-1111');
